@@ -1,0 +1,80 @@
+import { DatabaseSync } from 'node:sqlite';
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
+
+const DATA_DIR = path.join(os.homedir(), '.fungible');
+const DB_PATH = path.join(DATA_DIR, 'fungible.db');
+
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+export const db = new DatabaseSync(DB_PATH);
+
+export function initDb() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL,
+      subtype TEXT,
+      institution_name TEXT,
+      mask TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS transactions (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      name TEXT NOT NULL,
+      merchant_name TEXT,
+      amount REAL NOT NULL,
+      category TEXT,
+      raw_category TEXT,
+      pending INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY (account_id) REFERENCES accounts(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
+    CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
+
+    CREATE TABLE IF NOT EXISTS category_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      priority INTEGER NOT NULL DEFAULT 0,
+      match_type TEXT NOT NULL CHECK(match_type IN ('name', 'regex')),
+      pattern TEXT NOT NULL,
+      category TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS sync_state (
+      account_id TEXT PRIMARY KEY,
+      cursor TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS plaid_items (
+      item_id TEXT PRIMARY KEY,
+      access_token TEXT NOT NULL,
+      institution_name TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS hidden_categories (
+      category TEXT PRIMARY KEY
+    );
+
+    CREATE TABLE IF NOT EXISTS name_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      match_type TEXT NOT NULL CHECK(match_type IN ('name', 'regex')),
+      pattern TEXT NOT NULL,
+      replacement TEXT NOT NULL
+    );
+  `);
+
+  // Add manual_category column if not present (migration)
+  try { db.exec('ALTER TABLE transactions ADD COLUMN manual_category TEXT'); } catch {}
+  try { db.exec('ALTER TABLE transactions ADD COLUMN display_name TEXT'); } catch {}
+  try { db.exec('ALTER TABLE transactions ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0'); } catch {}
+
+  // Seed default hidden categories (idempotent)
+  const hidden = ['Transfer', 'Loan Payment'];
+  const insert = db.prepare('INSERT OR IGNORE INTO hidden_categories (category) VALUES (?)');
+  for (const cat of hidden) insert.run(cat);
+}
