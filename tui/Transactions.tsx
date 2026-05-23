@@ -135,7 +135,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
     if (!selected) return;
     const cats = getCategories();
     setCategories(cats);
-    setEditName(selected.display_name ?? selected.name);
+    setEditName('');
     setEditCatCursor(Math.max(0, cats.indexOf(selected.category)));
     setEditField('name');
     setMode('edit');
@@ -145,13 +145,11 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
     if (!selected) return;
     const newCat = categories[editCatCursor];
     const newDisplay = editName.trim();
-    const origDisplay = selected.display_name ?? selected.name;
-    const nameChanged = newDisplay !== origDisplay;
+    const nameChanged = newDisplay.length > 0;
     const catChanged = newCat !== selected.category;
 
     if (nameChanged) {
-      db.prepare('UPDATE transactions SET display_name = ? WHERE id = ?')
-        .run(newDisplay === selected.name ? null : newDisplay, selected.id);
+      db.prepare('UPDATE transactions SET display_name = ? WHERE id = ?').run(newDisplay, selected.id);
     }
     if (catChanged) {
       db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?')
@@ -168,9 +166,8 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
     if (!selected) return;
     const newCat = categories[editCatCursor];
     const newDisplay = editName.trim();
-    const origDisplay = selected.display_name ?? selected.name;
     const catChanged = newCat !== selected.category;
-    const nameChanged = newDisplay !== origDisplay;
+    const nameChanged = newDisplay.length > 0;
 
     const saved: string[] = [];
 
@@ -398,8 +395,8 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
             <Box flexDirection="column">
               <Text color={editField === 'name' ? 'cyan' : 'gray'} bold>Name</Text>
               {editField === 'name'
-                ? <Box><Text color="yellow">{editName}</Text><Text color="cyan">█</Text></Box>
-                : <Text dimColor>{editName}</Text>
+                ? <Box><Text color="yellow">{editName || <Text dimColor>type new name…</Text>}</Text><Text color="cyan">█</Text></Box>
+                : <Text dimColor>{editName || '(unchanged)'}</Text>
               }
             </Box>
 
@@ -439,7 +436,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
           {categories[editCatCursor] !== selected.category && (
             <Text dimColor>Category: <Text color="red">{selected.category}</Text> → <Text color="cyan">{categories[editCatCursor]}</Text></Text>
           )}
-          {editName.trim() !== (selected.display_name ?? selected.name) && (
+          {editName.trim().length > 0 && (
             <Text dimColor>Name: <Text color="green">{editName}</Text></Text>
           )}
 
