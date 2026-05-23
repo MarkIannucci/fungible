@@ -132,7 +132,12 @@ export function Trends({
     if (key.downArrow) setCursor((c) => Math.min(rows.length - 1, c + 1));
     if (key.return) {
       const row = rows[cursor];
-      if (row) onNavigate('transactions', { category: view.category ?? undefined, month: row.month, year: row.year });
+      if (row) {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const from = `${row.year}-${pad(row.month)}-01`;
+        const to = `${row.year}-${pad(row.month)}-31`;
+        onNavigate('transactions', { category: view.category ?? undefined, from, to });
+      }
     }
   });
 

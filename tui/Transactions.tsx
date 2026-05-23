@@ -27,14 +27,12 @@ type TagOption = { id: number; name: string };
 type Mode = 'list' | 'search' | 'edit' | 'edit-rule' | 'tag';
 type EditField = 'name' | 'category';
 
-function getTxs(category: string | null, month: number | null, year: number | null, search: string, tag: string | null): Tx[] {
+function getTxs(category: string | null, from: string | null, to: string | null, search: string, tag: string | null): Tx[] {
   const conditions: string[] = [];
   const args: (string | number)[] = [];
 
   if (category) { conditions.push('t.category = ?'); args.push(category); }
-  if (month && year) {
-    const from = `${year}-${String(month).padStart(2, '0')}-01`;
-    const to   = `${year}-${String(month).padStart(2, '0')}-31`;
+  if (from && to) {
     conditions.push('t.date >= ? AND t.date <= ?');
     args.push(from, to);
   }
@@ -84,14 +82,13 @@ function applyRuleToAll() {
 
 function getDataBounds() {
   const row = db.prepare(`
-    SELECT
-      CAST(substr(MIN(date), 1, 4) AS INTEGER) as minYear,
-      CAST(substr(MIN(date), 6, 2) AS INTEGER) as minMonth,
-      CAST(substr(MAX(date), 1, 4) AS INTEGER) as maxYear,
-      CAST(substr(MAX(date), 6, 2) AS INTEGER) as maxMonth
+    SELECT MIN(date) as minDate, MAX(date) as maxDate
     FROM transactions WHERE pending = 0 AND ignored = 0
-  `).get() as { minYear: number; minMonth: number; maxYear: number; maxMonth: number } | null;
-  return row ?? { minYear: 2020, minMonth: 1, maxYear: 2099, maxMonth: 12 };
+  `).get() as { minDate: string | null; maxDate: string | null } | null;
+  return {
+    minDate: row?.minDate ?? '2000-01-01',
+    maxDate: row?.maxDate ?? '2099-12-31',
+  };
 }
 
 function countMatches(pattern: string, matchType: 'name' | 'regex'): number {
@@ -110,8 +107,8 @@ function countMatches(pattern: string, matchType: 'name' | 'regex'): number {
 
 export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter }) {
   const [category, setCategory] = useState<string | null>(initialFilter?.category ?? null);
-  const [month, setMonth] = useState<number | null>(initialFilter?.month ?? null);
-  const [year, setYear] = useState<number | null>(initialFilter?.year ?? null);
+  const [from, setFrom] = useState<string | null>(initialFilter?.from ?? null);
+  const [to, setTo] = useState<string | null>(initialFilter?.to ?? null);
   const [tag, setTag] = useState<string | null>(initialFilter?.tag ?? null);
   const [bounds] = useState(getDataBounds);
   const [search, setSearch] = useState('');
@@ -136,13 +133,13 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
   const [tagInput, setTagInput] = useState('');
 
   function load(s = search, keepCursor = false) {
-    const rows = getTxs(category, month, year, s, tag);
+    const rows = getTxs(category, from, to, s, tag);
     setTxs(rows);
     if (!keepCursor) setCursor(0);
     else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
   }
 
-  useEffect(() => { load(); }, [category, month, year, search, tag]);
+  useEffect(() => { load(); }, [category, from, to, search, tag]);
 
   const selected = txs[cursor];
 
@@ -349,36 +346,32 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
       if (input === '5') { onNavigate('tags'); return; }
       if (key.escape) {
         if (search) { setSearch(''); setSearchInput(''); return; }
-        if (month) { setMonth(null); setYear(null); return; }
+        if (from) { setFrom(null); setTo(null); return; }
         if (tag) { setTag(null); return; }
         onNavigate('dashboard');
         return;
       }
-      if (key.leftArrow) {
-        const m = month ?? bounds.maxMonth;
-        const y = year ?? bounds.maxYear;
-        const prevM = m === 1 ? 12 : m - 1;
-        const prevY = m === 1 ? y - 1 : y;
-        if (prevY > bounds.minYear || (prevY === bounds.minYear && prevM >= bounds.minMonth)) {
-          setMonth(prevM); setYear(prevY);
-        }
+      if (key.leftArrow && from) {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const y = parseInt(from.slice(0, 4)); const m = parseInt(from.slice(5, 7));
+        const prevM = m === 1 ? 12 : m - 1; const prevY = m === 1 ? y - 1 : y;
+        const newFrom = `${prevY}-${pad(prevM)}-01`;
+        if (newFrom >= bounds.minDate) { setFrom(newFrom); setTo(`${prevY}-${pad(prevM)}-31`); }
         return;
       }
-      if (key.rightArrow) {
-        const m = month ?? bounds.maxMonth;
-        const y = year ?? bounds.maxYear;
-        const nextM = m === 12 ? 1 : m + 1;
-        const nextY = m === 12 ? y + 1 : y;
-        if (nextY < bounds.maxYear || (nextY === bounds.maxYear && nextM <= bounds.maxMonth)) {
-          setMonth(nextM); setYear(nextY);
-        }
+      if (key.rightArrow && from) {
+        const pad = (n: number) => String(n).padStart(2, '0');
+        const y = parseInt(from.slice(0, 4)); const m = parseInt(from.slice(5, 7));
+        const nextM = m === 12 ? 1 : m + 1; const nextY = m === 12 ? y + 1 : y;
+        const newFrom = `${nextY}-${pad(nextM)}-01`;
+        if (newFrom <= bounds.maxDate) { setFrom(newFrom); setTo(`${nextY}-${pad(nextM)}-31`); }
         return;
       }
       if (input === '/') { setMode('search'); return; }
       if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
       if (key.downArrow) setCursor((c) => Math.min(txs.length - 1, c + 1));
-      if (input === 'u') { setSearch(''); setSearchInput(''); setCategory('Uncategorized'); setMonth(null); setYear(null); setTag(null); }
-      if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setMonth(null); setYear(null); setTag(null); }
+      if (input === 'u') { setSearch(''); setSearchInput(''); setCategory('Uncategorized'); setFrom(null); setTo(null); setTag(null); }
+      if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setFrom(null); setTo(null); setTag(null); }
       if (input === 'e' && selected) openEdit();
       if (input === 'g' && selected) openTagPanel();
       if (input === 'x' && selected?.manual_category) clearOverride();
@@ -390,11 +383,21 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
   const pageStart = Math.max(0, Math.min(cursor - Math.floor(PAGE / 2), txs.length - PAGE));
   const visible = txs.slice(pageStart, pageStart + PAGE);
 
+  function dateLabel(): string | null {
+    if (!from) return null;
+    const y = from.slice(0, 4); const m = parseInt(from.slice(5, 7));
+    // Full month check: from is 1st, to is end of same month
+    if (to && from === `${y}-${String(m).padStart(2, '0')}-01` && to.slice(0, 7) === from.slice(0, 7)) {
+      return `${MONTHS[m - 1]} ${y}`;
+    }
+    return `${from} – ${to ?? ''}`;
+  }
+
   const filterLabel = [
     tag ? `#${tag}` : null,
     search ? `"${search}"` : null,
     category,
-    month && year ? `${MONTHS[month - 1]} ${year}` : null,
+    dateLabel(),
   ].filter(Boolean).join(' · ');
 
   // Category list window for edit panel
@@ -417,7 +420,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
           {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
         </Text>
         <Text dimColor>
-          {month ? '← → month  ·  ' : ''}[/] search  ·  [u] uncategorized  [a] all  ·  [e] edit  [g] tag  [x] undo  [i] ignore
+          {from ? '← → month  ·  ' : ''}[/] search  ·  [u] uncategorized  [a] all  ·  [e] edit  [g] tag  [x] undo  [i] ignore
         </Text>
       </Box>
 

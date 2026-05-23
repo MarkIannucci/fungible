@@ -11,8 +11,8 @@ export type Screen = 'dashboard' | 'transactions' | 'trends' | 'rules' | 'import
 
 export type TxFilter = {
   category?: string;
-  month?: number;
-  year?: number;
+  from?: string;
+  to?: string;
   tag?: string;
 };
 

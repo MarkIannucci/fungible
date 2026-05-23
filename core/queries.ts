@@ -29,7 +29,10 @@ export function getHiddenCategories(): Set<string> {
 export function getMonthlySummary(year: number, month: number): MonthlySummary {
   const from = `${year}-${String(month).padStart(2, '0')}-01`;
   const to = `${year}-${String(month).padStart(2, '0')}-31`;
+  return getRangeSummary(from, to);
+}
 
+export function getRangeSummary(from: string, to: string): MonthlySummary {
   const rows = db.prepare(`
     SELECT category, SUM(amount) as total
     FROM transactions

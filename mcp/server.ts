@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { initDb, db } from '../core/db.js';
-import { getMonthlySummary } from '../core/queries.js';
+import { getMonthlySummary, getRangeSummary, getTagSummary } from '../core/queries.js';
 import { categorize } from '../core/categorize.js';
 import { syncAll } from '../core/sync.js';
 
@@ -18,17 +18,28 @@ const server = new McpServer({
 
 server.tool(
   'spending_summary',
-  'Get income, expenses, net, and spending by category for a given month.',
+  'Get income, expenses, net, and spending by category. Provide either (year + month) for a specific month, or (from + to) for an arbitrary date range.',
   {
-    year:  z.number().int().describe('4-digit year, e.g. 2026'),
-    month: z.number().int().min(1).max(12).describe('Month number 1–12'),
+    year:  z.number().int().optional().describe('4-digit year, e.g. 2026'),
+    month: z.number().int().min(1).max(12).optional().describe('Month number 1–12'),
+    from:  z.string().optional().describe('Start date YYYY-MM-DD (use with to)'),
+    to:    z.string().optional().describe('End date YYYY-MM-DD (use with from)'),
   },
-  async ({ year, month }) => {
-    const summary = getMonthlySummary(year, month);
-    const monthName = new Date(year, month - 1).toLocaleString('en-US', { month: 'long' });
+  async ({ year, month, from, to }) => {
+    let label: string;
+    let summary;
+    if (from && to) {
+      summary = getRangeSummary(from, to);
+      label = `${from} – ${to}`;
+    } else if (year && month) {
+      summary = getMonthlySummary(year, month);
+      label = `${new Date(year, month - 1).toLocaleString('en-US', { month: 'long' })} ${year}`;
+    } else {
+      return { content: [{ type: 'text', text: 'Provide either (year + month) or (from + to).' }] };
+    }
 
     const lines = [
-      `## ${monthName} ${year}`,
+      `## ${label}`,
       `- **Income:** $${summary.income.toFixed(2)}`,
       `- **Expenses:** $${summary.expenses.toFixed(2)}`,
       `- **Net:** ${summary.net >= 0 ? '+' : ''}$${summary.net.toFixed(2)}`,
@@ -384,6 +395,83 @@ server.tool(
 
     const lines = rows.map((r) => `${String(r.count).padStart(4)}x  ${r.name}`);
     return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+);
+
+// ── list_tags ─────────────────────────────────────────────────────────────────
+
+server.tool(
+  'list_tags',
+  'List all tags with transaction counts.',
+  {},
+  async () => {
+    const rows = db.prepare(`
+      SELECT t.name, COUNT(tt.transaction_id) as count
+      FROM tags t
+      LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
+      GROUP BY t.id
+      ORDER BY t.name
+    `).all() as { name: string; count: number }[];
+
+    if (rows.length === 0) return { content: [{ type: 'text', text: 'No tags defined.' }] };
+    const lines = rows.map((r) => `${r.name.padEnd(30)} ${r.count} transaction${r.count !== 1 ? 's' : ''}`);
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+);
+
+// ── tag_summary ───────────────────────────────────────────────────────────────
+
+server.tool(
+  'tag_summary',
+  'Get income, expenses, net, and spending by category for all transactions tagged with a given tag.',
+  {
+    tag: z.string().describe('Tag name'),
+  },
+  async ({ tag }) => {
+    const summary = getTagSummary(tag);
+
+    const lines = [
+      `## #${tag}`,
+      `- **Income:** $${summary.income.toFixed(2)}`,
+      `- **Expenses:** $${summary.expenses.toFixed(2)}`,
+      `- **Net:** ${summary.net >= 0 ? '+' : ''}$${summary.net.toFixed(2)}`,
+      '',
+      '### Spending by Category',
+      ...(summary.byCategory.length
+        ? summary.byCategory.map((c) => `- ${c.category}: $${c.total.toFixed(2)}`)
+        : ['No expense data for this tag.']),
+    ];
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+);
+
+// ── tag_transaction ───────────────────────────────────────────────────────────
+
+server.tool(
+  'tag_transaction',
+  'Add or remove a tag on a transaction. Creates the tag if it does not exist.',
+  {
+    id:  z.string().describe('Transaction ID from list_transactions'),
+    tag: z.string().describe('Tag name'),
+    add: z.boolean().describe('true to add the tag, false to remove it'),
+  },
+  async ({ id, tag, add }) => {
+    const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(id) as { name: string } | undefined;
+    if (!tx) return { content: [{ type: 'text', text: `No transaction with id ${id}.` }] };
+
+    if (add) {
+      db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)').run(tag);
+      const tagRow = db.prepare('SELECT id FROM tags WHERE name = ?').get(tag) as { id: number };
+      db.prepare('INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)').run(id, tagRow.id);
+      return { content: [{ type: 'text', text: `Tagged "${tx.name}" with #${tag}` }] };
+    } else {
+      const tagRow = db.prepare('SELECT id FROM tags WHERE name = ?').get(tag) as { id: number } | undefined;
+      if (tagRow) {
+        db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ? AND tag_id = ?').run(id, tagRow.id);
+      }
+      return { content: [{ type: 'text', text: `Removed #${tag} from "${tx.name}"` }] };
+    }
   }
 );
 

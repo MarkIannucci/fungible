@@ -1,16 +1,18 @@
 # fungible
 
-A terminal UI for personal finance. Syncs transactions from Plaid, imports CSVs, and lets you categorize, search, and analyze spending — all from the keyboard.
+A terminal UI for personal finance. Syncs transactions from Plaid, imports CSVs, and lets you categorize, search, tag, and analyze spending — all from the keyboard.
 
 ## Features
 
-- **Plaid sync** — connect bank accounts and pull transactions automatically
+- **Plaid sync** — connect bank accounts and pull transactions automatically on startup
 - **CSV import** — import statement exports from Capital One and other banks
-- **Category rules** — substring and regex rules that auto-categorize transactions
+- **Category rules** — substring and regex rules that auto-categorize transactions, with optional amount filters
 - **Name rules** — rename how transactions display without affecting rule matching
 - **Manual edits** — pin a category to a specific transaction; survives re-syncs
 - **Ignore** — soft-hide transactions from totals (transfers, reimbursements, etc.)
 - **Hidden categories** — exclude categories like Transfer from all totals/charts
+- **Tags** — label transactions across accounts (trips, projects, events) and view summaries by tag
+- **Time ranges** — view Dashboard by week, month, quarter, year, or all time
 - **Trends** — month-by-month bar charts for expenses, income, net, or any category
 - **MCP server** — Claude can read and manage your finances via the Model Context Protocol
 
@@ -51,26 +53,41 @@ Data is stored at `~/.fungible/fungible.db`.
 | `2` | Transactions |
 | `3` | Rules |
 | `4` | Import |
+| `5` | Tags |
+| `Esc` | Back / clear filter |
 
 ### Dashboard
 | Key | Action |
 |-----|--------|
-| `← →` | Previous / next month |
+| `r` | Cycle time range (Week → Month → Quarter → Year → All Time) |
+| `← →` | Previous / next period |
 | `↑ ↓` | Select category |
-| `Enter` | View transactions for selected category + month |
-| `t` | Trends (for selected category, or overall if none selected) |
-| `s` | Sync from Plaid |
+| `Enter` | View transactions for selected category + period |
+| `t` | Trends (for selected category, or overall) |
+
+### Tags
+| Key | Action |
+|-----|--------|
+| `↑ ↓` | Select tag |
+| `Enter` | Open tag detail (income / expenses / category breakdown) |
+| `t` | View all transactions for selected tag |
+| `a` | Add new tag |
+| `d` | Delete selected tag |
+| `Esc` | Back to list |
+
+In tag detail view, `↑ ↓` selects a category and `Enter` drills into transactions for that tag + category. `← →` cycles to the previous/next tag.
 
 ### Transactions
 | Key | Action |
 |-----|--------|
 | `↑ ↓` | Navigate |
+| `← →` | Previous / next month (when date filter is active) |
 | `/` | Search by name |
 | `a` | Show all transactions |
 | `u` | Show uncategorized only |
-| `c` | Create category rule from selected transaction |
-| `e` | Edit category for selected transaction (pinned, survives sync) |
-| `x` | Undo edit (revert to rule-based category) |
+| `e` | Edit: rename display name or change category |
+| `g` | Tag panel: add/remove tags on selected transaction |
+| `x` | Undo manual category edit |
 | `i` | Ignore / un-ignore selected transaction |
 
 ### Trends
@@ -88,7 +105,6 @@ Data is stored at `~/.fungible/fungible.db`.
 | `a` | Add rule |
 | `e` / `Enter` | Edit selected rule |
 | `d` | Delete selected rule |
-| `h` | Toggle hidden (in Hidden section) |
 
 ## Scripts
 
@@ -111,7 +127,7 @@ Exposes your financial data to Claude via the [Model Context Protocol](https://m
 npm run mcp
 ```
 
-Available tools: `spending_summary`, `list_transactions`, `edit_transaction`, `clear_edit`, `ignore_transaction`, `list_rules`, `add_rule`, `delete_rule`, `list_name_rules`, `add_name_rule`, `delete_name_rule`, `list_hidden_categories`, `toggle_hidden_category`, `list_accounts`, `sync`, `uncategorized_summary`.
+Available tools: `spending_summary`, `list_transactions`, `edit_transaction`, `clear_edit`, `ignore_transaction`, `list_rules`, `add_rule`, `delete_rule`, `list_name_rules`, `add_name_rule`, `delete_name_rule`, `list_hidden_categories`, `toggle_hidden_category`, `list_accounts`, `sync`, `uncategorized_summary`, `list_tags`, `tag_summary`, `tag_transaction`.
 
 Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
