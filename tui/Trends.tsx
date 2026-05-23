@@ -232,6 +232,7 @@ export function Trends({
   const avg  = rows.length ? rows.reduce((s, r) => s + r.total, 0) / rows.length : 0;
   const peak = rows.reduce((best, r) => Math.abs(r.total) > Math.abs(best?.total ?? 0) ? r : best, rows[0]);
 
+  const labelWidth = range === 'week' ? 22 : range === 'month' ? 10 : range === 'quarter' ? 8 : 6;
   const color = viewColor(view);
   const posLabel = `${viewIdx + 1} / ${views.length}`;
 
@@ -266,8 +267,9 @@ export function Trends({
         <>
           <Box flexDirection="column" marginTop={1}>
             {isNet && (
-              <Box gap={2} marginBottom={1}>
-                <Text dimColor>{' '.repeat(range === 'week' ? 24 : range === 'month' ? 12 : range === 'quarter' ? 10 : 8)}</Text>
+              <Box gap={1} marginBottom={1}>
+                <Text dimColor>{' '.repeat(2 + labelWidth)}</Text>
+                <Text dimColor>{''.padStart(13)}</Text>
                 <Text color="red" dimColor>{'expenses ←'.padStart(HALF_BAR)}</Text>
                 <Text dimColor>{'|'}</Text>
                 <Text color="green">{'→ income'}</Text>
@@ -275,7 +277,6 @@ export function Trends({
             )}
             {visible.map((row, i) => {
               const isSelected = rows[pageStart + i] === rows[cursor];
-              const labelWidth = range === 'week' ? 22 : range === 'month' ? 10 : range === 'quarter' ? 8 : 6;
 
               if (isNet && row.income !== undefined && row.expenses !== undefined) {
                 const expFilled = Math.min(HALF_BAR, Math.max(0, Math.round((row.expenses / netMax) * HALF_BAR)));
@@ -288,12 +289,12 @@ export function Trends({
                     <Text color={isSelected ? 'cyan' : undefined}>
                       {isSelected ? '▶ ' : '  '}{row.label.padEnd(labelWidth)}
                     </Text>
-                    <Text color="red"   dimColor={!isSelected}>{leftBar}</Text>
-                    <Text dimColor>|</Text>
-                    <Text color="green" dimColor={!isSelected}>{rightBar}</Text>
                     <Text color={net >= 0 ? 'green' : 'red'} dimColor={!isSelected}>
                       {fmtSigned(net).padStart(13)}
                     </Text>
+                    <Text color="red"   dimColor={!isSelected}>{leftBar}</Text>
+                    <Text dimColor>|</Text>
+                    <Text color="green" dimColor={!isSelected}>{rightBar}</Text>
                   </Box>
                 );
               }
