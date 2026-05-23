@@ -85,13 +85,19 @@ export type FlexSummary = {
 };
 
 export function getFlexSummary(from: string, to: string): FlexSummary {
+  // Group by category first (matching getRangeSummary), then bucket by flexibility tier.
+  // This ensures fixed + flexible + discretionary + untagged == totalExpenses.
   const rows = db.prepare(`
-    SELECT COALESCE(c.flexibility, 'untagged') as tier, SUM(t.amount) as total
-    FROM transactions t
-    LEFT JOIN categories c ON c.name = t.category
-    WHERE t.date >= ? AND t.date <= ? AND t.pending = 0 AND t.ignored = 0
-      AND t.amount > 0
-      AND t.category NOT IN (SELECT category FROM hidden_categories)
+    SELECT COALESCE(c.flexibility, 'untagged') as tier, SUM(cat_totals.total) as total
+    FROM (
+      SELECT t.category, SUM(t.amount) as total
+      FROM transactions t
+      WHERE t.date >= ? AND t.date <= ? AND t.pending = 0 AND t.ignored = 0
+        AND t.category NOT IN (SELECT category FROM hidden_categories)
+      GROUP BY t.category
+      HAVING SUM(t.amount) > 0
+    ) as cat_totals
+    LEFT JOIN categories c ON c.name = cat_totals.category
     GROUP BY tier
   `).all(from, to) as { tier: string; total: number }[];
 
