@@ -75,10 +75,23 @@ function applyRuleToAll() {
   return count;
 }
 
+function getDataBounds() {
+  const row = db.prepare(`
+    SELECT
+      CAST(substr(MIN(date), 1, 4) AS INTEGER) as minYear,
+      CAST(substr(MIN(date), 6, 2) AS INTEGER) as minMonth,
+      CAST(substr(MAX(date), 1, 4) AS INTEGER) as maxYear,
+      CAST(substr(MAX(date), 6, 2) AS INTEGER) as maxMonth
+    FROM transactions WHERE pending = 0 AND ignored = 0
+  `).get() as { minYear: number; minMonth: number; maxYear: number; maxMonth: number } | null;
+  return row ?? { minYear: 2020, minMonth: 1, maxYear: 2099, maxMonth: 12 };
+}
+
 export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter }) {
   const [category, setCategory] = useState<string | null>(initialFilter?.category ?? null);
   const [month, setMonth] = useState<number | null>(initialFilter?.month ?? null);
   const [year, setYear] = useState<number | null>(initialFilter?.year ?? null);
+  const [bounds] = useState(getDataBounds);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [txs, setTxs] = useState<Tx[]>([]);
@@ -87,10 +100,11 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
   const [catCursor, setCatCursor] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
 
-  function load(s = search) {
+  function load(s = search, keepCursor = false) {
     const rows = getTxs(category, month, year, s);
     setTxs(rows);
-    setCursor(0);
+    if (!keepCursor) setCursor(0);
+    else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
   }
 
   useEffect(() => { load(); }, [category, month, year, search]);
@@ -105,24 +119,24 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
     setStatusMsg(`Rule saved · recategorized ${count} transactions`);
     setMode('list');
     setTimeout(() => setStatusMsg(''), 3000);
-    load();
+    load(search, true);
   }
 
   function applyOverride(cat: string) {
     if (!selected) return;
     db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?')
       .run(cat, cat, selected.id);
-    setStatusMsg('Override set');
+    setStatusMsg('Category set');
     setMode('list');
     setTimeout(() => setStatusMsg(''), 3000);
-    load();
+    load(search, true);
   }
 
   function toggleIgnored() {
     if (!selected) return;
     db.prepare('UPDATE transactions SET ignored = CASE WHEN ignored = 1 THEN 0 ELSE 1 END WHERE id = ?')
       .run(selected.id);
-    load();
+    load(search, true);
   }
 
   function clearOverride() {
@@ -133,7 +147,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
       .run(categorize(selected.name, selected.merchant_name, raw), selected.id);
     setStatusMsg('Override cleared');
     setTimeout(() => setStatusMsg(''), 2000);
-    load();
+    load(search, true);
   }
 
   useInput((input, key) => {
@@ -169,7 +183,28 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
       if (input === '4') { onNavigate('import'); return; }
       if (key.escape) {
         if (search) { setSearch(''); setSearchInput(''); return; }
+        if (month) { setMonth(null); setYear(null); return; }
         onNavigate('dashboard');
+        return;
+      }
+      if (key.leftArrow) {
+        const m = month ?? bounds.maxMonth;
+        const y = year ?? bounds.maxYear;
+        const prevM = m === 1 ? 12 : m - 1;
+        const prevY = m === 1 ? y - 1 : y;
+        if (prevY > bounds.minYear || (prevY === bounds.minYear && prevM >= bounds.minMonth)) {
+          setMonth(prevM); setYear(prevY);
+        }
+        return;
+      }
+      if (key.rightArrow) {
+        const m = month ?? bounds.maxMonth;
+        const y = year ?? bounds.maxYear;
+        const nextM = m === 12 ? 1 : m + 1;
+        const nextY = m === 12 ? y + 1 : y;
+        if (nextY < bounds.maxYear || (nextY === bounds.maxYear && nextM <= bounds.maxMonth)) {
+          setMonth(nextM); setYear(nextY);
+        }
         return;
       }
       if (input === '/') { setMode('search'); return; }
@@ -215,7 +250,9 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
           Transactions
           {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
         </Text>
-        <Text dimColor>[/] search  ·  [u] uncategorized  [a] all  ·  [c] rule  [e] edit  [x] undo edit  [i] ignore</Text>
+        <Text dimColor>
+          {month ? '← → month  ·  ' : ''}[/] search  ·  [u] uncategorized  [a] all  ·  [c] rule  [e] edit  [x] undo edit  [i] ignore
+        </Text>
       </Box>
 
       {mode === 'search' ? (
