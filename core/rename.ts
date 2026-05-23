@@ -20,7 +20,7 @@ export function applyNameRules(name: string): string {
     } else {
       const re = new RegExp(rule.pattern, 'i');
       if (re.test(name)) {
-        return name.replace(re, rule.replacement);
+        return rule.replacement;
       }
     }
   }
