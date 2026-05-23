@@ -5,11 +5,11 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "dev": "/Users/thomas/.nvm/versions/node/v22.22.3/bin/node --experimental-sqlite --no-warnings --import tsx/esm tui/index.tsx",
-    "link": "/Users/thomas/.nvm/versions/node/v22.22.3/bin/node --experimental-sqlite --no-warnings --import tsx/esm scripts/link.ts",
-    "import-csv": "/Users/thomas/.nvm/versions/node/v22.22.3/bin/node --experimental-sqlite --no-warnings --import tsx/esm scripts/import-csv.ts",
-    "seed-rules": "/Users/thomas/.nvm/versions/node/v22.22.3/bin/node --experimental-sqlite --no-warnings --import tsx/esm scripts/seed-rules.ts",
-    "mcp": "/Users/thomas/.nvm/versions/node/v22.22.3/bin/node --experimental-sqlite --no-warnings --import tsx/esm mcp/server.ts"
+    "dev": "node --experimental-sqlite --no-warnings --import tsx/esm tui/index.tsx",
+    "link": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/link.ts",
+    "import-csv": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/import-csv.ts",
+    "seed-rules": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/seed-rules.ts",
+    "mcp": "node --experimental-sqlite --no-warnings --import tsx/esm mcp/server.ts"
   },
   "keywords": [],
   "author": "",
