@@ -66,6 +66,10 @@ export function initDb() {
       pattern TEXT NOT NULL,
       replacement TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS categories (
+      name TEXT PRIMARY KEY
+    );
   `);
 
   // Add manual_category column if not present (migration)
@@ -75,6 +79,16 @@ export function initDb() {
 
   // Seed default hidden categories (idempotent)
   const hidden = ['Transfer', 'Loan Payment'];
-  const insert = db.prepare('INSERT OR IGNORE INTO hidden_categories (category) VALUES (?)');
-  for (const cat of hidden) insert.run(cat);
+  const insertHidden = db.prepare('INSERT OR IGNORE INTO hidden_categories (category) VALUES (?)');
+  for (const cat of hidden) insertHidden.run(cat);
+
+  // Seed default categories (idempotent)
+  const defaultCategories = [
+    'Income', 'Transfer', 'Food & Drink', 'Shopping', 'Transportation',
+    'Travel', 'Bills & Utilities', 'Insurance', 'Medical', 'Personal Care',
+    'Childcare', 'Entertainment', 'Home', 'Services', 'Fees',
+    'Government', 'Taxes', 'Loan Payment', 'Uncategorized',
+  ];
+  const insertCat = db.prepare('INSERT OR IGNORE INTO categories (name) VALUES (?)');
+  for (const cat of defaultCategories) insertCat.run(cat);
 }

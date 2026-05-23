@@ -46,13 +46,15 @@ const PLAID_CATEGORY_MAP: Record<string, string> = {
 export function categorize(name: string, merchant: string | null, plaidCategory: string | null): string {
   const rules = db.prepare('SELECT match_type, pattern, category FROM category_rules ORDER BY priority DESC').all() as Rule[];
 
-  const haystack = (merchant ?? name).toLowerCase();
+  const haystacks = [name.toLowerCase()];
+  if (merchant && merchant.toLowerCase() !== name.toLowerCase()) haystacks.push(merchant.toLowerCase());
 
   for (const rule of rules) {
     if (rule.match_type === 'name') {
-      if (haystack.includes(rule.pattern.toLowerCase())) return rule.category;
+      if (haystacks.some((h) => h.includes(rule.pattern.toLowerCase()))) return rule.category;
     } else if (rule.match_type === 'regex') {
-      if (new RegExp(rule.pattern, 'i').test(haystack)) return rule.category;
+      const re = new RegExp(rule.pattern, 'i');
+      if (haystacks.some((h) => re.test(h))) return rule.category;
     }
   }
 

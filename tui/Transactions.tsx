@@ -4,12 +4,9 @@ import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
 import type { Screen, TxFilter } from './App.js';
 
-const CATEGORIES = [
-  'Income', 'Transfer', 'Food & Drink', 'Shopping', 'Transportation',
-  'Travel', 'Bills & Utilities', 'Insurance', 'Medical', 'Personal Care',
-  'Childcare', 'Entertainment', 'Home', 'Services', 'Fees',
-  'Government', 'Taxes', 'Loan Payment', 'Uncategorized',
-];
+function getCategories(): string[] {
+  return (db.prepare('SELECT name FROM categories ORDER BY name').all() as { name: string }[]).map((r) => r.name);
+}
 
 type Tx = {
   id: string;
@@ -99,6 +96,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
   const [mode, setMode] = useState<Mode>('list');
   const [catCursor, setCatCursor] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
+  const [categories, setCategories] = useState<string[]>(getCategories);
 
   function load(s = search, keepCursor = false) {
     const rows = getTxs(category, month, year, s);
@@ -113,8 +111,14 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
 
   function applyRule(cat: string) {
     if (!selected) return;
-    db.prepare(`INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', ?, ?)`)
-      .run(selected.name, cat);
+    const existing = db.prepare(`SELECT id FROM category_rules WHERE match_type = 'name' AND pattern = ?`)
+      .get(selected.name) as { id: number } | undefined;
+    if (existing) {
+      db.prepare('UPDATE category_rules SET category = ? WHERE id = ?').run(cat, existing.id);
+    } else {
+      db.prepare(`INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', ?, ?)`)
+        .run(selected.name, cat);
+    }
     const count = applyRuleToAll();
     setStatusMsg(`Rule saved · recategorized ${count} transactions`);
     setMode('list');
@@ -212,19 +216,19 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
       if (key.downArrow) setCursor((c) => Math.min(txs.length - 1, c + 1));
       if (input === 'u') { setSearch(''); setSearchInput(''); setCategory('Uncategorized'); setMonth(null); setYear(null); }
       if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setMonth(null); setYear(null); }
-      if (input === 'c' && selected) { setCatCursor(0); setMode('categorize'); }
-      if (input === 'e' && selected) { setCatCursor(Math.max(0, CATEGORIES.indexOf(selected.category))); setMode('override'); }
+      if (input === 'c' && selected) { const cats = getCategories(); setCategories(cats); setCatCursor(0); setMode('categorize'); }
+      if (input === 'e' && selected) { const cats = getCategories(); setCategories(cats); setCatCursor(Math.max(0, cats.indexOf(selected.category))); setMode('override'); }
       if (input === 'x' && selected?.manual_category) clearOverride();
       if (input === 'i' && selected) toggleIgnored();
     } else if (mode === 'categorize') {
       if (key.upArrow) setCatCursor((c) => Math.max(0, c - 1));
-      if (key.downArrow) setCatCursor((c) => Math.min(CATEGORIES.length - 1, c + 1));
-      if (key.return) applyRule(CATEGORIES[catCursor]);
+      if (key.downArrow) setCatCursor((c) => Math.min(categories.length - 1, c + 1));
+      if (key.return) applyRule(categories[catCursor]);
       if (key.escape) setMode('list');
     } else if (mode === 'override') {
       if (key.upArrow) setCatCursor((c) => Math.max(0, c - 1));
-      if (key.downArrow) setCatCursor((c) => Math.min(CATEGORIES.length - 1, c + 1));
-      if (key.return) applyOverride(CATEGORIES[catCursor]);
+      if (key.downArrow) setCatCursor((c) => Math.min(categories.length - 1, c + 1));
+      if (key.return) applyOverride(categories[catCursor]);
       if (key.escape) setMode('list');
     }
   });
@@ -304,7 +308,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
           <Text bold>Rule: <Text color="yellow">{selected?.name}</Text></Text>
           <Text dimColor>Creates a rule · applies to all matching transactions · ↑↓ · Enter · Esc</Text>
           <Box flexDirection="column" marginTop={1}>
-            {CATEGORIES.map((cat, i) => (
+            {categories.map((cat, i) => (
               <Text key={cat} color={i === catCursor ? 'cyan' : undefined} dimColor={i !== catCursor}>
                 {i === catCursor ? '▶ ' : '  '}{cat}
               </Text>
@@ -318,7 +322,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
           <Text bold>Edit: <Text color="yellow">{selected?.name}</Text></Text>
           <Text dimColor>Pins this transaction only · survives syncs · shown in <Text color="magenta">magenta ◆</Text> · ↑↓ · Enter · Esc</Text>
           <Box flexDirection="column" marginTop={1}>
-            {CATEGORIES.map((cat, i) => (
+            {categories.map((cat, i) => (
               <Text key={cat} color={i === catCursor ? 'magenta' : undefined} dimColor={i !== catCursor}>
                 {i === catCursor ? '▶ ' : '  '}{cat}
               </Text>

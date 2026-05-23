@@ -5,23 +5,21 @@ import { categorize } from '../core/categorize.js';
 import { rebuildDisplayNames } from '../core/rename.js';
 import type { Screen, TxFilter } from './App.js';
 
-const CATEGORIES = [
-  'Income', 'Transfer', 'Food & Drink', 'Shopping', 'Transportation',
-  'Travel', 'Bills & Utilities', 'Insurance', 'Medical', 'Personal Care',
-  'Childcare', 'Entertainment', 'Home', 'Services', 'Fees',
-  'Government', 'Taxes', 'Loan Payment', 'Uncategorized',
-];
-
 type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string };
 type NameRule = { id: number; match_type: string; pattern: string; replacement: string };
-type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-replacement';
-type Section = 'rules' | 'hidden' | 'names';
+type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-replacement' | 'add-category-name';
+type Section = 'rules' | 'names' | 'hidden' | 'categories';
+
+const SECTIONS: Section[] = ['rules', 'names', 'hidden', 'categories'];
 
 function getRules(): Rule[] {
   return db.prepare('SELECT id, priority, match_type, pattern, category FROM category_rules ORDER BY priority DESC, id ASC').all() as Rule[];
 }
 function getNameRules(): NameRule[] {
   return db.prepare('SELECT id, match_type, pattern, replacement FROM name_rules ORDER BY id ASC').all() as NameRule[];
+}
+function getCategories(): string[] {
+  return (db.prepare('SELECT name FROM categories ORDER BY name').all() as { name: string }[]).map((r) => r.name);
 }
 function getUncategorizedCount() {
   return (db.prepare("SELECT COUNT(*) as c FROM transactions WHERE category = 'Uncategorized'").get() as { c: number }).c;
@@ -49,6 +47,9 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
   const [statusMsg, setStatusMsg] = useState('');
   const [hiddenSet, setHiddenSet] = useState<Set<string>>(new Set());
   const [hiddenCursor, setHiddenCursor] = useState(0);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [catListCursor, setCatListCursor] = useState(0);
+  const [newCategoryName, setNewCategoryName] = useState('');
 
   // New category rule state
   const [newPattern, setNewPattern] = useState('');
@@ -72,6 +73,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
     setNameRules(getNameRules());
     setUncategorized(getUncategorizedCount());
     setHiddenSet(getHiddenSet());
+    setCategories(getCategories());
   }
 
   useEffect(() => { load(); }, []);
@@ -92,13 +94,20 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
   }
 
   function saveRule() {
+    const category = categories[catCursor];
     if (editingRuleId !== null) {
       db.prepare('UPDATE category_rules SET match_type = ?, pattern = ?, category = ? WHERE id = ?')
-        .run(newType, newPattern, CATEGORIES[catCursor], editingRuleId);
+        .run(newType, newPattern, category, editingRuleId);
       setEditingRuleId(null);
     } else {
-      db.prepare(`INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, ?, ?, ?)`)
-        .run(newType, newPattern, CATEGORIES[catCursor]);
+      const existing = db.prepare('SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?')
+        .get(newType, newPattern) as { id: number } | undefined;
+      if (existing) {
+        db.prepare('UPDATE category_rules SET category = ? WHERE id = ?').run(category, existing.id);
+      } else {
+        db.prepare('INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, ?, ?, ?)')
+          .run(newType, newPattern, category);
+      }
     }
 
     // Apply to all transactions without a manual override
@@ -158,18 +167,19 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
 
       if (key.leftArrow) {
         setSearch('');
-        setSection((s) => s === 'rules' ? 'hidden' : s === 'names' ? 'rules' : 'names');
+        setSection((s) => { const i = SECTIONS.indexOf(s); return SECTIONS[(i - 1 + SECTIONS.length) % SECTIONS.length]; });
         return;
       }
       if (key.rightArrow) {
         setSearch('');
-        setSection((s) => s === 'rules' ? 'names' : s === 'names' ? 'hidden' : 'rules');
+        setSection((s) => { const i = SECTIONS.indexOf(s); return SECTIONS[(i + 1) % SECTIONS.length]; });
         return;
       }
 
       if (section === 'rules' || section === 'names') {
         if (input === '/') { setMode('search'); return; }
       }
+
 
       if (section === 'rules') {
         if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
@@ -181,7 +191,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
           setEditingRuleId(r.id);
           setNewPattern(r.pattern);
           setNewType(r.match_type as 'name' | 'regex');
-          setCatCursor(Math.max(0, CATEGORIES.indexOf(r.category)));
+          setCatCursor(Math.max(0, categories.indexOf(r.category)));
           setMode('add-pattern');
         }
       } else if (section === 'names') {
@@ -197,16 +207,29 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
           setNewReplacement(r.replacement);
           setMode('add-name-pattern');
         }
-      } else {
+      } else if (section === 'hidden') {
         if (key.upArrow) setHiddenCursor((c) => Math.max(0, c - 1));
-        if (key.downArrow) setHiddenCursor((c) => Math.min(CATEGORIES.length - 1, c + 1));
+        if (key.downArrow) setHiddenCursor((c) => Math.min(categories.length - 1, c + 1));
         if (input === 'h') {
-          const cat = CATEGORIES[hiddenCursor];
-          toggleHidden(cat, hiddenSet);
-          const wasHidden = hiddenSet.has(cat);
-          setStatusMsg(`${cat} is now ${wasHidden ? 'visible' : 'hidden'}`);
+          const cat = categories[hiddenCursor];
+          if (cat) {
+            toggleHidden(cat, hiddenSet);
+            const wasHidden = hiddenSet.has(cat);
+            setStatusMsg(`${cat} is now ${wasHidden ? 'visible' : 'hidden'}`);
+            setTimeout(() => setStatusMsg(''), 2000);
+            load();
+          }
+        }
+      } else if (section === 'categories') {
+        if (key.upArrow) setCatListCursor((c) => Math.max(0, c - 1));
+        if (key.downArrow) setCatListCursor((c) => Math.min(categories.length - 1, c + 1));
+        if (input === 'a') { setNewCategoryName(''); setMode('add-category-name'); }
+        if (input === 'd' && categories[catListCursor]) {
+          db.prepare('DELETE FROM categories WHERE name = ?').run(categories[catListCursor]);
+          setStatusMsg(`Deleted "${categories[catListCursor]}"`);
           setTimeout(() => setStatusMsg(''), 2000);
           load();
+          setCatListCursor((c) => Math.max(0, c - 1));
         }
       }
     } else if (mode === 'add-pattern') {
@@ -221,7 +244,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
     } else if (mode === 'add-category') {
       if (key.escape) { setMode('list'); return; }
       if (key.upArrow) setCatCursor((c) => Math.max(0, c - 1));
-      if (key.downArrow) setCatCursor((c) => Math.min(CATEGORIES.length - 1, c + 1));
+      if (key.downArrow) setCatCursor((c) => Math.min(categories.length - 1, c + 1));
       if (key.return) saveRule();
     } else if (mode === 'add-name-pattern') {
       if (key.return) { if (newNamePattern) setMode('add-name-type'); return; }
@@ -237,6 +260,19 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       if (key.escape) { setMode('list'); return; }
       if (key.backspace || key.delete) { setNewReplacement((p) => p.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setNewReplacement((p) => p + input);
+    } else if (mode === 'add-category-name') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.return && newCategoryName.trim()) {
+        db.prepare('INSERT OR IGNORE INTO categories (name) VALUES (?)').run(newCategoryName.trim());
+        setStatusMsg(`Added "${newCategoryName.trim()}"`);
+        setTimeout(() => setStatusMsg(''), 2000);
+        setNewCategoryName('');
+        setMode('list');
+        load();
+        return;
+      }
+      if (key.backspace || key.delete) { setNewCategoryName((p) => p.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) setNewCategoryName((p) => p + input);
     }
   });
 
@@ -261,15 +297,17 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       </Box>
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
-          <Text bold color={section === 'rules' ? 'white' : 'gray'}>Category Rules</Text>
-          <Text dimColor>·</Text>
-          <Text bold color={section === 'names' ? 'white' : 'gray'}>Name Rules</Text>
-          <Text dimColor>·</Text>
-          <Text bold color={section === 'hidden' ? 'white' : 'gray'}>Hidden</Text>
+          {SECTIONS.map((s) => (
+            <Text key={s} bold color={section === s ? 'white' : undefined} dimColor={section !== s}>
+              {s === 'rules' ? 'Category Rules' : s === 'names' ? 'Name Rules' : s === 'hidden' ? 'Hidden' : 'Categories'}
+            </Text>
+          ))}
         </Box>
         <Text dimColor>
           {section === 'hidden'
             ? '[h] toggle  ·  ← → switch'
+            : section === 'categories'
+            ? '[a] add  [d] delete  ·  ← → switch'
             : '[/] search  [a] add  [e] edit  [d] delete  ·  ← → switch'}
         </Text>
       </Box>
@@ -352,7 +390,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
             <Text dimColor>Hidden categories are excluded from spending totals.</Text>
           </Box>
           <Box flexDirection="column">
-            {CATEGORIES.map((cat, i) => {
+            {categories.map((cat, i) => {
               const isSelected = hiddenCursor === i;
               const isHidden = hiddenSet.has(cat);
               return (
@@ -368,6 +406,27 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
           </Box>
           <Text dimColor>{'─'.repeat(70)}</Text>
           <Text dimColor>{hiddenSet.size} categor{hiddenSet.size === 1 ? 'y' : 'ies'} hidden</Text>
+        </>
+      )}
+
+      {section === 'categories' && (
+        <>
+          <Box marginTop={1} marginBottom={1}>
+            <Text dimColor>Categories available when editing or creating rules.</Text>
+          </Box>
+          <Box flexDirection="column">
+            {categories.map((cat, i) => {
+              const isSelected = catListCursor === i;
+              return (
+                <Box key={cat} gap={2}>
+                  <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶ ' : '  '}</Text>
+                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>{cat}</Text>
+                </Box>
+              );
+            })}
+          </Box>
+          <Text dimColor>{'─'.repeat(70)}</Text>
+          <Text dimColor>{categories.length} categories</Text>
         </>
       )}
 
@@ -396,7 +455,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
           <Text>Pattern: <Text color="yellow">"{newPattern}"</Text>  Type: <Text color="yellow">{newType}</Text></Text>
           <Text dimColor>↑↓ select · Enter save · Esc cancel</Text>
           <Box flexDirection="column" marginTop={1}>
-            {CATEGORIES.map((cat, i) => (
+            {categories.map((cat, i) => (
               <Text key={cat} color={i === catCursor ? 'cyan' : 'white'} dimColor={i !== catCursor}>
                 {i === catCursor ? '▶ ' : '  '}{cat}
               </Text>
@@ -420,6 +479,13 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
             <Text color="green">[n] name match (replaces whole name)</Text>
             <Text color="green">[r] regex (can use capture groups)</Text>
           </Box>
+        </Box>
+      )}
+      {mode === 'add-category-name' && (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+          <Text bold>New Category</Text>
+          <Text dimColor>Type a name · Enter save · Esc cancel</Text>
+          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{newCategoryName}<Text color="yellow">█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-replacement' && (
