@@ -238,21 +238,24 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
 
     if (mode === 'edit') {
       if (key.escape) { setMode('list'); return; }
-      if (key.leftArrow)  { setEditField('name'); return; }
-      if (key.rightArrow) { setEditField('category'); return; }
-      if (input === 't') { saveToTransaction(); return; }
-      if (input === 'r') {
-        setEditPattern(selected?.name ?? '');
-        setEditMatchType('name');
-        setMode('edit-rule');
-        return;
-      }
       if (editField === 'name') {
+        // In name field: all keys type except navigation
+        if (key.return || key.rightArrow) { setEditField('category'); return; }
+        if (key.leftArrow) { return; } // already in name field
         if (key.backspace || key.delete) { setEditName((n) => n.slice(0, -1)); return; }
         if (input && !key.ctrl && !key.meta) { setEditName((n) => n + input); return; }
       } else {
-        if (key.upArrow) setEditCatCursor((c) => Math.max(0, c - 1));
-        if (key.downArrow) setEditCatCursor((c) => Math.min(categories.length - 1, c + 1));
+        // In category field: t/r are action keys, not typed
+        if (key.leftArrow) { setEditField('name'); return; }
+        if (key.upArrow) { setEditCatCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.downArrow) { setEditCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+        if (input === 't' || key.return) { saveToTransaction(); return; }
+        if (input === 'r') {
+          setEditPattern(selected?.name ?? '');
+          setEditMatchType('name');
+          setMode('edit-rule');
+          return;
+        }
       }
       return;
     }
@@ -422,10 +425,10 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
           </Box>
 
           <Box marginTop={1} gap={3}>
-            <Text dimColor>← → switch field</Text>
-            <Text color="cyan">[t] this transaction</Text>
-            <Text color="cyan">[r] make rule</Text>
-            <Text dimColor>Esc cancel</Text>
+            {editField === 'name'
+              ? <Text dimColor>Enter / → to pick category  ·  Esc cancel</Text>
+              : <><Text color="cyan">[t] / Enter  this transaction</Text><Text color="cyan">[r] make rule</Text><Text dimColor>← name  ·  Esc cancel</Text></>
+            }
           </Box>
         </Box>
       )}
