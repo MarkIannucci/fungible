@@ -6,8 +6,8 @@ import { rebuildDisplayNames } from '../core/rename.js';
 import type { Screen, TxFilter } from './App.js';
 
 type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null };
-type NameRule = { id: number; match_type: string; pattern: string; replacement: string };
-type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-replacement' | 'add-category-name';
+type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null };
+type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-min-amount' | 'add-name-max-amount' | 'add-name-replacement' | 'add-category-name';
 type Section = 'rules' | 'names' | 'hidden' | 'categories';
 
 const SECTIONS: Section[] = ['rules', 'names', 'hidden', 'categories'];
@@ -16,7 +16,7 @@ function getRules(): Rule[] {
   return db.prepare('SELECT id, priority, match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC, id ASC').all() as Rule[];
 }
 function getNameRules(): NameRule[] {
-  return db.prepare('SELECT id, match_type, pattern, replacement FROM name_rules ORDER BY id ASC').all() as NameRule[];
+  return db.prepare('SELECT id, match_type, pattern, replacement, min_amount, max_amount FROM name_rules ORDER BY id ASC').all() as NameRule[];
 }
 function getCategories(): string[] {
   return (db.prepare('SELECT name FROM categories ORDER BY name').all() as { name: string }[]).map((r) => r.name);
@@ -61,6 +61,8 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
   // New name rule state
   const [newNamePattern, setNewNamePattern] = useState('');
   const [newNameType, setNewNameType] = useState<'name' | 'regex'>('name');
+  const [newNameMinAmount, setNewNameMinAmount] = useState('');
+  const [newNameMaxAmount, setNewNameMaxAmount] = useState('');
   const [newReplacement, setNewReplacement] = useState('');
 
   // Editing
@@ -133,19 +135,23 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
   }
 
   function saveNameRule() {
+    const minAmt = newNameMinAmount.trim() ? parseFloat(newNameMinAmount) : null;
+    const maxAmt = newNameMaxAmount.trim() ? parseFloat(newNameMaxAmount) : null;
     if (editingNameRuleId !== null) {
-      db.prepare('UPDATE name_rules SET match_type = ?, pattern = ?, replacement = ? WHERE id = ?')
-        .run(newNameType, newNamePattern, newReplacement, editingNameRuleId);
+      db.prepare('UPDATE name_rules SET match_type = ?, pattern = ?, replacement = ?, min_amount = ?, max_amount = ? WHERE id = ?')
+        .run(newNameType, newNamePattern, newReplacement, minAmt, maxAmt, editingNameRuleId);
       setEditingNameRuleId(null);
     } else {
-      db.prepare('INSERT INTO name_rules (match_type, pattern, replacement) VALUES (?, ?, ?)')
-        .run(newNameType, newNamePattern, newReplacement);
+      db.prepare('INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES (?, ?, ?, ?, ?)')
+        .run(newNameType, newNamePattern, newReplacement, minAmt, maxAmt);
     }
     rebuildDisplayNames();
     setStatusMsg(`Name rule saved`);
     setTimeout(() => setStatusMsg(''), 3000);
     setNewNamePattern('');
     setNewReplacement('');
+    setNewNameMinAmount('');
+    setNewNameMaxAmount('');
     setMode('list');
     load();
   }
@@ -204,13 +210,15 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       } else if (section === 'names') {
         if (key.upArrow) setNameCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setNameCursor((c) => Math.min(filteredNameRules.length - 1, c + 1));
-        if (input === 'a') { setEditingNameRuleId(null); setNewNamePattern(''); setNewNameType('name'); setNewReplacement(''); setMode('add-name-pattern'); }
+        if (input === 'a') { setEditingNameRuleId(null); setNewNamePattern(''); setNewNameType('name'); setNewNameMinAmount(''); setNewNameMaxAmount(''); setNewReplacement(''); setMode('add-name-pattern'); }
         if (input === 'd' && filteredNameRules[nameCursor]) { deleteNameRule(filteredNameRules[nameCursor].id); }
         if ((input === 'e' || key.return) && filteredNameRules[nameCursor]) {
           const r = filteredNameRules[nameCursor];
           setEditingNameRuleId(r.id);
           setNewNamePattern(r.pattern);
           setNewNameType(r.match_type as 'name' | 'regex');
+          setNewNameMinAmount(r.min_amount !== null ? String(r.min_amount) : '');
+          setNewNameMaxAmount(r.max_amount !== null ? String(r.max_amount) : '');
           setNewReplacement(r.replacement);
           setMode('add-name-pattern');
         }
@@ -270,8 +278,18 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       if (input && !key.ctrl && !key.meta) setNewNamePattern((p) => p + input);
     } else if (mode === 'add-name-type') {
       if (key.escape) { setMode('list'); return; }
-      if (input === 'n') { setNewNameType('name'); setMode('add-name-replacement'); }
-      if (input === 'r') { setNewNameType('regex'); setMode('add-name-replacement'); }
+      if (input === 'n') { setNewNameType('name'); setMode('add-name-min-amount'); }
+      if (input === 'r') { setNewNameType('regex'); setMode('add-name-min-amount'); }
+    } else if (mode === 'add-name-min-amount') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.return) { setMode('add-name-max-amount'); return; }
+      if (key.backspace || key.delete) { setNewNameMinAmount((p) => p.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) setNewNameMinAmount((p) => p + input);
+    } else if (mode === 'add-name-max-amount') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.return) { setMode('add-name-replacement'); return; }
+      if (key.backspace || key.delete) { setNewNameMaxAmount((p) => p.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) setNewNameMaxAmount((p) => p + input);
     } else if (mode === 'add-name-replacement') {
       if (key.return) { if (newReplacement) saveNameRule(); return; }
       if (key.escape) { setMode('list'); return; }
@@ -386,20 +404,31 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
         <>
           <Box gap={2} marginTop={1}>
             <Text dimColor>{'TYPE  '.padEnd(6)}</Text>
-            <Text dimColor>{'PATTERN'.padEnd(32)}</Text>
+            <Text dimColor>{'PATTERN'.padEnd(28)}</Text>
+            <Text dimColor>{'AMOUNT'.padEnd(12)}</Text>
             <Text dimColor>REPLACEMENT</Text>
           </Box>
           {filteredNameRules.length === 0
             ? <Text dimColor marginTop={1}>{nameRules.length === 0 ? 'No name rules yet. [a] to add one.' : 'No matches.'}</Text>
             : filteredNameRules.map((rule, i) => {
                 const isSelected = nameCursor === i;
+                const amtLabel = rule.min_amount !== null && rule.max_amount !== null && rule.min_amount === rule.max_amount
+                  ? `$${rule.min_amount}`
+                  : rule.min_amount !== null && rule.max_amount !== null
+                  ? `$${rule.min_amount}-$${rule.max_amount}`
+                  : rule.min_amount !== null ? `≥$${rule.min_amount}`
+                  : rule.max_amount !== null ? `≤$${rule.max_amount}`
+                  : '';
                 return (
                   <Box key={rule.id} gap={2}>
                     <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▶ ' : '  '}</Text>
                     <Text color="yellow" dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
                     <Text dimColor={!isSelected}>
-                      {rule.pattern.length > 32 ? rule.pattern.slice(0, 31) + '…' : rule.pattern.padEnd(32)}
+                      {rule.pattern.length > 26 ? rule.pattern.slice(0, 25) + '…' : rule.pattern.padEnd(26)}
                     </Text>
+                    {amtLabel
+                      ? <Text color="magenta" dimColor={!isSelected}>{amtLabel.padEnd(12)}</Text>
+                      : <Text>{' '.repeat(12)}</Text>}
                     <Text color="green" dimColor={!isSelected}>{rule.replacement}</Text>
                   </Box>
                 );
@@ -529,10 +558,37 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
           <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{newCategoryName}<Text color="yellow">█</Text></Text></Box>
         </Box>
       )}
+      {mode === 'add-name-min-amount' && (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+          <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Min Amount <Text dimColor>(optional)</Text></Text>
+          <Text>Pattern: <Text color="yellow">"{newNamePattern}"</Text>  Type: <Text color="yellow">{newNameType}</Text></Text>
+          <Text dimColor>Enter to skip · Esc cancel</Text>
+          <Box marginTop={1}><Text>Min $: </Text><Text color="yellow">{newNameMinAmount}<Text color="green">█</Text></Text></Box>
+        </Box>
+      )}
+      {mode === 'add-name-max-amount' && (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+          <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Max Amount <Text dimColor>(optional)</Text></Text>
+          <Text>Pattern: <Text color="yellow">"{newNamePattern}"</Text>  {newNameMinAmount && <Text>Min: <Text color="magenta">${newNameMinAmount}</Text>  </Text>}</Text>
+          <Text dimColor>Enter to skip · Esc cancel</Text>
+          <Box marginTop={1}><Text>Max $: </Text><Text color="yellow">{newNameMaxAmount}<Text color="green">█</Text></Text></Box>
+        </Box>
+      )}
       {mode === 'add-name-replacement' && (
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Replacement</Text>
-          <Text>Pattern: <Text color="yellow">"{newNamePattern}"</Text>  Type: <Text color="yellow">{newNameType}</Text></Text>
+          <Text>
+            Pattern: <Text color="yellow">"{newNamePattern}"</Text>  Type: <Text color="yellow">{newNameType}</Text>
+            {(newNameMinAmount || newNameMaxAmount) && (
+              <Text>  Amount: <Text color="magenta">
+                {newNameMinAmount && newNameMaxAmount && newNameMinAmount === newNameMaxAmount
+                  ? `$${newNameMinAmount}`
+                  : newNameMinAmount && newNameMaxAmount
+                  ? `$${newNameMinAmount}–$${newNameMaxAmount}`
+                  : newNameMinAmount ? `≥$${newNameMinAmount}` : `≤$${newNameMaxAmount}`}
+              </Text></Text>
+            )}
+          </Text>
           <Text dimColor>The display name to show instead</Text>
           <Box marginTop={1}><Text>Replace with: </Text><Text color="green">{newReplacement}<Text color="green">█</Text></Text></Box>
         </Box>

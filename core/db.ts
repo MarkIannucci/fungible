@@ -91,6 +91,13 @@ export function initDb() {
   try { db.exec('ALTER TABLE transactions ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0'); } catch {}
   try { db.exec('ALTER TABLE category_rules ADD COLUMN min_amount REAL'); } catch {}
   try { db.exec('ALTER TABLE category_rules ADD COLUMN max_amount REAL'); } catch {}
+  try { db.exec('ALTER TABLE name_rules ADD COLUMN min_amount REAL'); } catch {}
+  try { db.exec('ALTER TABLE name_rules ADD COLUMN max_amount REAL'); } catch {}
+  // Fix Venmo phone bill name rule — restrict to $54.79 only
+  db.prepare(
+    `UPDATE name_rules SET min_amount = 54.79, max_amount = 54.79
+     WHERE pattern = 'VENMO PAYMENT' AND replacement = 'Phone Bill' AND min_amount IS NULL`
+  ).run();
 
   // Seed default hidden categories (idempotent)
   const hidden = ['Transfer', 'Loan Payment'];
