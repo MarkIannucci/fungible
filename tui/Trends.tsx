@@ -137,39 +137,67 @@ function getPeriodTotals(view: View, range: TrendsRange): PeriodRow[] {
   const allPeriods = generateAllPeriods(range);
 
   // --- Flex breakdown: all three tiers per period ---
+  // Group by category first (HAVING SUM > 0) so refunds net out before bucketing by tier,
+  // matching the same aggregation logic as getFlexSummary in queries.ts.
   if (view.mode === 'flexbreakdown') {
     const flexExpr = `
-      SUM(CASE WHEN c.flexibility = 'fixed'         THEN t.amount ELSE 0 END) as fixed,
-      SUM(CASE WHEN c.flexibility = 'flexible'      THEN t.amount ELSE 0 END) as flexible,
-      SUM(CASE WHEN c.flexibility = 'discretionary' THEN t.amount ELSE 0 END) as discretionary,
-      SUM(t.amount) as total
-    `;
-    const baseFlex = `
-      FROM transactions t
-      LEFT JOIN categories c ON c.name = t.category
-      WHERE t.pending = 0 AND t.ignored = 0 AND t.amount > 0
-        AND t.category NOT IN (SELECT category FROM hidden_categories)
+      SUM(CASE WHEN c.flexibility = 'fixed'         THEN cat.total ELSE 0 END) as fixed,
+      SUM(CASE WHEN c.flexibility = 'flexible'      THEN cat.total ELSE 0 END) as flexible,
+      SUM(CASE WHEN c.flexibility = 'discretionary' THEN cat.total ELSE 0 END) as discretionary,
+      SUM(cat.total) as total
     `;
     let rawRows: any[];
     if (range === 'month') {
       rawRows = db.prepare(`
-        SELECT CAST(substr(t.date,1,4) AS INTEGER) as y, CAST(substr(t.date,6,2) AS INTEGER) as m, ${flexExpr}
-        ${baseFlex} GROUP BY y, m ORDER BY y, m
+        SELECT cat.y, cat.m, ${flexExpr}
+        FROM (
+          SELECT CAST(substr(t.date,1,4) AS INTEGER) as y, CAST(substr(t.date,6,2) AS INTEGER) as m,
+            t.category, SUM(t.amount) as total
+          FROM transactions t
+          WHERE t.pending = 0 AND t.ignored = 0
+            AND t.category NOT IN (SELECT category FROM hidden_categories)
+          GROUP BY y, m, t.category HAVING SUM(t.amount) > 0
+        ) cat LEFT JOIN categories c ON c.name = cat.category
+        GROUP BY cat.y, cat.m ORDER BY cat.y, cat.m
       `).all() as any[];
     } else if (range === 'quarter') {
       rawRows = db.prepare(`
-        SELECT CAST(substr(t.date,1,4) AS INTEGER) as y, (CAST(substr(t.date,6,2) AS INTEGER)-1)/3+1 as q, ${flexExpr}
-        ${baseFlex} GROUP BY y, q ORDER BY y, q
+        SELECT cat.y, cat.q, ${flexExpr}
+        FROM (
+          SELECT CAST(substr(t.date,1,4) AS INTEGER) as y, (CAST(substr(t.date,6,2) AS INTEGER)-1)/3+1 as q,
+            t.category, SUM(t.amount) as total
+          FROM transactions t
+          WHERE t.pending = 0 AND t.ignored = 0
+            AND t.category NOT IN (SELECT category FROM hidden_categories)
+          GROUP BY y, q, t.category HAVING SUM(t.amount) > 0
+        ) cat LEFT JOIN categories c ON c.name = cat.category
+        GROUP BY cat.y, cat.q ORDER BY cat.y, cat.q
       `).all() as any[];
     } else if (range === 'year') {
       rawRows = db.prepare(`
-        SELECT CAST(substr(t.date,1,4) AS INTEGER) as y, ${flexExpr}
-        ${baseFlex} GROUP BY y ORDER BY y
+        SELECT cat.y, ${flexExpr}
+        FROM (
+          SELECT CAST(substr(t.date,1,4) AS INTEGER) as y,
+            t.category, SUM(t.amount) as total
+          FROM transactions t
+          WHERE t.pending = 0 AND t.ignored = 0
+            AND t.category NOT IN (SELECT category FROM hidden_categories)
+          GROUP BY y, t.category HAVING SUM(t.amount) > 0
+        ) cat LEFT JOIN categories c ON c.name = cat.category
+        GROUP BY cat.y ORDER BY cat.y
       `).all() as any[];
     } else {
       rawRows = db.prepare(`
-        SELECT date(t.date, '-' || ((CAST(strftime('%w', t.date) AS INTEGER)+6)%7) || ' days') as week_start, ${flexExpr}
-        ${baseFlex} GROUP BY week_start ORDER BY week_start
+        SELECT cat.week_start, ${flexExpr}
+        FROM (
+          SELECT date(t.date, '-' || ((CAST(strftime('%w', t.date) AS INTEGER)+6)%7) || ' days') as week_start,
+            t.category, SUM(t.amount) as total
+          FROM transactions t
+          WHERE t.pending = 0 AND t.ignored = 0
+            AND t.category NOT IN (SELECT category FROM hidden_categories)
+          GROUP BY week_start, t.category HAVING SUM(t.amount) > 0
+        ) cat LEFT JOIN categories c ON c.name = cat.category
+        GROUP BY cat.week_start ORDER BY cat.week_start
       `).all() as any[];
     }
 
