@@ -9,7 +9,9 @@
     "link": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/link.ts",
     "import-csv": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/import-csv.ts",
     "seed-rules": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/seed-rules.ts",
-    "mcp": "node --experimental-sqlite --no-warnings --import tsx/esm mcp/server.ts"
+    "mcp": "node --experimental-sqlite --no-warnings --import tsx/esm mcp/server.ts",
+    "test": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest run",
+    "test:watch": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest"
   },
   "keywords": [],
   "author": "",
@@ -26,6 +28,7 @@
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
     "tsx": "^4.22.3",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^3.2.4"
   }
 }
