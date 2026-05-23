@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
+import { rebuildDisplayNames } from '../core/rename.js';
 import type { Screen, TxFilter } from './App.js';
 
 function getCategories(): string[] {
@@ -20,7 +21,8 @@ type Tx = {
   ignored: number;
 };
 
-type Mode = 'list' | 'search' | 'categorize' | 'override';
+type Mode = 'list' | 'search' | 'edit' | 'edit-rule';
+type EditField = 'name' | 'category';
 
 function getTxs(category: string | null, month: number | null, year: number | null, search: string): Tx[] {
   const conditions: string[] = [];
@@ -84,6 +86,20 @@ function getDataBounds() {
   return row ?? { minYear: 2020, minMonth: 1, maxYear: 2099, maxMonth: 12 };
 }
 
+function countMatches(pattern: string, matchType: 'name' | 'regex'): number {
+  if (!pattern) return 0;
+  try {
+    if (matchType === 'name') {
+      return (db.prepare(
+        "SELECT COUNT(*) as c FROM transactions WHERE name LIKE ? OR COALESCE(merchant_name, '') LIKE ?"
+      ).get(`%${pattern}%`, `%${pattern}%`) as { c: number }).c;
+    }
+    const re = new RegExp(pattern, 'i');
+    const rows = db.prepare('SELECT name, merchant_name FROM transactions').all() as { name: string; merchant_name: string | null }[];
+    return rows.filter((r) => re.test(r.name) || (r.merchant_name ? re.test(r.merchant_name) : false)).length;
+  } catch { return 0; }
+}
+
 export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter }) {
   const [category, setCategory] = useState<string | null>(initialFilter?.category ?? null);
   const [month, setMonth] = useState<number | null>(initialFilter?.month ?? null);
@@ -94,9 +110,15 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
   const [txs, setTxs] = useState<Tx[]>([]);
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
-  const [catCursor, setCatCursor] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
   const [categories, setCategories] = useState<string[]>(getCategories);
+
+  // Edit panel state
+  const [editField, setEditField] = useState<EditField>('name');
+  const [editName, setEditName] = useState('');
+  const [editCatCursor, setEditCatCursor] = useState(0);
+  const [editPattern, setEditPattern] = useState('');
+  const [editMatchType, setEditMatchType] = useState<'name' | 'regex'>('name');
 
   function load(s = search, keepCursor = false) {
     const rows = getTxs(category, month, year, s);
@@ -109,28 +131,76 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
 
   const selected = txs[cursor];
 
-  function applyRule(cat: string) {
+  function openEdit() {
     if (!selected) return;
-    const existing = db.prepare(`SELECT id FROM category_rules WHERE match_type = 'name' AND pattern = ?`)
-      .get(selected.name) as { id: number } | undefined;
-    if (existing) {
-      db.prepare('UPDATE category_rules SET category = ? WHERE id = ?').run(cat, existing.id);
-    } else {
-      db.prepare(`INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', ?, ?)`)
-        .run(selected.name, cat);
+    const cats = getCategories();
+    setCategories(cats);
+    setEditName(selected.display_name ?? selected.name);
+    setEditCatCursor(Math.max(0, cats.indexOf(selected.category)));
+    setEditField('name');
+    setMode('edit');
+  }
+
+  function saveToTransaction() {
+    if (!selected) return;
+    const newCat = categories[editCatCursor];
+    const newDisplay = editName.trim();
+    const origDisplay = selected.display_name ?? selected.name;
+    const nameChanged = newDisplay !== origDisplay;
+    const catChanged = newCat !== selected.category;
+
+    if (nameChanged) {
+      db.prepare('UPDATE transactions SET display_name = ? WHERE id = ?')
+        .run(newDisplay === selected.name ? null : newDisplay, selected.id);
     }
-    const count = applyRuleToAll();
-    setStatusMsg(`Rule saved · recategorized ${count} transactions`);
+    if (catChanged) {
+      db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?')
+        .run(newCat, newCat, selected.id);
+    }
+
+    if (nameChanged || catChanged) setStatusMsg('Transaction updated');
     setMode('list');
-    setTimeout(() => setStatusMsg(''), 3000);
+    setTimeout(() => setStatusMsg(''), 2000);
     load(search, true);
   }
 
-  function applyOverride(cat: string) {
+  function saveAsRule() {
     if (!selected) return;
-    db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?')
-      .run(cat, cat, selected.id);
-    setStatusMsg('Category set');
+    const newCat = categories[editCatCursor];
+    const newDisplay = editName.trim();
+    const origDisplay = selected.display_name ?? selected.name;
+    const catChanged = newCat !== selected.category;
+    const nameChanged = newDisplay !== origDisplay;
+
+    const saved: string[] = [];
+
+    if (catChanged) {
+      const existing = db.prepare('SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?')
+        .get(editMatchType, editPattern) as { id: number } | undefined;
+      if (existing) {
+        db.prepare('UPDATE category_rules SET category = ? WHERE id = ?').run(newCat, existing.id);
+      } else {
+        db.prepare('INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, ?, ?, ?)')
+          .run(editMatchType, editPattern, newCat);
+      }
+      const count = applyRuleToAll();
+      saved.push(`category rule (${count} updated)`);
+    }
+
+    if (nameChanged) {
+      const existing = db.prepare('SELECT id FROM name_rules WHERE match_type = ? AND pattern = ?')
+        .get(editMatchType, editPattern) as { id: number } | undefined;
+      if (existing) {
+        db.prepare('UPDATE name_rules SET replacement = ? WHERE id = ?').run(newDisplay, existing.id);
+      } else {
+        db.prepare('INSERT INTO name_rules (match_type, pattern, replacement) VALUES (?, ?, ?)')
+          .run(editMatchType, editPattern, newDisplay);
+      }
+      rebuildDisplayNames();
+      saved.push('name rule');
+    }
+
+    setStatusMsg(saved.length ? `Saved: ${saved.join(' + ')}` : 'No changes');
     setMode('list');
     setTimeout(() => setStatusMsg(''), 3000);
     load(search, true);
@@ -156,28 +226,47 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
 
   useInput((input, key) => {
     if (mode === 'search') {
-      if (key.escape) {
-        setSearchInput('');
-        setSearch('');
-        setMode('list');
-        return;
-      }
-      if (key.return) {
-        setSearch(searchInput);
-        setMode('list');
-        return;
-      }
+      if (key.escape) { setSearchInput(''); setSearch(''); setMode('list'); return; }
+      if (key.return) { setSearch(searchInput); setMode('list'); return; }
       if (key.backspace || key.delete) {
         const next = searchInput.slice(0, -1);
-        setSearchInput(next);
-        setSearch(next);
-        return;
+        setSearchInput(next); setSearch(next); return;
       }
       if (input && !key.ctrl && !key.meta) {
         const next = searchInput + input;
-        setSearchInput(next);
-        setSearch(next);
+        setSearchInput(next); setSearch(next);
       }
+      return;
+    }
+
+    if (mode === 'edit') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.leftArrow)  { setEditField('name'); return; }
+      if (key.rightArrow) { setEditField('category'); return; }
+      if (input === 't') { saveToTransaction(); return; }
+      if (input === 'r') {
+        setEditPattern(selected?.name ?? '');
+        setEditMatchType('name');
+        setMode('edit-rule');
+        return;
+      }
+      if (editField === 'name') {
+        if (key.backspace || key.delete) { setEditName((n) => n.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setEditName((n) => n + input); return; }
+      } else {
+        if (key.upArrow) setEditCatCursor((c) => Math.max(0, c - 1));
+        if (key.downArrow) setEditCatCursor((c) => Math.min(categories.length - 1, c + 1));
+      }
+      return;
+    }
+
+    if (mode === 'edit-rule') {
+      if (key.escape) { setMode('edit'); return; }
+      if (input === 'n') { setEditMatchType('name'); return; }
+      if (input === 'x') { setEditMatchType('regex'); return; }
+      if (key.return) { saveAsRule(); return; }
+      if (key.backspace || key.delete) { setEditPattern((p) => p.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) { setEditPattern((p) => p + input); return; }
       return;
     }
 
@@ -216,20 +305,9 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
       if (key.downArrow) setCursor((c) => Math.min(txs.length - 1, c + 1));
       if (input === 'u') { setSearch(''); setSearchInput(''); setCategory('Uncategorized'); setMonth(null); setYear(null); }
       if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setMonth(null); setYear(null); }
-      if (input === 'c' && selected) { const cats = getCategories(); setCategories(cats); setCatCursor(0); setMode('categorize'); }
-      if (input === 'e' && selected) { const cats = getCategories(); setCategories(cats); setCatCursor(Math.max(0, cats.indexOf(selected.category))); setMode('override'); }
+      if (input === 'e' && selected) openEdit();
       if (input === 'x' && selected?.manual_category) clearOverride();
       if (input === 'i' && selected) toggleIgnored();
-    } else if (mode === 'categorize') {
-      if (key.upArrow) setCatCursor((c) => Math.max(0, c - 1));
-      if (key.downArrow) setCatCursor((c) => Math.min(categories.length - 1, c + 1));
-      if (key.return) applyRule(categories[catCursor]);
-      if (key.escape) setMode('list');
-    } else if (mode === 'override') {
-      if (key.upArrow) setCatCursor((c) => Math.max(0, c - 1));
-      if (key.downArrow) setCatCursor((c) => Math.min(categories.length - 1, c + 1));
-      if (key.return) applyOverride(categories[catCursor]);
-      if (key.escape) setMode('list');
     }
   });
 
@@ -243,6 +321,14 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
     month && year ? `${MONTHS[month - 1]} ${year}` : null,
   ].filter(Boolean).join(' · ');
 
+  // Category list window for edit panel
+  const CAT_WIN = 8;
+  const catWinStart = Math.max(0, Math.min(editCatCursor - Math.floor(CAT_WIN / 2), categories.length - CAT_WIN));
+  const visibleCats = categories.slice(catWinStart, catWinStart + CAT_WIN);
+
+  // Live match count for rule panel
+  const matchCount = mode === 'edit-rule' ? countMatches(editPattern, editMatchType) : 0;
+
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
@@ -255,18 +341,18 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
           {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
         </Text>
         <Text dimColor>
-          {month ? '← → month  ·  ' : ''}[/] search  ·  [u] uncategorized  [a] all  ·  [c] rule  [e] edit  [x] undo edit  [i] ignore
+          {month ? '← → month  ·  ' : ''}[/] search  ·  [u] uncategorized  [a] all  ·  [e] edit  [x] undo  [i] ignore
         </Text>
       </Box>
 
-      {mode === 'search' ? (
+      {mode === 'search' && (
         <Box marginTop={1}>
           <Text color="cyan">/</Text>
           <Text>{searchInput}</Text>
           <Text color="cyan">█</Text>
           <Text dimColor>  Esc cancel</Text>
         </Box>
-      ) : null}
+      )}
       <Text dimColor marginTop={1}>{'─'.repeat(80)}</Text>
 
       <Box gap={2} marginTop={1}>
@@ -303,31 +389,70 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
       <Text dimColor>{txs.length} transactions{txs.length === 200 ? ' (limit 200)' : ''}</Text>
       {statusMsg && <Text color="green">{statusMsg}</Text>}
 
-      {mode === 'categorize' && (
+      {mode === 'edit' && selected && (
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
-          <Text bold>Rule: <Text color="yellow">{selected?.name}</Text></Text>
-          <Text dimColor>Creates a rule · applies to all matching transactions · ↑↓ · Enter · Esc</Text>
-          <Box flexDirection="column" marginTop={1}>
-            {categories.map((cat, i) => (
-              <Text key={cat} color={i === catCursor ? 'cyan' : undefined} dimColor={i !== catCursor}>
-                {i === catCursor ? '▶ ' : '  '}{cat}
-              </Text>
-            ))}
+          <Text bold>Edit  <Text dimColor>{selected.name}</Text></Text>
+
+          <Box marginTop={1} gap={3}>
+            {/* Name field */}
+            <Box flexDirection="column">
+              <Text color={editField === 'name' ? 'cyan' : 'gray'} bold>Name</Text>
+              {editField === 'name'
+                ? <Box><Text color="yellow">{editName}</Text><Text color="cyan">█</Text></Box>
+                : <Text dimColor>{editName}</Text>
+              }
+            </Box>
+
+            {/* Category field */}
+            <Box flexDirection="column">
+              <Text color={editField === 'category' ? 'cyan' : 'gray'} bold>Category</Text>
+              {editField === 'category' ? (
+                <Box flexDirection="column">
+                  {visibleCats.map((cat, i) => {
+                    const idx = catWinStart + i;
+                    const isSel = idx === editCatCursor;
+                    return (
+                      <Text key={cat} color={isSel ? 'cyan' : undefined} dimColor={!isSel}>
+                        {isSel ? '▶ ' : '  '}{cat}
+                      </Text>
+                    );
+                  })}
+                </Box>
+              ) : (
+                <Text color="cyan">{categories[editCatCursor]}</Text>
+              )}
+            </Box>
+          </Box>
+
+          <Box marginTop={1} gap={3}>
+            <Text dimColor>← → switch field</Text>
+            <Text color="cyan">[t] this transaction</Text>
+            <Text color="cyan">[r] make rule</Text>
+            <Text dimColor>Esc cancel</Text>
           </Box>
         </Box>
       )}
 
-      {mode === 'override' && (
+      {mode === 'edit-rule' && selected && (
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="magenta" paddingX={2} paddingY={1}>
-          <Text bold>Edit: <Text color="yellow">{selected?.name}</Text></Text>
-          <Text dimColor>Pins this transaction only · survives syncs · shown in <Text color="magenta">magenta ◆</Text> · ↑↓ · Enter · Esc</Text>
-          <Box flexDirection="column" marginTop={1}>
-            {categories.map((cat, i) => (
-              <Text key={cat} color={i === catCursor ? 'magenta' : undefined} dimColor={i !== catCursor}>
-                {i === catCursor ? '▶ ' : '  '}{cat}
-              </Text>
-            ))}
+          <Text bold>Make Rule</Text>
+          {categories[editCatCursor] !== selected.category && (
+            <Text dimColor>Category: <Text color="red">{selected.category}</Text> → <Text color="cyan">{categories[editCatCursor]}</Text></Text>
+          )}
+          {editName.trim() !== (selected.display_name ?? selected.name) && (
+            <Text dimColor>Name: <Text color="green">{editName}</Text></Text>
+          )}
+
+          <Box gap={2} marginTop={1}>
+            <Text>Pattern </Text>
+            <Text color="magenta">{editPattern}</Text><Text color="magenta">█</Text>
           </Box>
+          <Box gap={3} marginTop={1}>
+            <Text color={editMatchType === 'name' ? 'white' : undefined} dimColor={editMatchType !== 'name'}>[n] name</Text>
+            <Text color={editMatchType === 'regex' ? 'white' : undefined} dimColor={editMatchType !== 'regex'}>[x] regex</Text>
+            <Text color="yellow">{matchCount} transactions match</Text>
+          </Box>
+          <Text dimColor marginTop={1}>Enter save  ·  Esc back</Text>
         </Box>
       )}
     </Box>
