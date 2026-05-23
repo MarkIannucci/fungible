@@ -12,9 +12,9 @@ type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
 const FLEX_COLORS: Record<string, string> = { fixed: 'red', flexible: 'yellow', discretionary: 'cyan' };
 type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-min-amount' | 'add-name-max-amount' | 'add-name-replacement' | 'add-category-name';
-type Section = 'rules' | 'names' | 'hidden' | 'categories';
+type Section = 'rules' | 'names' | 'categories';
 
-const SECTIONS: Section[] = ['rules', 'names', 'hidden', 'categories'];
+const SECTIONS: Section[] = ['rules', 'names', 'categories'];
 
 function getRules(): Rule[] {
   return db.prepare('SELECT id, priority, match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC, id ASC').all() as Rule[];
@@ -53,7 +53,6 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
   const [uncategorized, setUncategorized] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
   const [hiddenSet, setHiddenSet] = useState<Set<string>>(new Set());
-  const [hiddenCursor, setHiddenCursor] = useState(0);
   const [categories, setCategories] = useState<string[]>([]);
   const [catListCursor, setCatListCursor] = useState(0);
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -231,23 +230,18 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
           setNewReplacement(r.replacement);
           setMode('add-name-pattern');
         }
-      } else if (section === 'hidden') {
-        if (key.upArrow) setHiddenCursor((c) => Math.max(0, c - 1));
-        if (key.downArrow) setHiddenCursor((c) => Math.min(categories.length - 1, c + 1));
-        if (input === 'h') {
-          const cat = categories[hiddenCursor];
-          if (cat) {
-            toggleHidden(cat, hiddenSet);
-            const wasHidden = hiddenSet.has(cat);
-            setStatusMsg(`${cat} is now ${wasHidden ? 'visible' : 'hidden'}`);
-            setTimeout(() => setStatusMsg(''), 2000);
-            load();
-          }
-        }
       } else if (section === 'categories') {
         if (key.upArrow) setCatListCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCatListCursor((c) => Math.min(categories.length - 1, c + 1));
-        if (input === 'a') { setNewCategoryName(''); setMode('add-category-name'); }
+        if (input === 'a') { setNewCategoryName(''); setMode('add-category-name'); return; }
+        if (input === 'h' && categories[catListCursor]) {
+          const cat = categories[catListCursor];
+          toggleHidden(cat, hiddenSet);
+          setStatusMsg(`${cat} is now ${hiddenSet.has(cat) ? 'visible' : 'hidden'}`);
+          setTimeout(() => setStatusMsg(''), 2000);
+          load();
+          return;
+        }
         if (input === 'f' && catDetails[catListCursor]) {
           const cat = catDetails[catListCursor];
           const idx = FLEX_CYCLE.indexOf(cat.flexibility);
@@ -351,15 +345,13 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
         <Box gap={3}>
           {SECTIONS.map((s) => (
             <Text key={s} bold color={section === s ? 'white' : undefined} dimColor={section !== s}>
-              {s === 'rules' ? 'Category Rules' : s === 'names' ? 'Name Rules' : s === 'hidden' ? 'Hidden' : 'Categories'}
+              {s === 'rules' ? 'Category Rules' : s === 'names' ? 'Name Rules' : 'Categories'}
             </Text>
           ))}
         </Box>
         <Text dimColor>
-          {section === 'hidden'
-            ? '[h] toggle  ·  ← → switch'
-            : section === 'categories'
-            ? '[a] add  [d] delete  [f] cycle flexibility  ·  ← → switch'
+          {section === 'categories'
+            ? '[a] add  [d] delete  [h] hidden  [f] flexibility  ·  ← → switch'
             : '[/] search  [a] add  [e] edit  [d] delete  ·  ← → switch'}
         </Text>
       </Box>
@@ -455,57 +447,37 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
         </>
       )}
 
-      {section === 'hidden' && (
-        <>
-          <Box marginTop={1} marginBottom={1}>
-            <Text dimColor>Hidden categories are excluded from spending totals.</Text>
-          </Box>
-          <Box flexDirection="column">
-            {categories.map((cat, i) => {
-              const isSelected = hiddenCursor === i;
-              const isHidden = hiddenSet.has(cat);
-              return (
-                <Box key={cat} gap={2}>
-                  <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶ ' : '  '}</Text>
-                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
-                    {cat.padEnd(24)}
-                  </Text>
-                  {isHidden ? <Text color="yellow">hidden</Text> : <Text dimColor>visible</Text>}
-                </Box>
-              );
-            })}
-          </Box>
-          <Text dimColor>{'─'.repeat(70)}</Text>
-          <Text dimColor>{hiddenSet.size} categor{hiddenSet.size === 1 ? 'y' : 'ies'} hidden</Text>
-        </>
-      )}
-
       {section === 'categories' && (
         <>
-          <Box marginTop={1} marginBottom={1}>
-            <Text dimColor>Categories · [f] cycles flexibility tier shown on Dashboard</Text>
-          </Box>
-          <Box gap={2} marginBottom={1}>
-            <Text dimColor>{'NAME'.padEnd(24)}</Text>
-            <Text dimColor>FLEXIBILITY</Text>
+          <Box gap={2} marginTop={1} marginBottom={1}>
+            <Text dimColor>{'NAME'.padEnd(22)}</Text>
+            <Text dimColor>{'FLEXIBILITY'.padEnd(16)}</Text>
+            <Text dimColor>HIDDEN</Text>
           </Box>
           <Box flexDirection="column">
             {catDetails.map((cat, i) => {
               const isSelected = catListCursor === i;
+              const isHidden = hiddenSet.has(cat.name);
               const flexColor = cat.flexibility ? FLEX_COLORS[cat.flexibility] : undefined;
               return (
                 <Box key={cat.name} gap={2}>
                   <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶ ' : '  '}</Text>
-                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>{cat.name.padEnd(22)}</Text>
+                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>{cat.name.padEnd(20)}</Text>
                   {cat.flexibility
-                    ? <Text color={flexColor} dimColor={!isSelected}>{cat.flexibility}</Text>
+                    ? <Text color={flexColor} dimColor={!isSelected}>{cat.flexibility.padEnd(14)}</Text>
+                    : <Text dimColor>{'—'.padEnd(14)}</Text>}
+                  {isHidden
+                    ? <Text color="yellow" dimColor={!isSelected}>hidden</Text>
                     : <Text dimColor>—</Text>}
                 </Box>
               );
             })}
           </Box>
           <Text dimColor>{'─'.repeat(70)}</Text>
-          <Text dimColor>{categories.length} categories</Text>
+          <Box gap={4}>
+            <Text dimColor>{categories.length} categories</Text>
+            {hiddenSet.size > 0 && <Text dimColor>{hiddenSet.size} hidden from totals</Text>}
+          </Box>
         </>
       )}
 
