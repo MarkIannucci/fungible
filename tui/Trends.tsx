@@ -58,7 +58,7 @@ function fmtSigned(amount: number) {
 }
 
 function bar(amount: number, max: number, width = BAR_WIDTH) {
-  const filled = max > 0 ? Math.round((Math.abs(amount) / max) * width) : 0;
+  const filled = max > 0 ? Math.min(width, Math.max(0, Math.round((Math.abs(amount) / max) * width))) : 0;
   return '█'.repeat(filled) + '░'.repeat(width - filled);
 }
 
@@ -278,8 +278,8 @@ export function Trends({
               const labelWidth = range === 'week' ? 22 : range === 'month' ? 10 : range === 'quarter' ? 8 : 6;
 
               if (isNet && row.income !== undefined && row.expenses !== undefined) {
-                const expFilled = Math.round((row.expenses / netMax) * HALF_BAR);
-                const incFilled = Math.round((row.income  / netMax) * HALF_BAR);
+                const expFilled = Math.min(HALF_BAR, Math.max(0, Math.round((row.expenses / netMax) * HALF_BAR)));
+                const incFilled = Math.min(HALF_BAR, Math.max(0, Math.round((row.income  / netMax) * HALF_BAR)));
                 const leftBar  = '░'.repeat(HALF_BAR - expFilled) + '█'.repeat(expFilled);
                 const rightBar = '█'.repeat(incFilled) + '░'.repeat(HALF_BAR - incFilled);
                 const net = row.income - row.expenses;
