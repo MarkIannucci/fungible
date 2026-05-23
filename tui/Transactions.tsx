@@ -264,7 +264,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
     const raw = (db.prepare('SELECT raw_category FROM transactions WHERE id = ?')
       .get(selected.id) as { raw_category: string | null })?.raw_category ?? null;
     db.prepare('UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?')
-      .run(categorize(selected.name, selected.merchant_name, raw), selected.id);
+      .run(categorize(selected.name, selected.merchant_name, raw, selected.amount), selected.id);
     setStatusMsg('Override cleared');
     setTimeout(() => setStatusMsg(''), 2000);
     load(search, true);

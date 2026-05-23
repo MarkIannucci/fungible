@@ -26,7 +26,8 @@ function Divider() {
 function getUncategorizedCount(from: string, to: string) {
   return (db.prepare(`
     SELECT COUNT(*) as c FROM transactions
-    WHERE category = 'Uncategorized' AND date >= ? AND date <= ?
+    WHERE category = 'Uncategorized' AND pending = 0 AND ignored = 0
+      AND date >= ? AND date <= ?
   `).get(from, to) as { c: number }).c;
 }
 

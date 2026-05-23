@@ -54,8 +54,8 @@ export async function syncTransactions(accessToken: string, itemId: string) {
 
   for (const tx of [...added, ...modified]) {
     const rawCategory = tx.personal_finance_category?.primary ?? null;
-    const category = categorize(tx.name, tx.merchant_name ?? null, rawCategory);
-    const displayName = applyNameRules(tx.name);
+    const category = categorize(tx.name, tx.merchant_name ?? null, rawCategory, tx.amount);
+    const displayName = applyNameRules(tx.name, tx.amount);
     upsertTx.run(
       tx.transaction_id,
       tx.account_id,

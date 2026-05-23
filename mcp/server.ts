@@ -59,22 +59,26 @@ server.tool(
   'List transactions with optional filters. Returns date, name, amount, category, account. Ignored transactions are marked.',
   {
     category:      z.string().optional().describe('Filter by category name'),
-    month:         z.number().int().min(1).max(12).optional().describe('Month 1–12'),
-    year:          z.number().int().optional().describe('4-digit year'),
+    month:         z.number().int().min(1).max(12).optional().describe('Month 1–12 (use with year)'),
+    year:          z.number().int().optional().describe('4-digit year (use with month)'),
+    from:          z.string().optional().describe('Start date YYYY-MM-DD (use with to)'),
+    to:            z.string().optional().describe('End date YYYY-MM-DD (use with from)'),
     search:        z.string().optional().describe('Search within name or display name'),
     include_ignored: z.boolean().default(false).describe('Include ignored transactions (default false)'),
     limit:         z.number().int().min(1).max(500).default(50).describe('Max results (default 50)'),
   },
-  async ({ category, month, year, search, include_ignored, limit }) => {
+  async ({ category, month, year, from, to, search, include_ignored, limit }) => {
     const conditions: string[] = [];
     const args: (string | number)[] = [];
 
     if (!include_ignored) { conditions.push('t.ignored = 0'); }
     if (category) { conditions.push('t.category = ?'); args.push(category); }
-    if (month && year) {
-      const from = `${year}-${String(month).padStart(2, '0')}-01`;
-      const to   = `${year}-${String(month).padStart(2, '0')}-31`;
+    if (from && to) {
       conditions.push('t.date >= ? AND t.date <= ?'); args.push(from, to);
+    } else if (month && year) {
+      const f = `${year}-${String(month).padStart(2, '0')}-01`;
+      const t2 = `${year}-${String(month).padStart(2, '0')}-31`;
+      conditions.push('t.date >= ? AND t.date <= ?'); args.push(f, t2);
     }
     if (search) {
       conditions.push('(t.name LIKE ? OR t.display_name LIKE ?)');
@@ -136,11 +140,11 @@ server.tool(
     id: z.string().describe('Transaction ID from list_transactions'),
   },
   async ({ id }) => {
-    const tx = db.prepare('SELECT name, merchant_name, raw_category FROM transactions WHERE id = ?')
-      .get(id) as { name: string; merchant_name: string | null; raw_category: string | null } | undefined;
+    const tx = db.prepare('SELECT name, merchant_name, raw_category, amount FROM transactions WHERE id = ?')
+      .get(id) as { name: string; merchant_name: string | null; raw_category: string | null; amount: number } | undefined;
     if (!tx) return { content: [{ type: 'text', text: `No transaction with id ${id}.` }] };
 
-    const cat = categorize(tx.name, tx.merchant_name, tx.raw_category);
+    const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
     db.prepare('UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?').run(cat, id);
 
     return { content: [{ type: 'text', text: `Cleared override on "${tx.name}" — reverted to ${cat}` }] };
@@ -173,14 +177,20 @@ server.tool(
   {},
   async () => {
     const rules = db.prepare(
-      'SELECT id, priority, match_type, pattern, category FROM category_rules ORDER BY priority DESC, id ASC'
-    ).all() as { id: number; priority: number; match_type: string; pattern: string; category: string }[];
+      'SELECT id, priority, match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC, id ASC'
+    ).all() as { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null }[];
 
     if (rules.length === 0) return { content: [{ type: 'text', text: 'No rules defined.' }] };
 
-    const lines = rules.map(
-      (r) => `[${r.id}] pri=${r.priority} ${r.match_type.padEnd(5)} "${r.pattern}" → ${r.category}`
-    );
+    const lines = rules.map((r) => {
+      const amt = r.min_amount !== null && r.max_amount !== null && r.min_amount === r.max_amount
+        ? ` [$${r.min_amount}]`
+        : r.min_amount !== null && r.max_amount !== null ? ` [$${r.min_amount}–$${r.max_amount}]`
+        : r.min_amount !== null ? ` [≥$${r.min_amount}]`
+        : r.max_amount !== null ? ` [≤$${r.max_amount}]`
+        : '';
+      return `[${r.id}] pri=${r.priority} ${r.match_type.padEnd(5)} "${r.pattern}"${amt} → ${r.category}`;
+    });
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 );
@@ -195,11 +205,13 @@ server.tool(
     match_type: z.enum(['name', 'regex']).describe('"name" for substring match, "regex" for regex'),
     category:   z.string().describe('Category to assign, e.g. "Food & Drink"'),
     priority:   z.number().int().default(10).describe('Higher priority rules run first (default 10)'),
+    min_amount: z.number().optional().describe('Minimum transaction amount (optional)'),
+    max_amount: z.number().optional().describe('Maximum transaction amount (optional)'),
   },
-  async ({ pattern, match_type, category, priority }) => {
+  async ({ pattern, match_type, category, priority, min_amount, max_amount }) => {
     db.prepare(
-      'INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (?, ?, ?, ?)'
-    ).run(priority, match_type, pattern, category);
+      'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(priority, match_type, pattern, category, min_amount ?? null, max_amount ?? null);
 
     const rows = db.prepare(
       'SELECT id, name, merchant_name, raw_category FROM transactions WHERE manual_category IS NULL'
@@ -246,14 +258,20 @@ server.tool(
   {},
   async () => {
     const rules = db.prepare(
-      'SELECT id, match_type, pattern, replacement FROM name_rules ORDER BY id ASC'
-    ).all() as { id: number; match_type: string; pattern: string; replacement: string }[];
+      'SELECT id, match_type, pattern, replacement, min_amount, max_amount FROM name_rules ORDER BY id ASC'
+    ).all() as { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null }[];
 
     if (rules.length === 0) return { content: [{ type: 'text', text: 'No name rules defined.' }] };
 
-    const lines = rules.map(
-      (r) => `[${r.id}] ${r.match_type.padEnd(5)} "${r.pattern}" → "${r.replacement}"`
-    );
+    const lines = rules.map((r) => {
+      const amt = r.min_amount !== null && r.max_amount !== null && r.min_amount === r.max_amount
+        ? ` [$${r.min_amount}]`
+        : r.min_amount !== null && r.max_amount !== null ? ` [$${r.min_amount}–$${r.max_amount}]`
+        : r.min_amount !== null ? ` [≥$${r.min_amount}]`
+        : r.max_amount !== null ? ` [≤$${r.max_amount}]`
+        : '';
+      return `[${r.id}] ${r.match_type.padEnd(5)} "${r.pattern}"${amt} → "${r.replacement}"`;
+    });
     return { content: [{ type: 'text', text: lines.join('\n') }] };
   }
 );
@@ -267,11 +285,13 @@ server.tool(
     pattern:     z.string().describe('Text or regex to match against transaction name'),
     match_type:  z.enum(['name', 'regex']).describe('"name" for substring match, "regex" for regex'),
     replacement: z.string().describe('Display name to show instead'),
+    min_amount:  z.number().optional().describe('Minimum transaction amount (optional)'),
+    max_amount:  z.number().optional().describe('Maximum transaction amount (optional)'),
   },
-  async ({ pattern, match_type, replacement }) => {
+  async ({ pattern, match_type, replacement, min_amount, max_amount }) => {
     db.prepare(
-      'INSERT INTO name_rules (match_type, pattern, replacement) VALUES (?, ?, ?)'
-    ).run(match_type, pattern, replacement);
+      'INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES (?, ?, ?, ?, ?)'
+    ).run(match_type, pattern, replacement, min_amount ?? null, max_amount ?? null);
 
     // Rebuild display names for all transactions
     const { rebuildDisplayNames } = await import('../core/rename.js');
