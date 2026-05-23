@@ -5,15 +5,15 @@ import { categorize } from '../core/categorize.js';
 import { rebuildDisplayNames } from '../core/rename.js';
 import type { Screen, TxFilter } from './App.js';
 
-type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string };
+type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null };
 type NameRule = { id: number; match_type: string; pattern: string; replacement: string };
-type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-replacement' | 'add-category-name';
+type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-replacement' | 'add-category-name';
 type Section = 'rules' | 'names' | 'hidden' | 'categories';
 
 const SECTIONS: Section[] = ['rules', 'names', 'hidden', 'categories'];
 
 function getRules(): Rule[] {
-  return db.prepare('SELECT id, priority, match_type, pattern, category FROM category_rules ORDER BY priority DESC, id ASC').all() as Rule[];
+  return db.prepare('SELECT id, priority, match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC, id ASC').all() as Rule[];
 }
 function getNameRules(): NameRule[] {
   return db.prepare('SELECT id, match_type, pattern, replacement FROM name_rules ORDER BY id ASC').all() as NameRule[];
@@ -54,6 +54,8 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
   // New category rule state
   const [newPattern, setNewPattern] = useState('');
   const [newType, setNewType] = useState<'name' | 'regex'>('name');
+  const [newMinAmount, setNewMinAmount] = useState('');
+  const [newMaxAmount, setNewMaxAmount] = useState('');
   const [catCursor, setCatCursor] = useState(0);
 
   // New name rule state
@@ -95,29 +97,31 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
 
   function saveRule() {
     const category = categories[catCursor];
+    const minAmt = newMinAmount.trim() ? parseFloat(newMinAmount) : null;
+    const maxAmt = newMaxAmount.trim() ? parseFloat(newMaxAmount) : null;
     if (editingRuleId !== null) {
-      db.prepare('UPDATE category_rules SET match_type = ?, pattern = ?, category = ? WHERE id = ?')
-        .run(newType, newPattern, category, editingRuleId);
+      db.prepare('UPDATE category_rules SET match_type = ?, pattern = ?, category = ?, min_amount = ?, max_amount = ? WHERE id = ?')
+        .run(newType, newPattern, category, minAmt, maxAmt, editingRuleId);
       setEditingRuleId(null);
     } else {
       const existing = db.prepare('SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?')
         .get(newType, newPattern) as { id: number } | undefined;
       if (existing) {
-        db.prepare('UPDATE category_rules SET category = ? WHERE id = ?').run(category, existing.id);
+        db.prepare('UPDATE category_rules SET category = ?, min_amount = ?, max_amount = ? WHERE id = ?').run(category, minAmt, maxAmt, existing.id);
       } else {
-        db.prepare('INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, ?, ?, ?)')
-          .run(newType, newPattern, category);
+        db.prepare('INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (10, ?, ?, ?, ?, ?)')
+          .run(newType, newPattern, category, minAmt, maxAmt);
       }
     }
 
     // Apply to all transactions without a manual override
     const rows = db.prepare(
-      'SELECT id, name, merchant_name, raw_category FROM transactions WHERE manual_category IS NULL'
-    ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null }[];
+      'SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE manual_category IS NULL'
+    ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
     const update = db.prepare('UPDATE transactions SET category = ? WHERE id = ?');
     let count = 0;
     for (const tx of rows) {
-      const cat = categorize(tx.name, tx.merchant_name, tx.raw_category);
+      const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
       if (cat !== 'Uncategorized') { update.run(cat, tx.id); count++; }
     }
 
@@ -159,6 +163,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       if (input === '1') { onNavigate('dashboard'); return; }
       if (input === '2') { onNavigate('transactions'); return; }
       if (input === '4') { onNavigate('import'); return; }
+      if (input === '5') { onNavigate('tags'); return; }
       if (key.escape) {
         if (search) { setSearch(''); return; }
         onNavigate('dashboard');
@@ -184,13 +189,15 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       if (section === 'rules') {
         if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCursor((c) => Math.min(filteredRules.length - 1, c + 1));
-        if (input === 'a') { setEditingRuleId(null); setNewPattern(''); setNewType('name'); setCatCursor(0); setMode('add-pattern'); }
+        if (input === 'a') { setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0); setMode('add-pattern'); }
         if (input === 'd' && filteredRules[cursor]) { deleteRule(filteredRules[cursor].id); }
         if ((input === 'e' || key.return) && filteredRules[cursor]) {
           const r = filteredRules[cursor];
           setEditingRuleId(r.id);
           setNewPattern(r.pattern);
           setNewType(r.match_type as 'name' | 'regex');
+          setNewMinAmount(r.min_amount !== null ? String(r.min_amount) : '');
+          setNewMaxAmount(r.max_amount !== null ? String(r.max_amount) : '');
           setCatCursor(Math.max(0, categories.indexOf(r.category)));
           setMode('add-pattern');
         }
@@ -239,8 +246,18 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       if (input && !key.ctrl && !key.meta) setNewPattern((p) => p + input);
     } else if (mode === 'add-type') {
       if (key.escape) { setMode('list'); return; }
-      if (input === 'n') { setNewType('name'); setMode('add-category'); }
-      if (input === 'r') { setNewType('regex'); setMode('add-category'); }
+      if (input === 'n') { setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setMode('add-min-amount'); }
+      if (input === 'r') { setNewType('regex'); setNewMinAmount(''); setNewMaxAmount(''); setMode('add-min-amount'); }
+    } else if (mode === 'add-min-amount') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.return) { setMode('add-max-amount'); return; }
+      if (key.backspace || key.delete) { setNewMinAmount((p) => p.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) setNewMinAmount((p) => p + input);
+    } else if (mode === 'add-max-amount') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.return) { setMode('add-category'); return; }
+      if (key.backspace || key.delete) { setNewMaxAmount((p) => p.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) setNewMaxAmount((p) => p + input);
     } else if (mode === 'add-category') {
       if (key.escape) { setMode('list'); return; }
       if (key.upArrow) setCatCursor((c) => Math.max(0, c - 1));
@@ -293,7 +310,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       {/* Header */}
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [4] import</Text>
+        <Text dimColor>[1] dash  [2] txns  [4] import  [5] tags</Text>
       </Box>
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
@@ -337,13 +354,21 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
           </Box>
           {visible.map((rule) => {
             const isSelected = rule.id === filteredRules[cursor]?.id;
+            const amtLabel = rule.min_amount !== null && rule.max_amount !== null && rule.min_amount === rule.max_amount
+              ? `$${rule.min_amount}`
+              : rule.min_amount !== null && rule.max_amount !== null
+              ? `$${rule.min_amount}-$${rule.max_amount}`
+              : rule.min_amount !== null ? `≥$${rule.min_amount}`
+              : rule.max_amount !== null ? `≤$${rule.max_amount}`
+              : '';
             return (
               <Box key={rule.id} gap={2}>
                 <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▶ ' : '  '}</Text>
                 <Text color="yellow" dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
                 <Text dimColor={!isSelected}>
-                  {rule.pattern.length > 32 ? rule.pattern.slice(0, 31) + '…' : rule.pattern.padEnd(32)}
+                  {rule.pattern.length > 28 ? rule.pattern.slice(0, 27) + '…' : rule.pattern.padEnd(28)}
                 </Text>
+                {amtLabel ? <Text color="magenta" dimColor={!isSelected}>{amtLabel.padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
                 <Text color="cyan" dimColor={!isSelected}>{rule.category.padEnd(20)}</Text>
                 <Text dimColor>{rule.priority}</Text>
               </Box>
@@ -447,6 +472,22 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
             <Text color="cyan">[n] name match</Text>
             <Text color="cyan">[r] regex match</Text>
           </Box>
+        </Box>
+      )}
+      {mode === 'add-min-amount' && (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+          <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Min Amount <Text dimColor>(optional)</Text></Text>
+          <Text>Pattern: <Text color="yellow">"{newPattern}"</Text>  Type: <Text color="yellow">{newType}</Text></Text>
+          <Text dimColor>Enter to skip · Esc cancel</Text>
+          <Box marginTop={1}><Text>Min $: </Text><Text color="yellow">{newMinAmount}<Text color="cyan">█</Text></Text></Box>
+        </Box>
+      )}
+      {mode === 'add-max-amount' && (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+          <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Max Amount <Text dimColor>(optional)</Text></Text>
+          <Text>Pattern: <Text color="yellow">"{newPattern}"</Text>  {newMinAmount && <Text>Min: <Text color="magenta">${newMinAmount}</Text></Text>}</Text>
+          <Text dimColor>Enter to skip · Esc cancel</Text>
+          <Box marginTop={1}><Text>Max $: </Text><Text color="yellow">{newMaxAmount}<Text color="cyan">█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-category' && (

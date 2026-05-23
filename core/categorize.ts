@@ -4,6 +4,8 @@ type Rule = {
   match_type: 'name' | 'regex';
   pattern: string;
   category: string;
+  min_amount: number | null;
+  max_amount: number | null;
 };
 
 // Plaid's personal_finance_category → our simplified categories
@@ -43,13 +45,19 @@ const PLAID_CATEGORY_MAP: Record<string, string> = {
   'OTHER': 'Uncategorized',
 };
 
-export function categorize(name: string, merchant: string | null, plaidCategory: string | null): string {
-  const rules = db.prepare('SELECT match_type, pattern, category FROM category_rules ORDER BY priority DESC').all() as Rule[];
+export function categorize(name: string, merchant: string | null, plaidCategory: string | null, amount?: number): string {
+  const rules = db.prepare('SELECT match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC').all() as Rule[];
 
   const haystacks = [name.toLowerCase()];
   if (merchant && merchant.toLowerCase() !== name.toLowerCase()) haystacks.push(merchant.toLowerCase());
 
   for (const rule of rules) {
+    // Amount range check (if specified)
+    if (amount !== undefined) {
+      if (rule.min_amount !== null && amount < rule.min_amount) continue;
+      if (rule.max_amount !== null && amount > rule.max_amount) continue;
+    }
+
     if (rule.match_type === 'name') {
       if (haystacks.some((h) => h.includes(rule.pattern.toLowerCase()))) return rule.category;
     } else if (rule.match_type === 'regex') {

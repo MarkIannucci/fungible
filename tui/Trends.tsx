@@ -125,6 +125,7 @@ export function Trends({
     if (input === '2') { onNavigate('transactions'); return; }
     if (input === '3') { onNavigate('rules'); return; }
     if (input === '4') { onNavigate('import'); return; }
+    if (input === '5') { onNavigate('tags'); return; }
     if (key.leftArrow)  { setViewIdx((i) => (i - 1 + views.length) % views.length); return; }
     if (key.rightArrow) { setViewIdx((i) => (i + 1) % views.length); return; }
     if (key.upArrow)   setCursor((c) => Math.max(0, c - 1));
@@ -150,7 +151,7 @@ export function Trends({
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [3] rules  [4] import</Text>
+        <Text dimColor>[1] dash  [2] txns  [3] rules  [4] import  [5] tags</Text>
       </Box>
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>

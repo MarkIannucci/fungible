@@ -55,6 +55,25 @@ export function getMonthlySummary(year: number, month: number): MonthlySummary {
   return { income, expenses, net: income - expenses, byCategory };
 }
 
+export function getTagSummary(tagName: string): MonthlySummary {
+  const rows = db.prepare(`
+    SELECT t.category, SUM(t.amount) as total
+    FROM transactions t
+    JOIN transaction_tags tt ON tt.transaction_id = t.id
+    JOIN tags tg ON tg.id = tt.tag_id
+    WHERE tg.name = ? AND t.ignored = 0
+      AND t.category NOT IN (SELECT category FROM hidden_categories)
+    GROUP BY t.category
+    ORDER BY total DESC
+  `).all(tagName) as { category: string; total: number }[];
+
+  const income = rows.filter((r) => r.total < 0).reduce((s, r) => s + Math.abs(r.total), 0);
+  const expenses = rows.filter((r) => r.total > 0).reduce((s, r) => s + r.total, 0);
+  const byCategory = rows.filter((r) => r.total > 0).map((r) => ({ category: r.category, total: r.total }));
+
+  return { income, expenses, net: income - expenses, byCategory };
+}
+
 export function getRecentTransactions(limit = 10): RecentTransaction[] {
   return db.prepare(`
     SELECT id, date, name, merchant_name, amount, category

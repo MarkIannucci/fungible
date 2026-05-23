@@ -70,12 +70,27 @@ export function initDb() {
     CREATE TABLE IF NOT EXISTS categories (
       name TEXT PRIMARY KEY
     );
+
+    CREATE TABLE IF NOT EXISTS tags (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE
+    );
+
+    CREATE TABLE IF NOT EXISTS transaction_tags (
+      transaction_id TEXT NOT NULL,
+      tag_id INTEGER NOT NULL,
+      PRIMARY KEY (transaction_id, tag_id),
+      FOREIGN KEY (transaction_id) REFERENCES transactions(id),
+      FOREIGN KEY (tag_id) REFERENCES tags(id)
+    );
   `);
 
   // Add manual_category column if not present (migration)
   try { db.exec('ALTER TABLE transactions ADD COLUMN manual_category TEXT'); } catch {}
   try { db.exec('ALTER TABLE transactions ADD COLUMN display_name TEXT'); } catch {}
   try { db.exec('ALTER TABLE transactions ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0'); } catch {}
+  try { db.exec('ALTER TABLE category_rules ADD COLUMN min_amount REAL'); } catch {}
+  try { db.exec('ALTER TABLE category_rules ADD COLUMN max_amount REAL'); } catch {}
 
   // Seed default hidden categories (idempotent)
   const hidden = ['Transfer', 'Loan Payment'];

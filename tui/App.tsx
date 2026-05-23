@@ -5,13 +5,15 @@ import { Transactions } from './Transactions.js';
 import { Trends } from './Trends.js';
 import { Rules } from './Rules.js';
 import { Import } from './Import.js';
+import { Tags } from './Tags.js';
 
-export type Screen = 'dashboard' | 'transactions' | 'trends' | 'rules' | 'import';
+export type Screen = 'dashboard' | 'transactions' | 'trends' | 'rules' | 'import' | 'tags';
 
 export type TxFilter = {
   category?: string;
   month?: number;
   year?: number;
+  tag?: string;
 };
 
 export function App() {
@@ -34,5 +36,6 @@ export function App() {
     case 'trends':       return <Trends onNavigate={navigate} initialFilter={txFilter} />;
     case 'rules':        return <Rules onNavigate={navigate} />;
     case 'import':       return <Import onNavigate={navigate} />;
+    case 'tags':         return <Tags onNavigate={navigate} />;
   }
 }
