@@ -93,6 +93,23 @@ export function initDb() {
   try { db.exec('ALTER TABLE category_rules ADD COLUMN max_amount REAL'); } catch {}
   try { db.exec('ALTER TABLE name_rules ADD COLUMN min_amount REAL'); } catch {}
   try { db.exec('ALTER TABLE name_rules ADD COLUMN max_amount REAL'); } catch {}
+  try { db.exec("ALTER TABLE categories ADD COLUMN flexibility TEXT CHECK(flexibility IN ('fixed','flexible','discretionary'))"); } catch {}
+  try { db.exec('ALTER TABLE plaid_items ADD COLUMN last_synced_at INTEGER'); } catch {}
+  // Seed default flexibility tiers (only for categories that don't have one set yet)
+  const flexDefaults: [string, string][] = [
+    ['Rent', 'fixed'], ['Insurance', 'fixed'], ['Childcare', 'fixed'],
+    ['Loan Payment', 'fixed'], ['Taxes', 'fixed'], ['Government', 'fixed'],
+    ['Bills & Utilities', 'fixed'], ['Medical', 'fixed'],
+    ['Food & Drink', 'flexible'], ['Grocery', 'flexible'], ['Transportation', 'flexible'],
+    ['Personal Care', 'flexible'], ['Home', 'flexible'], ['Services', 'flexible'],
+    ['Shopping', 'discretionary'], ['Entertainment', 'discretionary'],
+    ['Travel', 'discretionary'], ['Dining', 'discretionary'], ['Fees', 'discretionary'],
+  ];
+  const setFlex = db.prepare(
+    "UPDATE categories SET flexibility = ? WHERE name = ? AND flexibility IS NULL"
+  );
+  for (const [cat, flex] of flexDefaults) setFlex.run(flex, cat);
+
   // Fix Venmo phone bill name rule — restrict to $54.79 only
   db.prepare(
     `UPDATE name_rules SET min_amount = 54.79, max_amount = 54.79

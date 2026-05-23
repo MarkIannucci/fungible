@@ -77,6 +77,34 @@ export function getTagSummary(tagName: string): MonthlySummary {
   return { income, expenses, net: income - expenses, byCategory };
 }
 
+export type FlexSummary = {
+  fixed: number;
+  flexible: number;
+  discretionary: number;
+  untagged: number;
+};
+
+export function getFlexSummary(from: string, to: string): FlexSummary {
+  const rows = db.prepare(`
+    SELECT COALESCE(c.flexibility, 'untagged') as tier, SUM(t.amount) as total
+    FROM transactions t
+    LEFT JOIN categories c ON c.name = t.category
+    WHERE t.date >= ? AND t.date <= ? AND t.pending = 0 AND t.ignored = 0
+      AND t.amount > 0
+      AND t.category NOT IN (SELECT category FROM hidden_categories)
+    GROUP BY tier
+  `).all(from, to) as { tier: string; total: number }[];
+
+  const result: FlexSummary = { fixed: 0, flexible: 0, discretionary: 0, untagged: 0 };
+  for (const r of rows) {
+    if (r.tier === 'fixed') result.fixed = r.total;
+    else if (r.tier === 'flexible') result.flexible = r.total;
+    else if (r.tier === 'discretionary') result.discretionary = r.total;
+    else result.untagged = r.total;
+  }
+  return result;
+}
+
 export function getRecentTransactions(limit = 10): RecentTransaction[] {
   return db.prepare(`
     SELECT id, date, name, merchant_name, amount, category

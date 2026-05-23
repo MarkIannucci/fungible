@@ -76,22 +76,31 @@ export async function syncTransactions(accessToken: string, itemId: string) {
     db.prepare(`DELETE FROM transactions WHERE id IN (${placeholders})`).run(...removedIds);
   }
 
-  // Save cursor
+  // Save cursor and last_synced_at
   db.prepare(`
     INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)
     ON CONFLICT(account_id) DO UPDATE SET cursor=excluded.cursor
   `).run(itemId, cursor);
+  db.prepare('UPDATE plaid_items SET last_synced_at = ? WHERE item_id = ?').run(Date.now(), itemId);
 
   const dupes = deduplicateCsvVsPlaid();
   return { added: added.length, modified: modified.length, removed: removedIds.length, dupes };
 }
 
-export async function syncAll() {
-  const items = db.prepare('SELECT item_id, access_token FROM plaid_items').all() as { item_id: string; access_token: string }[];
+const DEBOUNCE_MS = 15 * 60 * 1000; // 15 minutes
+
+export async function syncAll(force = false) {
+  const items = db.prepare('SELECT item_id, access_token, last_synced_at FROM plaid_items').all() as {
+    item_id: string; access_token: string; last_synced_at: number | null;
+  }[];
   const results = [];
   for (const item of items) {
+    if (!force && item.last_synced_at && Date.now() - item.last_synced_at < DEBOUNCE_MS) {
+      results.push({ itemId: item.item_id, added: 0, modified: 0, removed: 0, dupes: 0, skipped: true });
+      continue;
+    }
     const result = await syncTransactions(item.access_token, item.item_id);
-    results.push({ itemId: item.item_id, ...result });
+    results.push({ itemId: item.item_id, ...result, skipped: false });
   }
   return results;
 }

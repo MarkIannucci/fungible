@@ -7,6 +7,10 @@ import type { Screen, TxFilter } from './App.js';
 
 type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null };
 type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null };
+type CategoryDetail = { name: string; flexibility: 'fixed' | 'flexible' | 'discretionary' | null };
+type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
+const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
+const FLEX_COLORS: Record<string, string> = { fixed: 'red', flexible: 'yellow', discretionary: 'cyan' };
 type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-min-amount' | 'add-name-max-amount' | 'add-name-replacement' | 'add-category-name';
 type Section = 'rules' | 'names' | 'hidden' | 'categories';
 
@@ -20,6 +24,9 @@ function getNameRules(): NameRule[] {
 }
 function getCategories(): string[] {
   return (db.prepare('SELECT name FROM categories ORDER BY name').all() as { name: string }[]).map((r) => r.name);
+}
+function getCategoryDetails(): CategoryDetail[] {
+  return db.prepare('SELECT name, flexibility FROM categories ORDER BY name').all() as CategoryDetail[];
 }
 function getUncategorizedCount() {
   return (db.prepare("SELECT COUNT(*) as c FROM transactions WHERE category = 'Uncategorized'").get() as { c: number }).c;
@@ -50,6 +57,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
   const [categories, setCategories] = useState<string[]>([]);
   const [catListCursor, setCatListCursor] = useState(0);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [catDetails, setCatDetails] = useState<CategoryDetail[]>([]);
 
   // New category rule state
   const [newPattern, setNewPattern] = useState('');
@@ -78,6 +86,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
     setUncategorized(getUncategorizedCount());
     setHiddenSet(getHiddenSet());
     setCategories(getCategories());
+    setCatDetails(getCategoryDetails());
   }
 
   useEffect(() => { load(); }, []);
@@ -239,6 +248,14 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
         if (key.upArrow) setCatListCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCatListCursor((c) => Math.min(categories.length - 1, c + 1));
         if (input === 'a') { setNewCategoryName(''); setMode('add-category-name'); }
+        if (input === 'f' && catDetails[catListCursor]) {
+          const cat = catDetails[catListCursor];
+          const idx = FLEX_CYCLE.indexOf(cat.flexibility);
+          const next = FLEX_CYCLE[(idx + 1) % FLEX_CYCLE.length];
+          db.prepare('UPDATE categories SET flexibility = ? WHERE name = ?').run(next, cat.name);
+          load();
+          return;
+        }
         if (input === 'd' && categories[catListCursor]) {
           db.prepare('DELETE FROM categories WHERE name = ?').run(categories[catListCursor]);
           setStatusMsg(`Deleted "${categories[catListCursor]}"`);
@@ -342,7 +359,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
           {section === 'hidden'
             ? '[h] toggle  ·  ← → switch'
             : section === 'categories'
-            ? '[a] add  [d] delete  ·  ← → switch'
+            ? '[a] add  [d] delete  [f] cycle flexibility  ·  ← → switch'
             : '[/] search  [a] add  [e] edit  [d] delete  ·  ← → switch'}
         </Text>
       </Box>
@@ -466,15 +483,23 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       {section === 'categories' && (
         <>
           <Box marginTop={1} marginBottom={1}>
-            <Text dimColor>Categories available when editing or creating rules.</Text>
+            <Text dimColor>Categories · [f] cycles flexibility tier shown on Dashboard</Text>
+          </Box>
+          <Box gap={2} marginBottom={1}>
+            <Text dimColor>{'NAME'.padEnd(24)}</Text>
+            <Text dimColor>FLEXIBILITY</Text>
           </Box>
           <Box flexDirection="column">
-            {categories.map((cat, i) => {
+            {catDetails.map((cat, i) => {
               const isSelected = catListCursor === i;
+              const flexColor = cat.flexibility ? FLEX_COLORS[cat.flexibility] : undefined;
               return (
-                <Box key={cat} gap={2}>
+                <Box key={cat.name} gap={2}>
                   <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶ ' : '  '}</Text>
-                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>{cat}</Text>
+                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>{cat.name.padEnd(22)}</Text>
+                  {cat.flexibility
+                    ? <Text color={flexColor} dimColor={!isSelected}>{cat.flexibility}</Text>
+                    : <Text dimColor>—</Text>}
                 </Box>
               );
             })}

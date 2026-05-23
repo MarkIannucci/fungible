@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { getRangeSummary, type MonthlySummary } from '../core/queries.js';
+import { getRangeSummary, getFlexSummary, type MonthlySummary, type FlexSummary } from '../core/queries.js';
 import { db } from '../core/db.js';
 import {
   getPeriodStart, getPeriodDates, navigatePeriod, formatPeriodLabel,
@@ -10,13 +10,20 @@ import type { Screen, TxFilter } from './App.js';
 
 const BAR_WIDTH = 20;
 
+type DashView = 'categories' | 'flex';
+
 function fmt(amount: number) {
   return `$${Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function bar(amount: number, max: number) {
-  const filled = Math.round((amount / max) * BAR_WIDTH);
-  return '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
+function pct(part: number, total: number) {
+  if (total === 0) return '0%';
+  return `${Math.round((part / total) * 100)}%`;
+}
+
+function bar(amount: number, max: number, width = BAR_WIDTH) {
+  const filled = max > 0 ? Math.round((amount / max) * width) : 0;
+  return '█'.repeat(filled) + '░'.repeat(width - filled);
 }
 
 function Divider() {
@@ -42,18 +49,28 @@ function getDataBounds() {
   };
 }
 
+const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }> = [
+  { key: 'fixed',         label: 'Fixed',         color: 'red'     },
+  { key: 'flexible',      label: 'Flexible',       color: 'yellow'  },
+  { key: 'discretionary', label: 'Discretionary',  color: 'cyan'    },
+  { key: 'untagged',      label: 'Untagged',       color: 'white'   },
+];
+
 export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxFilter) => void }) {
   const now = new Date();
   const [range, setRange] = useState<Range>('month');
   const [anchor, setAnchor] = useState<Date>(() => getPeriodStart('month', now));
   const [summary, setSummary] = useState<MonthlySummary | null>(null);
+  const [flexData, setFlexData] = useState<FlexSummary | null>(null);
   const [uncategorized, setUncategorized] = useState(0);
   const [catCursor, setCatCursor] = useState(0);
+  const [view, setView] = useState<DashView>('categories');
   const [bounds] = useState(getDataBounds);
 
   function load(r: Range, a: Date) {
     const { from, to } = getPeriodDates(r, a);
     setSummary(getRangeSummary(from, to));
+    setFlexData(getFlexSummary(from, to));
     setUncategorized(getUncategorizedCount(from, to));
   }
 
@@ -74,14 +91,19 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
       if (from <= bounds.maxDate) setAnchor(next);
       return;
     }
-    if (key.upArrow) { setCatCursor((c) => Math.max(0, c - 1)); return; }
-    if (key.downArrow) { setCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
-    if (key.return) {
+    if (key.upArrow && view === 'categories') { setCatCursor((c) => Math.max(0, c - 1)); return; }
+    if (key.downArrow && view === 'categories') { setCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+    if (key.return && view === 'categories') {
       const cat = categories[catCursor];
       if (cat) {
         const { from, to } = getPeriodDates(range, anchor);
         onNavigate('transactions', { category: cat.category, from, to });
       }
+      return;
+    }
+    if (key.return && view === 'flex') {
+      const { from, to } = getPeriodDates(range, anchor);
+      onNavigate('transactions', { from, to });
       return;
     }
     if (input === 'r') {
@@ -92,8 +114,9 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
       setCatCursor(0);
       return;
     }
+    if (input === 'f') { setView((v) => v === 'categories' ? 'flex' : 'categories'); return; }
     if (input === 't') {
-      const cat = categories[catCursor];
+      const cat = view === 'categories' ? categories[catCursor] : null;
       onNavigate('trends', cat ? { category: cat.category } : {});
       return;
     }
@@ -104,6 +127,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
   });
 
   const maxCategorySpend = categories[0]?.total ?? 1;
+  const totalExpenses = summary?.expenses ?? 0;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
@@ -122,8 +146,15 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
       </Box>
 
       <Box justifyContent="space-between" marginTop={1} marginBottom={1}>
-        <Text bold>{formatPeriodLabel(range, anchor)}</Text>
-        <Text dimColor>← → period  ·  ↑↓ select  ·  Enter txns  ·  [t] trends</Text>
+        <Box gap={3}>
+          <Text bold>{formatPeriodLabel(range, anchor)}</Text>
+          <Text color={view === 'categories' ? 'white' : 'cyan'} dimColor={view !== 'flex'}>[f] {view === 'flex' ? 'flexibility' : 'flexibility'}</Text>
+        </Box>
+        <Text dimColor>
+          {view === 'categories'
+            ? '← → period  ·  ↑↓ select  ·  Enter txns  ·  [t] trends'
+            : '← → period  ·  Enter txns'}
+        </Text>
       </Box>
 
       <Divider />
@@ -155,30 +186,55 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
 
           <Divider />
 
-          <Box flexDirection="column" marginTop={1}>
-            <Text bold dimColor>SPENDING BY CATEGORY</Text>
+          {view === 'categories' ? (
             <Box flexDirection="column" marginTop={1}>
-              {categories.length === 0 ? (
-                <Text dimColor>No expense data for this period.</Text>
-              ) : (
-                categories.map((row, i) => {
-                  const isSelected = catCursor === i;
+              <Text bold dimColor>SPENDING BY CATEGORY</Text>
+              <Box flexDirection="column" marginTop={1}>
+                {categories.length === 0 ? (
+                  <Text dimColor>No expense data for this period.</Text>
+                ) : (
+                  categories.map((row, i) => {
+                    const isSelected = catCursor === i;
+                    return (
+                      <Box key={`${row.category}-${i}`} gap={2}>
+                        <Text color={isSelected ? 'cyan' : undefined}>
+                          {isSelected ? '▶ ' : '  '}
+                          {row.category.padEnd(20)}
+                        </Text>
+                        <Text color="yellow">{fmt(row.total).padStart(10)}</Text>
+                        <Text color="cyan" dimColor={!isSelected}>
+                          {bar(row.total, maxCategorySpend)}
+                        </Text>
+                      </Box>
+                    );
+                  })
+                )}
+              </Box>
+            </Box>
+          ) : (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold dimColor>SPENDING BY FLEXIBILITY</Text>
+              <Box flexDirection="column" marginTop={1}>
+                {flexData && FLEX_TIERS.map(({ key, label, color }) => {
+                  const amount = flexData[key];
+                  if (amount === 0) return null;
                   return (
-                    <Box key={`${row.category}-${i}`} gap={2}>
-                      <Text color={isSelected ? 'cyan' : undefined}>
-                        {isSelected ? '▶ ' : '  '}
-                        {row.category.padEnd(20)}
-                      </Text>
-                      <Text color="yellow">{fmt(row.total).padStart(10)}</Text>
-                      <Text color="cyan" dimColor={!isSelected}>
-                        {bar(row.total, maxCategorySpend)}
-                      </Text>
+                    <Box key={key} gap={2}>
+                      <Text color={color}>{'  '}{label.padEnd(16)}</Text>
+                      <Text color="yellow">{fmt(amount).padStart(10)}</Text>
+                      <Text dimColor>{pct(amount, totalExpenses).padStart(4)}</Text>
+                      <Text color={color}>{bar(amount, totalExpenses, 16)}</Text>
                     </Box>
                   );
-                })
+                })}
+              </Box>
+              {flexData && flexData.untagged > 0 && (
+                <Text dimColor marginTop={1}>
+                  {pct(flexData.untagged, totalExpenses)} untagged — set tiers in Rules → Categories
+                </Text>
               )}
             </Box>
-          </Box>
+          )}
         </>
       ) : (
         <Text dimColor>Loading...</Text>

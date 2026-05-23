@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
+import { syncAll } from '../core/sync.js';
 import type { Screen, TxFilter } from './App.js';
 
 type Step =
@@ -79,6 +80,8 @@ export function Import({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =
   const [accounts, setAccounts] = useState<Account[]>([]);
 
   const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done'>('idle');
+  const [syncMsg, setSyncMsg] = useState('');
 
   function tryLoadFile(path: string) {
     try {
@@ -176,6 +179,21 @@ export function Import({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =
       if (input === '5') { onNavigate('tags'); return; }
       if (input === 'l') { setStep('link-plaid'); startPlaidLink(); return; }
       if (input === 'c') { setStep('file'); return; }
+      if (input === 's' && syncStatus === 'idle') {
+        setSyncStatus('syncing');
+        setSyncMsg('Syncing...');
+        syncAll(true).then((results) => {
+          const added = results.reduce((s, r) => s + r.added, 0);
+          setSyncMsg(`Done — ${added} new transaction${added !== 1 ? 's' : ''}`);
+          setSyncStatus('done');
+          setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
+        }).catch(() => {
+          setSyncMsg('Sync failed');
+          setSyncStatus('done');
+          setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 3000);
+        });
+        return;
+      }
     }
 
     if (step === 'link-plaid') {
@@ -284,7 +302,11 @@ export function Import({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =
           <Box marginTop={1} flexDirection="column" gap={1}>
             <Text color="cyan">[l] Link a bank account  <Text dimColor>Opens Plaid in your browser</Text></Text>
             <Text color="cyan">[c] Import CSV file      <Text dimColor>Upload a statement export</Text></Text>
+            <Text color={syncStatus === 'syncing' ? 'yellow' : 'cyan'}>
+              [s] Force sync          <Text dimColor>Re-sync from Plaid now (ignores 15-min cooldown)</Text>
+            </Text>
           </Box>
+          {syncMsg && <Text color={syncStatus === 'syncing' ? 'yellow' : 'green'} marginTop={1}>{syncMsg}</Text>}
           <Text dimColor marginTop={1}>Esc to go back</Text>
         </Box>
       )}
