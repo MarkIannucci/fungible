@@ -4,6 +4,7 @@ import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
 import { rebuildDisplayNames } from '../core/rename.js';
 import type { Screen, TxFilter } from './App.js';
+import { handleNavKey } from './nav.js';
 
 function getCategories(): string[] {
   return (db.prepare('SELECT name FROM categories ORDER BY name').all() as { name: string }[]).map((r) => r.name);
@@ -366,13 +367,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
 
     if (mode === 'list') {
       if (key.tab) { setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]); return; }
-      if (input === '1') { onNavigate('dashboard'); return; }
-      if (input === '3') { onNavigate('trends'); return; }
-      if (input === '4') { onNavigate('networth'); return; }
-      if (input === '5') { onNavigate('tags'); return; }
-      if (input === '6') { onNavigate('health'); return; }
-      if (input === '7') { onNavigate('rules'); return; }
-      if (input === '8') { onNavigate('accounts'); return; }
+      if (handleNavKey(input, 'transactions', onNavigate)) return;
       if (key.escape) {
         if (search) { setSearch(''); setSearchInput(''); return; }
         if (from) { setFrom(null); setTo(null); return; }

@@ -3,20 +3,11 @@ import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import { getTagSummary, type MonthlySummary } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
+import { fmt, bar, Divider } from './fmt.js';
+import { handleNavKey } from './nav.js';
 
 type Tag = { id: number; name: string; count: number };
 type Mode = 'list' | 'search' | 'add' | 'detail';
-
-const BAR_WIDTH = 20;
-
-function fmt(amount: number) {
-  return `$${Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function bar(amount: number, max: number) {
-  const filled = Math.round((amount / max) * BAR_WIDTH);
-  return '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
-}
 
 function getTags(): Tag[] {
   return db.prepare(`
@@ -102,24 +93,12 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
         onNavigate('transactions', { tag: visibleTags[cursor].name });
         return;
       }
-      if (input === '1') { onNavigate('dashboard'); return; }
-      if (input === '2') { onNavigate('transactions'); return; }
-      if (input === '3') { onNavigate('trends'); return; }
-      if (input === '4') { onNavigate('networth'); return; }
-      if (input === '6') { onNavigate('health'); return; }
-      if (input === '7') { onNavigate('rules'); return; }
-      if (input === '8') { onNavigate('accounts'); return; }
+      if (handleNavKey(input, 'tags', onNavigate)) return;
       return;
     }
 
     // list mode
-    if (input === '1') { onNavigate('dashboard'); return; }
-    if (input === '2') { onNavigate('transactions'); return; }
-    if (input === '3') { onNavigate('trends'); return; }
-    if (input === '4') { onNavigate('networth'); return; }
-    if (input === '6') { onNavigate('health'); return; }
-    if (input === '7') { onNavigate('rules'); return; }
-    if (input === '8') { onNavigate('accounts'); return; }
+    if (handleNavKey(input, 'tags', onNavigate)) return;
     if (key.escape) {
       if (search) { setSearch(''); setCursor(0); return; }
       onNavigate('dashboard'); return;
@@ -165,7 +144,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
             <Text dimColor>← → tag  ·  ↑↓ category  ·  Enter txns  ·  [t] all txns  ·  Esc back</Text>
           </Box>
 
-          <Text dimColor>{'─'.repeat(60)}</Text>
+          <Divider width={60} />
 
           <Box gap={6} marginY={1}>
             <Box flexDirection="column">
@@ -188,7 +167,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
             </Box>
           </Box>
 
-          <Text dimColor>{'─'.repeat(60)}</Text>
+          <Divider width={60} />
 
           <Box flexDirection="column" marginTop={1}>
             <Text bold dimColor>SPENDING BY CATEGORY</Text>
@@ -227,7 +206,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
               <Text dimColor>  Esc cancel</Text>
             </Box>
           )}
-          <Box marginTop={1}><Text dimColor>{'─'.repeat(50)}</Text></Box>
+          <Box marginTop={1}><Divider width={50} /></Box>
 
           {visibleTags.length === 0 ? (
             <Box marginTop={1}><Text dimColor>{search ? `No tags matching "${search}".` : 'No tags yet. [a] to create one.'}</Text></Box>
@@ -246,7 +225,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
             })
           )}
 
-          <Box marginTop={1}><Text dimColor>{'─'.repeat(50)}</Text></Box>
+          <Box marginTop={1}><Divider width={50} /></Box>
           <Text dimColor>{search ? `${visibleTags.length} of ${tags.length}` : `${tags.length}`} tag{tags.length !== 1 ? 's' : ''}</Text>
           {statusMsg && <Text color="green">{statusMsg}</Text>}
 

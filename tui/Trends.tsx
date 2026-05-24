@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import type { Screen, TxFilter } from './App.js';
+import { fmt, fmtSigned, bar, Divider } from './fmt.js';
+import { handleNavKey } from './nav.js';
 
 const BAR_WIDTH = 28;
 const HALF_BAR = 14;
@@ -54,18 +56,6 @@ function buildViews(): View[] {
     { mode: 'flex',          category: null, flex: 'discretionary', label: 'Discretionary' },
     ...cats.map((r) => ({ mode: 'category' as ViewMode, category: r.category, flex: null, label: r.category })),
   ];
-}
-
-function fmt(amount: number) {
-  return `$${Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-function fmtSigned(amount: number) {
-  return `${amount >= 0 ? '+' : '-'}$${Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function bar(amount: number, max: number, width = BAR_WIDTH) {
-  const filled = max > 0 ? Math.min(width, Math.max(0, Math.round((Math.abs(amount) / max) * width))) : 0;
-  return '█'.repeat(filled) + '░'.repeat(width - filled);
 }
 
 function addDays(dateStr: string, days: number): string {
@@ -325,13 +315,7 @@ export function Trends({
 
   useInput((input, key) => {
     if (key.escape) { onNavigate('dashboard'); return; }
-    if (input === '1') { onNavigate('dashboard'); return; }
-    if (input === '2') { onNavigate('transactions'); return; }
-    if (input === '4') { onNavigate('networth'); return; }
-    if (input === '5') { onNavigate('tags'); return; }
-    if (input === '6') { onNavigate('health'); return; }
-    if (input === '7') { onNavigate('rules'); return; }
-    if (input === '8') { onNavigate('accounts'); return; }
+    if (handleNavKey(input, 'trends', onNavigate)) return;
     if (key.leftArrow)  { setViewIdx((i) => (i - 1 + views.length) % views.length); return; }
     if (key.rightArrow) { setViewIdx((i) => (i + 1) % views.length); return; }
     if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
@@ -393,7 +377,7 @@ export function Trends({
         </Box>
         <Text dimColor>← → view  ·  ↑↓ navigate  ·  Enter drill in</Text>
       </Box>
-      <Box marginTop={1}><Text dimColor>{'─'.repeat(70)}</Text></Box>
+      <Box marginTop={1}><Divider /></Box>
 
       {rows.length === 0 ? (
         <Box marginTop={1}><Text dimColor>No data.</Text></Box>
@@ -470,14 +454,14 @@ export function Trends({
                     {fmt(row.total).padStart(13)}
                   </Text>
                   <Text color={color} dimColor={!isSelected}>
-                    {bar(row.total, absMax)}
+                    {bar(row.total, absMax, BAR_WIDTH)}
                   </Text>
                 </Box>
               );
             })}
           </Box>
 
-          <Box marginTop={1}><Text dimColor>{'─'.repeat(70)}</Text></Box>
+          <Box marginTop={1}><Divider /></Box>
           <Box gap={6} marginTop={1}>
             <Box flexDirection="column">
               <Text dimColor>periods</Text>

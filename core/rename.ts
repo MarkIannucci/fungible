@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { inAmountRange, matchesPattern } from './rule-utils.js';
 
 type NameRule = {
   match_type: 'name' | 'regex';
@@ -15,20 +16,8 @@ export function applyNameRules(name: string, amount?: number): string {
   ).all() as NameRule[];
 
   for (const rule of rules) {
-    if (amount !== undefined) {
-      if (rule.min_amount !== null && amount < rule.min_amount) continue;
-      if (rule.max_amount !== null && amount > rule.max_amount) continue;
-    }
-    if (rule.match_type === 'name') {
-      if (name.toLowerCase().includes(rule.pattern.toLowerCase())) {
-        return rule.replacement;
-      }
-    } else {
-      const re = new RegExp(rule.pattern, 'i');
-      if (re.test(name)) {
-        return rule.replacement;
-      }
-    }
+    if (!inAmountRange(amount, rule.min_amount, rule.max_amount)) continue;
+    if (matchesPattern(rule.pattern, rule.match_type, [name.toLowerCase()])) return rule.replacement;
   }
 
   return name;

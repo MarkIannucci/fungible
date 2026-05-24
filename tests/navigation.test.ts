@@ -60,27 +60,29 @@ function extractNavBarKeys(src: string): string[] {
   return [...new Set(keys)]; // deduplicate
 }
 
-/** Extract input handler mappings: { key -> screen } from `input === 'N'` guards
- *  followed by `onNavigate('screenName')` in the same file. */
+/** Extract input handler mappings: { key -> screen } from a source file.
+ *  Handles two patterns:
+ *  1. Inline: `if (input === 'N') { onNavigate('screen'); ... }`
+ *  2. Helper: `handleNavKey(input, 'currentScreen', onNavigate)` — implies all
+ *     other 7 screen keys are handled by the shared helper in nav.ts. */
 function extractInputHandlers(src: string): Record<string, string> {
   const handlers: Record<string, string> = {};
-  // Match: input === 'N' ... onNavigate('screen')
-  // We use a simple regex that captures the key and destination on the same line,
-  // or within a short window.
+
+  // Inline patterns
   const linePattern = /input === '([1-8])'[^)]*onNavigate\('([a-z]+)'\)/g;
   let m: RegExpExecArray | null;
-  while ((m = linePattern.exec(src)) !== null) {
-    handlers[m[1]] = m[2];
-  }
+  while ((m = linePattern.exec(src)) !== null) handlers[m[1]] = m[2];
 
-  // Also handle multi-token patterns where onNavigate is on the same logical block.
-  // We do a second pass for cases like:
-  //   if (input === '2') { onNavigate('transactions'); return; }
-  // which the above regex handles. But also:
-  //   if (input === '2') onNavigate('transactions');
   const shortPattern = /if\s*\(input === '([1-8])'\)\s*\{?\s*onNavigate\('([a-z]+)'\)/g;
-  while ((m = shortPattern.exec(src)) !== null) {
-    handlers[m[1]] = m[2];
+  while ((m = shortPattern.exec(src)) !== null) handlers[m[1]] = m[2];
+
+  // handleNavKey(input, 'currentScreen', onNavigate) → all other 7 screens handled
+  const navKeyPattern = /handleNavKey\(input,\s*'([a-z]+)',\s*\w+\)/g;
+  while ((m = navKeyPattern.exec(src)) !== null) {
+    const current = m[1];
+    for (const [k, dest] of Object.entries(KEY_TO_SCREEN)) {
+      if (dest !== current) handlers[k] = dest;
+    }
   }
 
   return handlers;

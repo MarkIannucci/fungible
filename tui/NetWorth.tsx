@@ -2,6 +2,8 @@ import React from 'react';
 import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import type { Screen } from './App.js';
+import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
+import { handleNavKey } from './nav.js';
 
 const BAR_WIDTH = 32;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -24,19 +26,6 @@ type HistoryRow = {
   net: number;
 };
 
-function fmt(n: number) {
-  return `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-function fmtSigned(n: number) {
-  return `${n >= 0 ? '+' : '-'}${fmt(n)}`;
-}
-function truncate(s: string, max: number) {
-  return s.length > max ? s.slice(0, max - 1) + '…' : s;
-}
-function bar(val: number, max: number) {
-  const filled = max > 0 ? Math.min(BAR_WIDTH, Math.max(0, Math.round((val / max) * BAR_WIDTH))) : 0;
-  return '█'.repeat(filled) + '░'.repeat(BAR_WIDTH - filled);
-}
 function dateLabel(d: string) {
   const dt = new Date(d + 'T12:00:00');
   return `${MONTHS[dt.getMonth()]} ${dt.getDate()} ${dt.getFullYear()}`;
@@ -87,13 +76,7 @@ export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => 
   useInput((input, key) => {
     if (key.tab) { setView((v) => v === 'accounts' ? 'types' : 'accounts'); return; }
     if (key.escape || input === '4') { onNavigate('networth'); return; }
-    if (input === '1') { onNavigate('dashboard'); return; }
-    if (input === '2') { onNavigate('transactions'); return; }
-    if (input === '3') { onNavigate('trends'); return; }
-    if (input === '5') { onNavigate('tags'); return; }
-    if (input === '6') { onNavigate('health'); return; }
-    if (input === '7') { onNavigate('rules'); return; }
-    if (input === '8') { onNavigate('accounts'); return; }
+    handleNavKey(input, 'networth', onNavigate);
   }, { isActive: isActive !== false });
 
   const assets      = accounts.filter((a) => a.type === 'depository' || a.type === 'investment' || (a.type === 'other' && a.balance > 0));
@@ -127,7 +110,7 @@ export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => 
         </Box>
         <Text dimColor>[Tab] {view === 'accounts' ? 'by type' : 'by account'}</Text>
       </Box>
-      <Text dimColor>{'─'.repeat(70)}</Text>
+      <Divider />
 
       {accounts.length === 0 ? (
         <Box marginTop={1} flexDirection="column">
@@ -193,7 +176,7 @@ export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => 
           {/* History */}
           {hasHistory && (
             <>
-              <Box marginTop={1}><Text dimColor>{'─'.repeat(70)}</Text></Box>
+              <Box marginTop={1}><Divider /></Box>
               <Text bold>History</Text>
               <Box flexDirection="column">
                 {history.map((row) => (
@@ -203,7 +186,7 @@ export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => 
                       {fmtSigned(row.net).padStart(14)}
                     </Text>
                     <Text color={row.net >= 0 ? 'green' : 'red'} dimColor>
-                      {bar(Math.abs(row.net), maxNet)}
+                      {bar(row.net, maxNet, BAR_WIDTH)}
                     </Text>
                   </Box>
                 ))}

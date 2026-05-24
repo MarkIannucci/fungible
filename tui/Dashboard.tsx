@@ -7,31 +7,16 @@ import {
   RANGES, RANGE_LABELS, type Range,
 } from '../core/dateUtils.js';
 import type { Screen, TxFilter } from './App.js';
+import { fmt, bar, Divider } from './fmt.js';
+import { handleNavKey } from './nav.js';
 
 const BAR_WIDTH = 20;
 
 type DashView = 'categories' | 'flex' | 'account';
 
-function fmt(amount: number) {
-  return `$${Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function fmtInt(n: number) {
-  return `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
-
 function pct(part: number, total: number) {
   if (total === 0) return '0%';
   return `${Math.round((part / total) * 100)}%`;
-}
-
-function bar(amount: number, max: number, width = BAR_WIDTH) {
-  const filled = max > 0 ? Math.min(width, Math.round((amount / max) * width)) : 0;
-  return '█'.repeat(filled) + '░'.repeat(width - filled);
-}
-
-function Divider() {
-  return <Text dimColor>{'─'.repeat(60)}</Text>;
 }
 
 function getUncategorizedCount(from: string, to: string, accountId?: string) {
@@ -227,13 +212,7 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
       return;
     }
 
-    if (input === '2') onNavigate('transactions');
-    if (input === '3') onNavigate('trends');
-    if (input === '4') onNavigate('networth');
-    if (input === '5') onNavigate('tags');
-    if (input === '6') onNavigate('health');
-    if (input === '7') onNavigate('rules');
-    if (input === '8') onNavigate('accounts');
+    handleNavKey(input, 'dashboard', onNavigate);
   }, { isActive: isActive !== false });
 
   const maxCategorySpend = categories[0]?.total ?? 1;
@@ -277,7 +256,7 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
         </Text>
       </Box>
 
-      <Divider />
+      <Divider width={60} />
 
       {view === 'account' ? (
         <Box flexDirection="column" marginTop={1}>
@@ -329,7 +308,7 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
             )}
           </Box>
 
-          <Divider />
+          <Divider width={60} />
 
           {view === 'categories' ? (
             <Box flexDirection="column" marginTop={1}>

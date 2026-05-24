@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { inAmountRange, matchesPattern } from './rule-utils.js';
 
 type Rule = {
   match_type: 'name' | 'regex';
@@ -52,18 +53,8 @@ export function categorize(name: string, merchant: string | null, plaidCategory:
   if (merchant && merchant.toLowerCase() !== name.toLowerCase()) haystacks.push(merchant.toLowerCase());
 
   for (const rule of rules) {
-    // Amount range check (if specified)
-    if (amount !== undefined) {
-      if (rule.min_amount !== null && amount < rule.min_amount) continue;
-      if (rule.max_amount !== null && amount > rule.max_amount) continue;
-    }
-
-    if (rule.match_type === 'name') {
-      if (haystacks.some((h) => h.includes(rule.pattern.toLowerCase()))) return rule.category;
-    } else if (rule.match_type === 'regex') {
-      const re = new RegExp(rule.pattern, 'i');
-      if (haystacks.some((h) => re.test(h))) return rule.category;
-    }
+    if (!inAmountRange(amount, rule.min_amount, rule.max_amount)) continue;
+    if (matchesPattern(rule.pattern, rule.match_type, haystacks)) return rule.category;
   }
 
   if (plaidCategory && PLAID_CATEGORY_MAP[plaidCategory]) {

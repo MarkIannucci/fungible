@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import type { Screen } from './App.js';
+import { Divider } from './fmt.js';
+import { handleNavKey } from './nav.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -145,13 +147,7 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
 
   useInput((input, key) => {
     if (key.escape || input === '6') { onNavigate('health'); return; }
-    if (input === '1') { onNavigate('dashboard'); return; }
-    if (input === '2') { onNavigate('transactions'); return; }
-    if (input === '3') { onNavigate('trends'); return; }
-    if (input === '4') { onNavigate('networth'); return; }
-    if (input === '5') { onNavigate('tags'); return; }
-    if (input === '7') { onNavigate('rules'); return; }
-    if (input === '8') { onNavigate('accounts'); return; }
+    handleNavKey(input, 'health', onNavigate);
 
     if (key.upArrow)   { setDialIdx((i) => (i - 1 + DIALS.length) % DIALS.length); return; }
     if (key.downArrow) { setDialIdx((i) => (i + 1) % DIALS.length); return; }
@@ -207,7 +203,7 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
         <Text bold color="cyan">Financial Health</Text>
         <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>
       </Box>
-      <Text dimColor>{'─'.repeat(70)}</Text>
+      <Divider />
 
       {/* ── Runway ─────────────────────────────────────────────────────────── */}
       <Box flexDirection="column" marginTop={1}>
@@ -256,7 +252,7 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
       </Box>
 
       {/* ── Assumptions ────────────────────────────────────────────────────── */}
-      <Box marginTop={1}><Text dimColor>{'─'.repeat(70)}</Text></Box>
+      <Box marginTop={1}><Divider /></Box>
       <Text bold dimColor>ASSUMPTIONS</Text>
 
       <Box flexDirection="column" marginTop={1}>

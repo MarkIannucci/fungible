@@ -8,6 +8,8 @@ import { categorize } from '../core/categorize.js';
 import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import type { Screen, TxFilter } from './App.js';
+import { truncate, Divider } from './fmt.js';
+import { handleNavKey } from './nav.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -59,9 +61,6 @@ const SUBTYPES: Record<string, string[]> = {
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function Divider() { return <Text dimColor>{'─'.repeat(70)}</Text>; }
-function truncate(s: string, n: number) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
 function fmtDate(d: string | null): string {
   if (!d) return 'never';
@@ -335,13 +334,7 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
     const atTop = mainView === 'accounts' || addStep === 'landing';
 
     if (atTop) {
-      if (input === '1') { onNavigate('dashboard'); return; }
-      if (input === '2') { onNavigate('transactions'); return; }
-      if (input === '3') { onNavigate('trends'); return; }
-      if (input === '4') { onNavigate('networth'); return; }
-      if (input === '5') { onNavigate('tags'); return; }
-      if (input === '6') { onNavigate('health'); return; }
-      if (input === '7') { onNavigate('rules'); return; }
+      if (handleNavKey(input, 'accounts', onNavigate)) return;
     }
 
     // ── Accounts view ──────────────────────────────────────────────────────────

@@ -4,6 +4,8 @@ import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
 import { rebuildDisplayNames } from '../core/rename.js';
 import type { Screen, TxFilter } from './App.js';
+import { Divider } from './fmt.js';
+import { handleNavKey } from './nav.js';
 
 type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null };
 type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null };
@@ -174,13 +176,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
     }
 
     if (mode === 'list') {
-      if (input === '1') { onNavigate('dashboard'); return; }
-      if (input === '2') { onNavigate('transactions'); return; }
-      if (input === '3') { onNavigate('trends'); return; }
-      if (input === '4') { onNavigate('networth'); return; }
-      if (input === '5') { onNavigate('tags'); return; }
-      if (input === '6') { onNavigate('health'); return; }
-      if (input === '8') { onNavigate('accounts'); return; }
+      if (handleNavKey(input, 'rules', onNavigate)) return;
       if (key.escape) {
         if (search) { setSearch(''); return; }
         onNavigate('dashboard');
@@ -367,7 +363,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
           <Text dimColor>· Esc to clear</Text>
         </Box>
       ) : null}
-      <Box marginTop={1}><Text dimColor>{'─'.repeat(70)}</Text></Box>
+      <Box marginTop={1}><Divider /></Box>
 
       {section === 'rules' && (
         <>
@@ -399,7 +395,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
               </Box>
             );
           })}
-          <Text dimColor>{'─'.repeat(70)}</Text>
+          <Divider />
           <Box gap={4}>
             <Text dimColor>{filteredRules.length}{search ? `/${rules.length}` : ''} rules</Text>
             {uncategorized > 0 && <Text color="yellow">{uncategorized} uncategorized transactions</Text>}
@@ -440,7 +436,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
                   </Box>
                 );
               })}
-          <Text dimColor>{'─'.repeat(70)}</Text>
+          <Divider />
           <Text dimColor>{filteredNameRules.length}{search ? `/${nameRules.length}` : ''} name rule{nameRules.length !== 1 ? 's' : ''}</Text>
         </>
       )}
@@ -471,7 +467,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
               );
             })}
           </Box>
-          <Text dimColor>{'─'.repeat(70)}</Text>
+          <Divider />
           <Box gap={4}>
             <Text dimColor>{categories.length} categories</Text>
             {hiddenSet.size > 0 && <Text dimColor>{hiddenSet.size} hidden from totals</Text>}
