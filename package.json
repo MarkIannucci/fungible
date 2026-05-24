@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --experimental-sqlite --no-warnings --import tsx/esm tui/index.tsx",
+    "setup": "node --experimental-sqlite --no-warnings --import tsx/esm tui/index.tsx --setup",
     "link": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/link.ts",
     "import-csv": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/import-csv.ts",
     "seed-rules": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/seed-rules.ts",

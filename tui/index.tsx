@@ -5,9 +5,14 @@ import { initDb } from '../core/db.js';
 import { syncAll } from '../core/sync.js';
 import { rebuildDisplayNames } from '../core/rename.js';
 import { App } from './App.js';
+import { Setup } from './Setup.js';
 
-initDb();
-rebuildDisplayNames(); // re-apply name rules after any migrations
-syncAll().catch(() => {}); // sync in background, ignore errors
-
-render(<App />);
+if (process.argv.includes('--setup')) {
+  initDb();
+  render(<Setup />);
+} else {
+  initDb();
+  rebuildDisplayNames();
+  syncAll().catch(() => {});
+  render(<App />);
+}

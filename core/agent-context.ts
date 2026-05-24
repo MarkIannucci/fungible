@@ -61,7 +61,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
 export function getBalances(): BalanceSummary {
   const rows = db.prepare(`
     SELECT
-      a.id, a.name, a.type, a.subtype,
+      a.id, COALESCE(a.nickname, a.name) as name, a.type, a.subtype,
       a.institution_name as institution,
       a.mask,
       bh.balance

@@ -169,11 +169,14 @@ export function Chat({
   const visible = displayMsgs.slice(-CHAT_HISTORY_LINES);
 
   if (!isActive && !displayMsgs.length && !isStreaming) {
-    // Collapsed — just show a hint bar
+    const noKey = label === 'no key set';
     return (
       <Box borderStyle="single" borderColor="gray" paddingX={1}>
-        <Text dimColor>agent ({label})  </Text>
-        <Text dimColor>[ ` ] ask anything about your finances</Text>
+        <Text dimColor>agent  </Text>
+        {noKey
+          ? <Text dimColor color="yellow">no API key — add ANTHROPIC_API_KEY or OPENAI_API_KEY to .env</Text>
+          : <Text dimColor>[ ` ] ask anything about your finances  <Text>({label})</Text></Text>
+        }
       </Box>
     );
   }

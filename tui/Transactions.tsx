@@ -25,7 +25,7 @@ type Tx = {
 
 type TagOption = { id: number; name: string };
 
-type Mode = 'list' | 'search' | 'edit' | 'edit-rule' | 'tag' | 'tag-all';
+type Mode = 'list' | 'search' | 'edit' | 'edit-rule' | 'tag' | 'tag-all' | 'edit-all';
 type EditField = 'name' | 'category';
 type SortMode = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
 
@@ -361,6 +361,25 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
       return;
     }
 
+    if (mode === 'edit-all') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.upArrow) { setEditCatCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setEditCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+      if (key.return) {
+        const newCat = categories[editCatCursor];
+        if (newCat) {
+          const stmt = db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?');
+          for (const tx of txs) stmt.run(newCat, newCat, tx.id);
+          setStatusMsg(`Set category to "${newCat}" for ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`);
+          setTimeout(() => setStatusMsg(''), 3000);
+          setMode('list');
+          load(search, true);
+        }
+        return;
+      }
+      return;
+    }
+
     if (mode === 'edit') {
       if (key.escape) { setMode('list'); return; }
       if (editField === 'name') {
@@ -426,6 +445,13 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
       if (input === 'u') { setSearch(''); setSearchInput(''); setCategory('Uncategorized'); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
       if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
       if (input === 'e' && selected) openEdit();
+      if (input === 'E' && txs.length > 0) {
+        const cats = getCategories();
+        setCategories(cats);
+        setEditCatCursor(0);
+        setMode('edit-all');
+        return;
+      }
       if (input === 'g' && selected) openTagPanel();
       if (input === 'G' && txs.length > 0) {
         const tags = db.prepare('SELECT id, name FROM tags ORDER BY name').all() as TagOption[];
@@ -436,7 +462,25 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
         return;
       }
       if (input === 'x' && selected?.manual_category) clearOverride();
+      if (input === 'X' && txs.length > 0) {
+        const rows = db.prepare('SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (' + txs.map(() => '?').join(',') + ') AND manual_category IS NOT NULL').all(...txs.map((t) => t.id)) as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
+        const stmt = db.prepare('UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?');
+        for (const tx of rows) stmt.run(categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount), tx.id);
+        setStatusMsg(`Cleared overrides on ${rows.length} transaction${rows.length !== 1 ? 's' : ''}`);
+        setTimeout(() => setStatusMsg(''), 2500);
+        load(search, true);
+        return;
+      }
       if (input === 'i' && selected) toggleIgnored();
+      if (input === 'I' && txs.length > 0) {
+        const target = selected?.ignored ? 0 : 1;
+        const stmt = db.prepare('UPDATE transactions SET ignored = ? WHERE id = ?');
+        for (const tx of txs) stmt.run(target, tx.id);
+        setStatusMsg(`${target ? 'Ignored' : 'Un-ignored'} ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`);
+        setTimeout(() => setStatusMsg(''), 2500);
+        load(search, true);
+        return;
+      }
       if (input === 'd' && selected?.id.startsWith('csv-')) {
         db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ?').run(selected.id);
         db.prepare('DELETE FROM transactions WHERE id = ?').run(selected.id);
@@ -488,7 +532,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
           {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
         </Text>
         <Text dimColor>
-          {from ? '← → month  ·  ' : ''}[Tab] sort  ·  [/] search  ·  [u] uncategorized  [a] all  ·  [e] edit  [g] tag  [G] tag all  [x] undo  [i] ignore  [d] delete
+          {from ? '← → month  ·  ' : ''}[Tab] sort  ·  [/] search  ·  [u] uncategorized  [a] all  ·  [e/E] edit  [g/G] tag  [x/X] reset  [i/I] ignore  [d] delete
         </Text>
       </Box>
 
@@ -601,6 +645,24 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
             })
           )}
           <Box marginTop={1}><Text dimColor>↑↓ select  ·  Enter apply  ·  Esc cancel</Text></Box>
+        </Box>
+      )}
+
+      {mode === 'edit-all' && (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="magenta" paddingX={2} paddingY={1}>
+          <Text bold>Set category for all <Text color="cyan">{txs.length}</Text> visible transactions</Text>
+          <Text dimColor>↑↓ select  ·  Enter apply  ·  Esc cancel</Text>
+          <Box flexDirection="column" marginTop={1}>
+            {visibleCats.map((cat, i) => {
+              const idx = catWinStart + i;
+              const isSel = idx === editCatCursor;
+              return (
+                <Text key={cat} color={isSel ? 'cyan' : undefined} dimColor={!isSel}>
+                  {isSel ? '▶ ' : '  '}{cat}
+                </Text>
+              );
+            })}
+          </Box>
         </Box>
       )}
 

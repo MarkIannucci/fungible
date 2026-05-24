@@ -1,14 +1,16 @@
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
 
-function getPlaidClient() {
+export function isPlaidConfigured(): boolean {
+  return !!(process.env.PLAID_CLIENT_ID && process.env.PLAID_SECRET);
+}
+
+export function getPlaidClient(): PlaidApi {
   const clientId = process.env.PLAID_CLIENT_ID;
   const secret = process.env.PLAID_SECRET;
-  const env = process.env.PLAID_ENV ?? 'sandbox';
-
   if (!clientId || !secret) {
-    throw new Error('PLAID_CLIENT_ID and PLAID_SECRET must be set in .env');
+    throw new Error('Plaid is not configured. Add PLAID_CLIENT_ID and PLAID_SECRET to your .env file.');
   }
-
+  const env = process.env.PLAID_ENV ?? 'sandbox';
   const config = new Configuration({
     basePath: PlaidEnvironments[env as keyof typeof PlaidEnvironments],
     baseOptions: {
@@ -18,14 +20,11 @@ function getPlaidClient() {
       },
     },
   });
-
   return new PlaidApi(config);
 }
 
-export const plaidClient = getPlaidClient();
-
 export async function createLinkToken(userId: string) {
-  const response = await plaidClient.linkTokenCreate({
+  const response = await getPlaidClient().linkTokenCreate({
     user: { client_user_id: userId },
     client_name: 'Fungible',
     products: [Products.Transactions],
@@ -36,7 +35,7 @@ export async function createLinkToken(userId: string) {
 }
 
 export async function exchangePublicToken(publicToken: string) {
-  const response = await plaidClient.itemPublicTokenExchange({ public_token: publicToken });
+  const response = await getPlaidClient().itemPublicTokenExchange({ public_token: publicToken });
   return {
     accessToken: response.data.access_token,
     itemId: response.data.item_id,

@@ -2,7 +2,7 @@ import 'dotenv/config';
 import http from 'node:http';
 import { exec } from 'node:child_process';
 import { initDb, db } from '../core/db.js';
-import { plaidClient, createLinkToken, exchangePublicToken } from '../core/plaid.js';
+import { createLinkToken, exchangePublicToken } from '../core/plaid.js';
 
 initDb();
 

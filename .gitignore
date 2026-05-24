@@ -4,3 +4,4 @@
 node_modules/
 memory/
 PLANS.md
+scripts/seed-rules.ts

@@ -14,7 +14,7 @@ import { NavHints, handleNavKey } from './nav.js';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MainView = 'accounts' | 'add-data' | 'dupes';
-type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname';
+type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname' | 'confirm-delete';
 type EditField = 'type' | 'subtype';
 
 type AddStep =
@@ -223,6 +223,20 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
     loadAccounts();
   }
 
+  function deleteAccount() {
+    const acct = linkedAccounts[acctCursor];
+    if (!acct) return;
+    db.prepare('DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id = ?)').run(acct.id);
+    db.prepare('DELETE FROM transactions WHERE account_id = ?').run(acct.id);
+    db.prepare('DELETE FROM balance_history WHERE account_id = ?').run(acct.id);
+    db.prepare('DELETE FROM accounts WHERE id = ?').run(acct.id);
+    setAcctMode('list');
+    setAcctCursor((c) => Math.max(0, c - 1));
+    setAcctMsg(`Deleted ${acct.nickname ?? acct.name}`);
+    setTimeout(() => setAcctMsg(''), 2500);
+    loadAccounts();
+  }
+
   function saveNickname() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
@@ -401,6 +415,12 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
         return;
       }
 
+      if (acctMode === 'confirm-delete') {
+        if (key.escape || input === 'n') { setAcctMode('list'); return; }
+        if (input === 'y') { deleteAccount(); return; }
+        return;
+      }
+
       // list mode
       if (key.escape) { onNavigate('dashboard'); return; }
       if (key.tab) { setMainView('add-data'); return; }
@@ -421,6 +441,7 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
         setAcctMode('update-value');
         return;
       }
+      if (input === 'd' && linkedAccounts[acctCursor]) { setAcctMode('confirm-delete'); return; }
       if (input === 'r' && linkedAccounts[acctCursor]) {
         setMainView('add-data');
         setAddStep('link-plaid');
@@ -428,12 +449,6 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
         return;
       }
       if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
-      if (input === 'l') {
-        setMainView('add-data');
-        setAddStep('link-plaid');
-        startPlaidLink();
-        return;
-      }
       return;
     }
 
@@ -586,7 +601,7 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
         </Box>
         {mainView === 'accounts' && acctMode === 'list' && (
           <Text dimColor>
-            ↑↓ select  ·  [e] edit type  ·  [n] nickname{selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [s] sync  ·  [l] link bank
+            ↑↓ select  ·  [e] edit type  ·  [n] nickname{selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [d] delete  ·  [s] sync
           </Text>
         )}
         {mainView === 'accounts' && acctMode === 'edit' && (
@@ -641,6 +656,24 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
           <Text dimColor>{linkedAccounts.length} account{linkedAccounts.length !== 1 ? 's' : ''}</Text>
           {syncMsg && <Text color={syncStatus === 'syncing' ? 'yellow' : 'green'}>{syncMsg}</Text>}
           {acctMsg && <Text color="green">{acctMsg}</Text>}
+
+          {/* Confirm-delete panel */}
+          {acctMode === 'confirm-delete' && selectedAcct && (
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="red" paddingX={2} paddingY={1}>
+              <Text bold color="red">Delete account — this cannot be undone</Text>
+              <Box marginTop={1} flexDirection="column">
+                <Text><Text color="cyan">{selectedAcct.nickname ?? selectedAcct.name}</Text>  {selectedAcct.mask ? `···${selectedAcct.mask}` : ''}</Text>
+                {selectedAcct.id.startsWith('manual-')
+                  ? <Text dimColor>Removes this asset and its balance history.</Text>
+                  : <Text dimColor>Removes this account, all its transactions, and balance history.</Text>
+                }
+              </Box>
+              <Box marginTop={1} gap={4}>
+                <Text color="red">[y] Yes, delete</Text>
+                <Text color="green">[n] / Esc cancel</Text>
+              </Box>
+            </Box>
+          )}
 
           {/* Nickname panel */}
           {acctMode === 'nickname' && selectedAcct && (

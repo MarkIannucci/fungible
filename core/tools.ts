@@ -355,7 +355,7 @@ export async function executeTool(
       const limit = input['limit'] ? num('limit') : 50;
       const rows = db.prepare(`
         SELECT t.id, t.date, COALESCE(t.display_name, t.name) as name, t.amount,
-               t.category, t.manual_category, t.ignored, a.name as account
+               t.category, t.manual_category, t.ignored, COALESCE(a.nickname, a.name) as account
         FROM transactions t LEFT JOIN accounts a ON t.account_id = a.id
         ${where} ORDER BY t.date DESC LIMIT ?
       `).all(...args, limit) as { id: string; date: string; name: string; amount: number; category: string; manual_category: string | null; ignored: number; account: string }[];
@@ -368,7 +368,7 @@ export async function executeTool(
     }
 
     case 'list_accounts': {
-      const rows = db.prepare('SELECT name, type, subtype, mask, institution_name FROM accounts').all() as { name: string; type: string; subtype: string; mask: string | null; institution_name: string | null }[];
+      const rows = db.prepare('SELECT COALESCE(nickname, name) as name, type, subtype, mask, institution_name FROM accounts').all() as { name: string; type: string; subtype: string; mask: string | null; institution_name: string | null }[];
       if (!rows.length) return 'No accounts connected.';
       return rows.map((a) => `${a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`).join('\n');
     }

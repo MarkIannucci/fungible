@@ -1,4 +1,4 @@
-import { plaidClient } from './plaid.js';
+import { getPlaidClient } from './plaid.js';
 import { db } from './db.js';
 import { categorize } from './categorize.js';
 import { applyNameRules } from './rename.js';
@@ -15,7 +15,7 @@ export async function syncTransactions(accessToken: string, itemId: string) {
   let hasMore = true;
 
   while (hasMore) {
-    const response = await plaidClient.transactionsSync({
+    const response = await getPlaidClient().transactionsSync({
       access_token: accessToken,
       cursor,
     });
@@ -29,7 +29,7 @@ export async function syncTransactions(accessToken: string, itemId: string) {
   }
 
   // Upsert accounts and snapshot balances
-  const accountsResponse = await plaidClient.accountsGet({ access_token: accessToken });
+  const accountsResponse = await getPlaidClient().accountsGet({ access_token: accessToken });
   const today = new Date().toISOString().slice(0, 10);
   const upsertAccount = db.prepare(`
     INSERT INTO accounts (id, name, type, subtype, mask)
