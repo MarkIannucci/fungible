@@ -10,10 +10,14 @@ import type { Screen, TxFilter } from './App.js';
 
 const BAR_WIDTH = 20;
 
-type DashView = 'categories' | 'flex';
+type DashView = 'categories' | 'flex' | 'account';
 
 function fmt(amount: number) {
   return `$${Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function fmtInt(n: number) {
+  return `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 }
 
 function pct(part: number, total: number) {
@@ -22,7 +26,7 @@ function pct(part: number, total: number) {
 }
 
 function bar(amount: number, max: number, width = BAR_WIDTH) {
-  const filled = max > 0 ? Math.round((amount / max) * width) : 0;
+  const filled = max > 0 ? Math.min(width, Math.round((amount / max) * width)) : 0;
   return '█'.repeat(filled) + '░'.repeat(width - filled);
 }
 
@@ -30,12 +34,14 @@ function Divider() {
   return <Text dimColor>{'─'.repeat(60)}</Text>;
 }
 
-function getUncategorizedCount(from: string, to: string) {
+function getUncategorizedCount(from: string, to: string, accountId?: string) {
+  const where = accountId ? 'AND account_id = ?' : '';
+  const args = accountId ? [from, to, accountId] : [from, to];
   return (db.prepare(`
     SELECT COUNT(*) as c FROM transactions
     WHERE category = 'Uncategorized' AND pending = 0 AND ignored = 0
-      AND date >= ? AND date <= ?
-  `).get(from, to) as { c: number }).c;
+      AND date >= ? AND date <= ? ${where}
+  `).get(...args) as { c: number }).c;
 }
 
 function getDataBounds() {
@@ -49,11 +55,60 @@ function getDataBounds() {
   };
 }
 
+function getFilteredRangeSummary(from: string, to: string, accountId: string): MonthlySummary {
+  const row = db.prepare(`
+    SELECT
+      COALESCE(-SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0) as income,
+      COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) as expenses
+    FROM transactions
+    WHERE date >= ? AND date <= ? AND account_id = ?
+      AND pending = 0 AND ignored = 0
+      AND category NOT IN (SELECT category FROM hidden_categories)
+  `).get(from, to, accountId) as { income: number; expenses: number };
+
+  const byCategory = db.prepare(`
+    SELECT category, SUM(amount) as total
+    FROM transactions
+    WHERE date >= ? AND date <= ? AND account_id = ?
+      AND amount > 0 AND pending = 0 AND ignored = 0
+      AND category NOT IN (SELECT category FROM hidden_categories)
+    GROUP BY category ORDER BY total DESC
+  `).all(from, to, accountId) as { category: string; total: number }[];
+
+  return { income: row.income, expenses: row.expenses, net: row.income - row.expenses, byCategory };
+}
+
+function getFilteredFlexSummary(from: string, to: string, accountId: string): FlexSummary {
+  return db.prepare(`
+    SELECT
+      COALESCE(SUM(CASE WHEN c.flexibility = 'fixed'         AND t.amount > 0 THEN t.amount ELSE 0 END), 0) as fixed,
+      COALESCE(SUM(CASE WHEN c.flexibility = 'flexible'      AND t.amount > 0 THEN t.amount ELSE 0 END), 0) as flexible,
+      COALESCE(SUM(CASE WHEN c.flexibility = 'discretionary' AND t.amount > 0 THEN t.amount ELSE 0 END), 0) as discretionary,
+      COALESCE(SUM(CASE WHEN c.flexibility IS NULL           AND t.amount > 0 THEN t.amount ELSE 0 END), 0) as untagged
+    FROM transactions t
+    LEFT JOIN categories c ON c.name = t.category
+    WHERE t.date >= ? AND t.date <= ? AND t.account_id = ?
+      AND t.pending = 0 AND t.ignored = 0
+      AND t.category NOT IN (SELECT category FROM hidden_categories)
+  `).get(from, to, accountId) as FlexSummary;
+}
+
+type AccountRow = { id: string; name: string; subtype: string | null; balance: number | null };
+
+function getAccountRows(): AccountRow[] {
+  return db.prepare(`
+    SELECT a.id, a.name, a.subtype,
+      (SELECT balance FROM balance_history WHERE account_id = a.id ORDER BY date DESC LIMIT 1) as balance
+    FROM accounts a
+    ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 ELSE 2 END, a.name
+  `).all() as AccountRow[];
+}
+
 const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }> = [
-  { key: 'fixed',         label: 'Fixed',         color: 'red'     },
-  { key: 'flexible',      label: 'Flexible',       color: 'yellow'  },
-  { key: 'discretionary', label: 'Discretionary',  color: 'cyan'    },
-  { key: 'untagged',      label: 'Untagged',       color: 'white'   },
+  { key: 'fixed',         label: 'Fixed',        color: 'red'    },
+  { key: 'flexible',      label: 'Flexible',      color: 'yellow' },
+  { key: 'discretionary', label: 'Discretionary', color: 'cyan'   },
+  { key: 'untagged',      label: 'Untagged',      color: 'white'  },
 ];
 
 export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxFilter) => void }) {
@@ -67,45 +122,88 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
   const [view, setView] = useState<DashView>('categories');
   const [bounds] = useState(getDataBounds);
 
-  function load(r: Range, a: Date) {
+  // Account filter
+  const [accountRows] = useState<AccountRow[]>(getAccountRows);
+  const [acctCursor, setAcctCursor] = useState(0);
+  const [selectedAccount, setSelectedAccount] = useState<AccountRow | null>(null);
+
+  function load(r: Range, a: Date, acct: AccountRow | null) {
     const { from, to } = getPeriodDates(r, a);
-    setSummary(getRangeSummary(from, to));
-    setFlexData(getFlexSummary(from, to));
-    setUncategorized(getUncategorizedCount(from, to));
+    if (acct) {
+      setSummary(getFilteredRangeSummary(from, to, acct.id));
+      setFlexData(getFilteredFlexSummary(from, to, acct.id));
+      setUncategorized(getUncategorizedCount(from, to, acct.id));
+    } else {
+      setSummary(getRangeSummary(from, to));
+      setFlexData(getFlexSummary(from, to));
+      setUncategorized(getUncategorizedCount(from, to));
+    }
   }
 
-  useEffect(() => { load(range, anchor); setCatCursor(0); }, [range, anchor.toISOString().slice(0, 10)]);
+  useEffect(() => {
+    load(range, anchor, selectedAccount);
+    setCatCursor(0);
+  }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
 
   const categories = summary?.byCategory ?? [];
 
   useInput((input, key) => {
-    if (key.leftArrow && range !== 'alltime') {
-      const next = navigatePeriod(range, anchor, -1);
-      const { from } = getPeriodDates(range, next);
-      if (from >= bounds.minDate) setAnchor(next);
+    if (key.tab) {
+      setView((v) => v === 'categories' ? 'flex' : v === 'flex' ? 'account' : 'categories');
       return;
     }
-    if (key.rightArrow && range !== 'alltime') {
-      const next = navigatePeriod(range, anchor, 1);
-      const { from } = getPeriodDates(range, next);
-      if (from <= bounds.maxDate) setAnchor(next);
-      return;
-    }
-    if (key.upArrow && view === 'categories') { setCatCursor((c) => Math.max(0, c - 1)); return; }
-    if (key.downArrow && view === 'categories') { setCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
-    if (key.return && view === 'categories') {
-      const cat = categories[catCursor];
-      if (cat) {
-        const { from, to } = getPeriodDates(range, anchor);
-        onNavigate('transactions', { category: cat.category, from, to });
+
+    // Period navigation (not in account picker)
+    if (view !== 'account') {
+      if (key.leftArrow && range !== 'alltime') {
+        const next = navigatePeriod(range, anchor, -1);
+        const { from } = getPeriodDates(range, next);
+        if (from >= bounds.minDate) setAnchor(next);
+        return;
       }
-      return;
+      if (key.rightArrow && range !== 'alltime') {
+        const next = navigatePeriod(range, anchor, 1);
+        const { from } = getPeriodDates(range, next);
+        if (from <= bounds.maxDate) setAnchor(next);
+        return;
+      }
     }
-    if (key.return && view === 'flex') {
-      const { from, to } = getPeriodDates(range, anchor);
-      onNavigate('transactions', { from, to });
-      return;
+
+    if (view === 'categories') {
+      if (key.upArrow)   { setCatCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+      if (key.return) {
+        const cat = categories[catCursor];
+        if (cat) {
+          const { from, to } = getPeriodDates(range, anchor);
+          onNavigate('transactions', { category: cat.category, from, to, ...(selectedAccount ? { account: selectedAccount.id } : {}) });
+        }
+        return;
+      }
     }
+
+    if (view === 'flex') {
+      if (key.return) {
+        const { from, to } = getPeriodDates(range, anchor);
+        onNavigate('transactions', { from, to, ...(selectedAccount ? { account: selectedAccount.id } : {}) });
+        return;
+      }
+    }
+
+    if (view === 'account') {
+      if (key.upArrow   || key.leftArrow)  { setAcctCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow || key.rightArrow) { setAcctCursor((c) => Math.min(accountRows.length - 1, c + 1)); return; }
+      if (key.return) {
+        const acct = accountRows[acctCursor];
+        if (acct) {
+          setSelectedAccount(selectedAccount?.id === acct.id ? null : acct);
+          setView('categories');
+        }
+        return;
+      }
+      if (input === 'c') { setSelectedAccount(null); return; }
+    }
+
     if (input === 'r') {
       const idx = RANGES.indexOf(range);
       const next = RANGES[(idx + 1) % RANGES.length];
@@ -114,16 +212,14 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
       setCatCursor(0);
       return;
     }
-    if (input === 'f') { setView((v) => v === 'categories' ? 'flex' : 'categories'); return; }
-    if (input === 't') {
-      const cat = view === 'categories' ? categories[catCursor] : null;
-      onNavigate('trends', cat ? { category: cat.category } : {});
-      return;
-    }
+
     if (input === '2') onNavigate('transactions');
-    if (input === '3') onNavigate('rules');
-    if (input === '4') onNavigate('import');
+    if (input === '3') onNavigate('trends');
+    if (input === '4') onNavigate('networth');
     if (input === '5') onNavigate('tags');
+    if (input === '6') onNavigate('health');
+    if (input === '7') onNavigate('rules');
+    if (input === '8') onNavigate('accounts');
   });
 
   const maxCategorySpend = categories[0]?.total ?? 1;
@@ -133,7 +229,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[2] txns  [3] rules  [4] import  [5] tags</Text>
+        <Text dimColor>[2] txns  [3] trends  [4] worth  [5] tags  [6] health  [7] rules  [8] accounts</Text>
       </Box>
 
       <Box gap={2} marginTop={1}>
@@ -148,18 +244,55 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
       <Box justifyContent="space-between" marginTop={1} marginBottom={1}>
         <Box gap={3}>
           <Text bold>{formatPeriodLabel(range, anchor)}</Text>
-          <Text color={view === 'categories' ? 'white' : 'cyan'} dimColor={view !== 'flex'}>[f] {view === 'flex' ? 'flexibility' : 'flexibility'}</Text>
+          {selectedAccount && <Text color="yellow">{selectedAccount.name}</Text>}
+          <Box gap={1}>
+            <Text color={view === 'categories' ? 'cyan' : undefined} dimColor={view !== 'categories'}>categories</Text>
+            <Text dimColor>/</Text>
+            <Text color={view === 'flex' ? 'cyan' : undefined} dimColor={view !== 'flex'}>flex</Text>
+            <Text dimColor>/</Text>
+            <Text color={view === 'account' ? 'cyan' : undefined} dimColor={view !== 'account'}>account</Text>
+            <Text dimColor>[Tab]</Text>
+          </Box>
         </Box>
         <Text dimColor>
-          {view === 'categories'
-            ? '← → period  ·  ↑↓ select  ·  Enter txns  ·  [t] trends'
+          {view === 'account'
+            ? `↑↓ select  ·  Enter ${selectedAccount ? 'switch' : 'filter'}  ·  [c] clear`
+            : view === 'categories'
+            ? '← → period  ·  ↑↓ select  ·  Enter txns'
             : '← → period  ·  Enter txns'}
         </Text>
       </Box>
 
       <Divider />
 
-      {summary ? (
+      {view === 'account' ? (
+        <Box flexDirection="column" marginTop={1}>
+          {accountRows.length === 0 ? (
+            <Text dimColor>No accounts linked. [8] accounts → link a bank.</Text>
+          ) : (
+            accountRows.map((acct, i) => {
+              const isSelected = i === acctCursor;
+              const isFiltered = selectedAccount?.id === acct.id;
+              return (
+                <Box key={acct.id} gap={2}>
+                  <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶' : ' '}</Text>
+                  <Text color={isFiltered ? 'yellow' : isSelected ? 'cyan' : undefined} dimColor={!isSelected && !isFiltered}>
+                    {acct.name.padEnd(28)}
+                  </Text>
+                  <Text dimColor>{(acct.subtype ?? '').padEnd(12)}</Text>
+                  {acct.balance !== null
+                    ? <Text dimColor>{fmtInt(acct.balance).padStart(12)}</Text>
+                    : <Text dimColor>{'—'.padStart(12)}</Text>}
+                  {isFiltered && <Text color="yellow">  ● filtered</Text>}
+                </Box>
+              );
+            })
+          )}
+          {selectedAccount && (
+            <Box marginTop={1}><Text dimColor>[c] clear filter</Text></Box>
+          )}
+        </Box>
+      ) : summary ? (
         <>
           <Box gap={6} marginY={1}>
             <Box flexDirection="column">
@@ -229,9 +362,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
                 })}
               </Box>
               {flexData && flexData.untagged > 0 && (
-                <Text dimColor marginTop={1}>
-                  {pct(flexData.untagged, totalExpenses)} untagged — set tiers in Rules → Categories
-                </Text>
+                <Box marginTop={1}><Text dimColor>{pct(flexData.untagged, totalExpenses)} untagged — set tiers in Rules → Categories</Text></Box>
               )}
             </Box>
           )}

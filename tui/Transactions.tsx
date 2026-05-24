@@ -341,9 +341,12 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
 
     if (mode === 'list') {
       if (input === '1') { onNavigate('dashboard'); return; }
-      if (input === '3') { onNavigate('rules'); return; }
-      if (input === '4') { onNavigate('import'); return; }
+      if (input === '3') { onNavigate('trends'); return; }
+      if (input === '4') { onNavigate('networth'); return; }
       if (input === '5') { onNavigate('tags'); return; }
+      if (input === '6') { onNavigate('health'); return; }
+      if (input === '7') { onNavigate('rules'); return; }
+      if (input === '8') { onNavigate('accounts'); return; }
       if (key.escape) {
         if (search) { setSearch(''); setSearchInput(''); return; }
         if (from) { setFrom(null); setTo(null); return; }
@@ -412,7 +415,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [3] rules  [4] import  [5] tags</Text>
+        <Text dimColor>[1] dash  [3] trends  [4] worth  [5] tags  [6] health  [7] rules  [8] accounts</Text>
       </Box>
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>
@@ -432,7 +435,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
           <Text dimColor>  Esc cancel</Text>
         </Box>
       )}
-      <Text dimColor marginTop={1}>{'─'.repeat(80)}</Text>
+      <Box marginTop={1}><Text dimColor>{'─'.repeat(80)}</Text></Box>
 
       <Box gap={2} marginTop={1}>
         <Text dimColor>{'  DATE      '}</Text>
@@ -481,7 +484,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
             <Text color="yellow">█</Text>
           </Box>
           {filteredTags.length === 0 && tagInput ? (
-            <Text dimColor marginTop={1}>Enter to create "{tagInput}"</Text>
+            <Box marginTop={1}><Text dimColor>Enter to create "{tagInput}"</Text></Box>
           ) : (
             filteredTags.map((t, i) => {
               const isSelected = i === tagCursor;
@@ -497,9 +500,9 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
             })
           )}
           {allTags.length === 0 && !tagInput && (
-            <Text dimColor marginTop={1}>No tags yet — type a name and Enter to create one</Text>
+            <Box marginTop={1}><Text dimColor>No tags yet — type a name and Enter to create one</Text></Box>
           )}
-          <Text dimColor marginTop={1}>Space/Enter toggle  ·  Esc close</Text>
+          <Box marginTop={1}><Text dimColor>Space/Enter toggle  ·  Esc close</Text></Box>
         </Box>
       )}
 
@@ -564,7 +567,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
             <Text color={editMatchType === 'regex' ? 'white' : undefined} dimColor={editMatchType !== 'regex'}>[x] regex</Text>
             <Text color="yellow">{matchCount} transactions match</Text>
           </Box>
-          <Text dimColor marginTop={1}>Enter save  ·  Esc back</Text>
+          <Box marginTop={1}><Text dimColor>Enter save  ·  Esc back</Text></Box>
         </Box>
       )}
     </Box>

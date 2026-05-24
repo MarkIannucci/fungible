@@ -28,15 +28,24 @@ export async function syncTransactions(accessToken: string, itemId: string) {
     cursor = data.next_cursor;
   }
 
-  // Upsert accounts
+  // Upsert accounts and snapshot balances
   const accountsResponse = await plaidClient.accountsGet({ access_token: accessToken });
+  const today = new Date().toISOString().slice(0, 10);
   const upsertAccount = db.prepare(`
     INSERT INTO accounts (id, name, type, subtype, mask)
     VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET name=excluded.name
   `);
+  const upsertBalance = db.prepare(`
+    INSERT INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)
+    ON CONFLICT(account_id, date) DO UPDATE SET balance=excluded.balance
+  `);
   for (const acct of accountsResponse.data.accounts) {
     upsertAccount.run(acct.account_id, acct.name, acct.type, acct.subtype ?? null, acct.mask ?? null);
+    const balance = acct.balances.current;
+    if (balance !== null && balance !== undefined) {
+      upsertBalance.run(acct.account_id, balance, today);
+    }
   }
 
   // Upsert added + modified
@@ -80,7 +89,7 @@ export async function syncTransactions(accessToken: string, itemId: string) {
   db.prepare(`
     INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)
     ON CONFLICT(account_id) DO UPDATE SET cursor=excluded.cursor
-  `).run(itemId, cursor);
+  `).run(itemId, cursor ?? null);
   db.prepare('UPDATE plaid_items SET last_synced_at = ? WHERE item_id = ?').run(Date.now(), itemId);
 
   const dupes = deduplicateCsvVsPlaid();

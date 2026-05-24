@@ -325,9 +325,11 @@ export function Trends({
     if (key.escape) { onNavigate('dashboard'); return; }
     if (input === '1') { onNavigate('dashboard'); return; }
     if (input === '2') { onNavigate('transactions'); return; }
-    if (input === '3') { onNavigate('rules'); return; }
-    if (input === '4') { onNavigate('import'); return; }
+    if (input === '4') { onNavigate('networth'); return; }
     if (input === '5') { onNavigate('tags'); return; }
+    if (input === '6') { onNavigate('health'); return; }
+    if (input === '7') { onNavigate('rules'); return; }
+    if (input === '8') { onNavigate('accounts'); return; }
     if (key.leftArrow)  { setViewIdx((i) => (i - 1 + views.length) % views.length); return; }
     if (key.rightArrow) { setViewIdx((i) => (i + 1) % views.length); return; }
     if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
@@ -370,7 +372,7 @@ export function Trends({
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [3] rules  [4] import  [5] tags</Text>
+        <Text dimColor>[1] dash  [2] txns  [4] worth  [5] tags  [6] health  [7] rules  [8] accounts</Text>
       </Box>
 
       <Box gap={2} marginTop={1}>
@@ -389,10 +391,10 @@ export function Trends({
         </Box>
         <Text dimColor>← → view  ·  ↑↓ navigate  ·  Enter drill in</Text>
       </Box>
-      <Text dimColor marginTop={1}>{'─'.repeat(70)}</Text>
+      <Box marginTop={1}><Text dimColor>{'─'.repeat(70)}</Text></Box>
 
       {rows.length === 0 ? (
-        <Text dimColor marginTop={1}>No data.</Text>
+        <Box marginTop={1}><Text dimColor>No data.</Text></Box>
       ) : (
         <>
           <Box flexDirection="column" marginTop={1}>
@@ -473,7 +475,7 @@ export function Trends({
             })}
           </Box>
 
-          <Text dimColor marginTop={1}>{'─'.repeat(70)}</Text>
+          <Box marginTop={1}><Text dimColor>{'─'.repeat(70)}</Text></Box>
           <Box gap={6} marginTop={1}>
             <Box flexDirection="column">
               <Text dimColor>periods</Text>

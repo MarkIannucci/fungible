@@ -175,8 +175,10 @@ export function Import({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =
     if (step === 'landing') {
       if (key.escape || input === '1') { onNavigate('dashboard'); return; }
       if (input === '2') { onNavigate('transactions'); return; }
-      if (input === '3') { onNavigate('rules'); return; }
+      if (input === '3') { onNavigate('trends'); return; }
+      if (input === '4') { onNavigate('networth'); return; }
       if (input === '5') { onNavigate('tags'); return; }
+      if (input === '6') { onNavigate('rules'); return; }
       if (input === 'l') { setStep('link-plaid'); startPlaidLink(); return; }
       if (input === 'c') { setStep('file'); return; }
       if (input === 's' && syncStatus === 'idle') {
@@ -207,8 +209,10 @@ export function Import({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =
       if (key.escape) { setStep('landing'); return; }
       if (input === '1') { onNavigate('dashboard'); return; }
       if (input === '2') { onNavigate('transactions'); return; }
-      if (input === '3') { onNavigate('rules'); return; }
+      if (input === '3') { onNavigate('trends'); return; }
+      if (input === '4') { onNavigate('networth'); return; }
       if (input === '5') { onNavigate('tags'); return; }
+      if (input === '6') { onNavigate('rules'); return; }
       if (key.return) { tryLoadFile(filePath); return; }
       if (key.backspace || key.delete) { setFilePath((p) => p.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setFilePath((p) => p + input);
@@ -287,7 +291,7 @@ export function Import({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [3] rules  [5] tags</Text>
+        <Text dimColor>[1] dash  [2] txns  [3] trends  [4] worth  [5] tags  [6] rules</Text>
       </Box>
       <Box justifyContent="space-between" marginTop={1} marginBottom={1}>
         <Text bold>{step === 'link-plaid' ? 'Link Bank' : step === 'landing' ? 'Add Data' : 'Import CSV'}</Text>
@@ -306,8 +310,8 @@ export function Import({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =
               [s] Force sync          <Text dimColor>Re-sync from Plaid now (ignores 15-min cooldown)</Text>
             </Text>
           </Box>
-          {syncMsg && <Text color={syncStatus === 'syncing' ? 'yellow' : 'green'} marginTop={1}>{syncMsg}</Text>}
-          <Text dimColor marginTop={1}>Esc to go back</Text>
+          {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? 'yellow' : 'green'}>{syncMsg}</Text></Box>}
+          <Box marginTop={1}><Text dimColor>Esc to go back</Text></Box>
         </Box>
       )}
 
@@ -450,7 +454,7 @@ export function Import({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =
           <Text bold color="green">Import complete</Text>
           <Text>Imported: <Text color="green">{result.imported}</Text></Text>
           <Text dimColor>Skipped (duplicates/invalid): {result.skipped}</Text>
-          <Text dimColor marginTop={1}>Press Enter to return to dashboard</Text>
+          <Box marginTop={1}><Text dimColor>Press Enter to return to dashboard</Text></Box>
         </Box>
       )}
     </Box>

@@ -3,17 +3,20 @@ import { useInput, useApp } from 'ink';
 import { Dashboard } from './Dashboard.js';
 import { Transactions } from './Transactions.js';
 import { Trends } from './Trends.js';
-import { Rules } from './Rules.js';
-import { Import } from './Import.js';
+import { NetWorth } from './NetWorth.js';
 import { Tags } from './Tags.js';
+import { Rules } from './Rules.js';
+import { Accounts } from './Accounts.js';
+import { Health } from './Health.js';
 
-export type Screen = 'dashboard' | 'transactions' | 'trends' | 'rules' | 'import' | 'tags';
+export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health';
 
 export type TxFilter = {
   category?: string;
   from?: string;
   to?: string;
   tag?: string;
+  account?: string;
 };
 
 export function App() {
@@ -34,8 +37,10 @@ export function App() {
     case 'dashboard':    return <Dashboard onNavigate={navigate} />;
     case 'transactions': return <Transactions onNavigate={navigate} initialFilter={txFilter} />;
     case 'trends':       return <Trends onNavigate={navigate} initialFilter={txFilter} />;
-    case 'rules':        return <Rules onNavigate={navigate} />;
-    case 'import':       return <Import onNavigate={navigate} />;
+    case 'networth':     return <NetWorth onNavigate={navigate} />;
     case 'tags':         return <Tags onNavigate={navigate} />;
+    case 'rules':        return <Rules onNavigate={navigate} />;
+    case 'accounts':     return <Accounts onNavigate={navigate} />;
+    case 'health':       return <Health onNavigate={navigate} />;
   }
 }

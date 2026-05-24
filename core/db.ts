@@ -95,6 +95,16 @@ export function initDb() {
   try { db.exec('ALTER TABLE name_rules ADD COLUMN max_amount REAL'); } catch {}
   try { db.exec("ALTER TABLE categories ADD COLUMN flexibility TEXT CHECK(flexibility IN ('fixed','flexible','discretionary'))"); } catch {}
   try { db.exec('ALTER TABLE plaid_items ADD COLUMN last_synced_at INTEGER'); } catch {}
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS balance_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id TEXT NOT NULL,
+      balance REAL NOT NULL,
+      date TEXT NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_balance_history_acct_date
+      ON balance_history(account_id, date);
+  `);
   // Seed default flexibility tiers (only for categories that don't have one set yet)
   const flexDefaults: [string, string][] = [
     ['Rent', 'fixed'], ['Insurance', 'fixed'], ['Childcare', 'fixed'],

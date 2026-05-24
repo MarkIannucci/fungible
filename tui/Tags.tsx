@@ -89,16 +89,22 @@ export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => 
       }
       if (input === '1') { onNavigate('dashboard'); return; }
       if (input === '2') { onNavigate('transactions'); return; }
-      if (input === '3') { onNavigate('rules'); return; }
-      if (input === '4') { onNavigate('import'); return; }
+      if (input === '3') { onNavigate('trends'); return; }
+      if (input === '4') { onNavigate('networth'); return; }
+      if (input === '6') { onNavigate('health'); return; }
+      if (input === '7') { onNavigate('rules'); return; }
+      if (input === '8') { onNavigate('accounts'); return; }
       return;
     }
 
     // list mode
     if (input === '1') { onNavigate('dashboard'); return; }
     if (input === '2') { onNavigate('transactions'); return; }
-    if (input === '3') { onNavigate('rules'); return; }
-    if (input === '4') { onNavigate('import'); return; }
+    if (input === '3') { onNavigate('trends'); return; }
+    if (input === '4') { onNavigate('networth'); return; }
+    if (input === '6') { onNavigate('health'); return; }
+    if (input === '7') { onNavigate('rules'); return; }
+    if (input === '8') { onNavigate('accounts'); return; }
     if (key.escape) { onNavigate('dashboard'); return; }
     if (key.upArrow) { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(tags.length - 1, c + 1)); return; }
@@ -130,7 +136,7 @@ export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => 
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [3] rules  [4] import</Text>
+        <Text dimColor>[1] dash  [2] txns  [3] trends  [4] worth  [6] health  [7] rules  [8] accounts</Text>
       </Box>
 
       {mode === 'detail' && tag && tagSummary ? (
@@ -194,10 +200,10 @@ export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => 
             <Text bold>Tags</Text>
             <Text dimColor>[a] add  [d] delete  ·  Enter detail  ·  [t] transactions</Text>
           </Box>
-          <Text dimColor marginTop={1}>{'─'.repeat(50)}</Text>
+          <Box marginTop={1}><Text dimColor>{'─'.repeat(50)}</Text></Box>
 
           {tags.length === 0 ? (
-            <Text dimColor marginTop={1}>No tags yet. [a] to create one.</Text>
+            <Box marginTop={1}><Text dimColor>No tags yet. [a] to create one.</Text></Box>
           ) : (
             tags.map((t, i) => {
               const isSelected = i === cursor;
@@ -213,7 +219,7 @@ export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => 
             })
           )}
 
-          <Text dimColor marginTop={1}>{'─'.repeat(50)}</Text>
+          <Box marginTop={1}><Text dimColor>{'─'.repeat(50)}</Text></Box>
           <Text dimColor>{tags.length} tag{tags.length !== 1 ? 's' : ''}</Text>
           {statusMsg && <Text color="green">{statusMsg}</Text>}
 

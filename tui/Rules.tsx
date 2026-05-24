@@ -176,20 +176,18 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
     if (mode === 'list') {
       if (input === '1') { onNavigate('dashboard'); return; }
       if (input === '2') { onNavigate('transactions'); return; }
-      if (input === '4') { onNavigate('import'); return; }
+      if (input === '3') { onNavigate('trends'); return; }
+      if (input === '4') { onNavigate('networth'); return; }
       if (input === '5') { onNavigate('tags'); return; }
+      if (input === '6') { onNavigate('health'); return; }
+      if (input === '8') { onNavigate('accounts'); return; }
       if (key.escape) {
         if (search) { setSearch(''); return; }
         onNavigate('dashboard');
         return;
       }
 
-      if (key.leftArrow) {
-        setSearch('');
-        setSection((s) => { const i = SECTIONS.indexOf(s); return SECTIONS[(i - 1 + SECTIONS.length) % SECTIONS.length]; });
-        return;
-      }
-      if (key.rightArrow) {
+      if (key.tab) {
         setSearch('');
         setSection((s) => { const i = SECTIONS.indexOf(s); return SECTIONS[(i + 1) % SECTIONS.length]; });
         return;
@@ -339,7 +337,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       {/* Header */}
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [4] import  [5] tags</Text>
+        <Text dimColor>[1] dash  [2] txns  [3] trends  [4] worth  [5] tags  [6] health  [8] accounts</Text>
       </Box>
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
@@ -351,8 +349,8 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
         </Box>
         <Text dimColor>
           {section === 'categories'
-            ? '[a] add  [d] delete  [h] hidden  [f] flexibility  ·  ← → switch'
-            : '[/] search  [a] add  [e] edit  [d] delete  ·  ← → switch'}
+            ? '[a] add  [d] delete  [h] hidden  [f] flexibility  ·  [Tab] switch'
+            : '[/] search  [a] add  [e] edit  [d] delete  ·  [Tab] switch'}
         </Text>
       </Box>
 
@@ -369,7 +367,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
           <Text dimColor>· Esc to clear</Text>
         </Box>
       ) : null}
-      <Text dimColor marginTop={1}>{'─'.repeat(70)}</Text>
+      <Box marginTop={1}><Text dimColor>{'─'.repeat(70)}</Text></Box>
 
       {section === 'rules' && (
         <>
@@ -418,7 +416,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
             <Text dimColor>REPLACEMENT</Text>
           </Box>
           {filteredNameRules.length === 0
-            ? <Text dimColor marginTop={1}>{nameRules.length === 0 ? 'No name rules yet. [a] to add one.' : 'No matches.'}</Text>
+            ? <Box marginTop={1}><Text dimColor>{nameRules.length === 0 ? 'No name rules yet. [a] to add one.' : 'No matches.'}</Text></Box>
             : filteredNameRules.map((rule, i) => {
                 const isSelected = nameCursor === i;
                 const amtLabel = rule.min_amount !== null && rule.max_amount !== null && rule.min_amount === rule.max_amount
