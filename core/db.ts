@@ -120,12 +120,6 @@ export function initDb() {
   );
   for (const [cat, flex] of flexDefaults) setFlex.run(flex, cat);
 
-  // Fix Venmo phone bill name rule — restrict to $54.79 only
-  db.prepare(
-    `UPDATE name_rules SET min_amount = 54.79, max_amount = 54.79
-     WHERE pattern = 'VENMO PAYMENT' AND replacement = 'Phone Bill' AND min_amount IS NULL`
-  ).run();
-
   // Seed default hidden categories (idempotent)
   const hidden = ['Transfer', 'Loan Payment'];
   const insertHidden = db.prepare('INSERT OR IGNORE INTO hidden_categories (category) VALUES (?)');
