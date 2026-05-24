@@ -13,7 +13,7 @@ type CategoryDetail = { name: string; flexibility: 'fixed' | 'flexible' | 'discr
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
 const FLEX_COLORS: Record<string, string> = { fixed: 'red', flexible: 'yellow', discretionary: 'cyan' };
-type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-min-amount' | 'add-name-max-amount' | 'add-name-replacement' | 'add-category-name';
+type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-min-amount' | 'add-name-max-amount' | 'add-name-replacement' | 'add-category-name' | 'rename-category';
 type Section = 'rules' | 'names' | 'categories';
 
 const SECTIONS: Section[] = ['rules', 'names', 'categories'];
@@ -58,6 +58,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
   const [categories, setCategories] = useState<string[]>([]);
   const [catListCursor, setCatListCursor] = useState(0);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [renameCatInput, setRenameCatInput] = useState('');
   const [catDetails, setCatDetails] = useState<CategoryDetail[]>([]);
 
   // New category rule state
@@ -244,9 +245,17 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
           load();
           return;
         }
+        if (input === 'r' && categories[catListCursor]) {
+          setRenameCatInput(categories[catListCursor]);
+          setMode('rename-category');
+          return;
+        }
         if (input === 'd' && categories[catListCursor]) {
-          db.prepare('DELETE FROM categories WHERE name = ?').run(categories[catListCursor]);
-          setStatusMsg(`Deleted "${categories[catListCursor]}"`);
+          const name = categories[catListCursor];
+          db.prepare("UPDATE transactions SET category = 'Uncategorized', manual_category = NULL WHERE category = ?").run(name);
+          db.prepare('DELETE FROM hidden_categories WHERE category = ?').run(name);
+          db.prepare('DELETE FROM categories WHERE name = ?').run(name);
+          setStatusMsg(`Deleted "${name}"`);
           setTimeout(() => setStatusMsg(''), 2000);
           load();
           setCatListCursor((c) => Math.max(0, c - 1));
@@ -313,6 +322,27 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
       }
       if (key.backspace || key.delete) { setNewCategoryName((p) => p.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setNewCategoryName((p) => p + input);
+    } else if (mode === 'rename-category') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.return && renameCatInput.trim()) {
+        const oldName = categories[catListCursor];
+        const newName = renameCatInput.trim();
+        if (oldName && newName !== oldName) {
+          db.prepare('INSERT OR IGNORE INTO categories (name, flexibility) SELECT ?, flexibility FROM categories WHERE name = ?').run(newName, oldName);
+          db.prepare('UPDATE transactions SET category = ? WHERE category = ?').run(newName, oldName);
+          db.prepare('UPDATE transactions SET manual_category = ? WHERE manual_category = ?').run(newName, oldName);
+          db.prepare('UPDATE category_rules SET category = ? WHERE category = ?').run(newName, oldName);
+          db.prepare('UPDATE hidden_categories SET category = ? WHERE category = ?').run(newName, oldName);
+          db.prepare('DELETE FROM categories WHERE name = ?').run(oldName);
+          setStatusMsg(`Renamed to "${newName}"`);
+          setTimeout(() => setStatusMsg(''), 2000);
+          load();
+        }
+        setMode('list');
+        return;
+      }
+      if (key.backspace || key.delete) { setRenameCatInput((p) => p.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) setRenameCatInput((p) => p + input);
     }
   }, { isActive: isActive !== false });
 
@@ -345,7 +375,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
         </Box>
         <Text dimColor>
           {section === 'categories'
-            ? '[a] add  [d] delete  [h] hidden  [f] flexibility  ·  [Tab] switch'
+            ? '[a] add  [r] rename  [d] delete  [h] hidden  [f] flexibility  ·  [Tab] switch'
             : '[/] search  [a] add  [e] edit  [d] delete  ·  [Tab] switch'}
         </Text>
       </Box>
@@ -546,7 +576,14 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
           <Text bold>New Category</Text>
           <Text dimColor>Type a name · Enter save · Esc cancel</Text>
-          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{newCategoryName}<Text color="yellow">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{newCategoryName}<Text color="cyan">▊</Text></Text></Box>
+        </Box>
+      )}
+      {mode === 'rename-category' && (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+          <Text bold>Rename Category</Text>
+          <Text dimColor>Updates all transactions, rules, and hidden settings · Enter save · Esc cancel</Text>
+          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{renameCatInput}<Text color="cyan">▊</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-min-amount' && (

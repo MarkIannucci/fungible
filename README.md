@@ -91,8 +91,10 @@ In **Categories** view, spending is broken down by category with bar charts. In 
 | `u` | Show uncategorized only |
 | `e` | Edit: rename display name or change category |
 | `g` | Tag panel: add/remove tags on selected transaction |
+| `G` | Tag all visible transactions at once (use `/` to filter first) |
 | `x` | Undo manual category override |
 | `i` | Ignore / un-ignore selected transaction |
+| `d` | Delete selected transaction (CSV-imported only) |
 | `Esc` | Clear active filter (peels off one at a time) |
 
 ### Trends `[3]`
@@ -121,6 +123,7 @@ Shows assets (depository, investment, manual), liabilities (credit), and net wor
 | `Enter` | Open tag detail (income / expenses / category breakdown) |
 | `t` | View all transactions for selected tag |
 | `a` | Add new tag |
+| `r` | Rename selected tag |
 | `d` | Delete selected tag |
 
 In tag detail, `↑ ↓` selects a category and `Enter` drills into transactions for that tag + category. `← →` cycles to the previous/next tag.
@@ -141,15 +144,28 @@ Liquid assets = cash + brokerage (excludes 401k, IRA, pension).
 
 ### Rules `[7]`
 
+Three sections, cycle with `Tab`: **Category Rules**, **Name Rules**, **Categories**.
+
+**Category Rules / Name Rules:**
+
 | Key | Action |
 |-----|--------|
-| `Tab` | Switch between Category Rules / Name Rules / Hidden Categories |
 | `/` | Search rules |
 | `a` | Add rule |
 | `e` / `Enter` | Edit selected rule |
 | `d` | Delete selected rule |
 
 Category rules support substring and regex matching with optional min/max amount filters. Name rules support the same matching plus optional amount filters.
+
+**Categories:**
+
+| Key | Action |
+|-----|--------|
+| `a` | Add new category |
+| `r` | Rename category (cascades to all transactions, rules, and hidden settings) |
+| `d` | Delete category (resets affected transactions to Uncategorized) |
+| `h` | Toggle hidden (hidden categories are excluded from totals) |
+| `f` | Cycle flexibility tier: none → fixed → flexible → discretionary |
 
 ### Accounts `[8]`
 
@@ -158,6 +174,7 @@ Category rules support substring and regex matching with optional min/max amount
 | `Tab` | Cycle views: Accounts → Add Data → Dupes |
 | `↑ ↓` | Select account |
 | `e` | Edit account type / subtype |
+| `n` | Set or clear a nickname (shown in place of the bank-assigned name) |
 | `v` | Update value (manual assets only) |
 | `r` | Repair Plaid link for selected account |
 | `s` | Force sync (bypasses 15-min cooldown) |

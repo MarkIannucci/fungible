@@ -14,7 +14,7 @@ import { NavHints, handleNavKey } from './nav.js';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MainView = 'accounts' | 'add-data' | 'dupes';
-type AcctMode = 'list' | 'edit' | 'update-value';
+type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname';
 type EditField = 'type' | 'subtype';
 
 type AddStep =
@@ -41,6 +41,7 @@ type CsvAccount = { id: string; name: string; mask: string | null };
 type LinkedAccount = {
   id: string;
   name: string;
+  nickname: string | null;
   type: string;
   subtype: string | null;
   institution_name: string | null;
@@ -70,7 +71,7 @@ function fmtDate(d: string | null): string {
 
 function getLinkedAccounts(): LinkedAccount[] {
   return db.prepare(`
-    SELECT a.id, a.name, a.type, a.subtype, a.institution_name, a.mask,
+    SELECT a.id, a.name, a.nickname, a.type, a.subtype, a.institution_name, a.mask,
       (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
     FROM accounts a
     ORDER BY
@@ -159,6 +160,9 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
   const [updateValueInput, setUpdateValueInput] = useState('');
   const [updateValueError, setUpdateValueError] = useState('');
 
+  // Nickname mode state
+  const [nicknameInput, setNicknameInput] = useState('');
+
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
@@ -216,6 +220,17 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
     db.prepare('INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)').run(id, manualName.trim(), 'other', 'manual');
     db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(id, value, today);
     setAddStep('manual-done');
+    loadAccounts();
+  }
+
+  function saveNickname() {
+    const acct = linkedAccounts[acctCursor];
+    if (!acct) return;
+    const nickname = nicknameInput.trim() || null;
+    db.prepare('UPDATE accounts SET nickname = ? WHERE id = ?').run(nickname, acct.id);
+    setAcctMode('list');
+    setAcctMsg(nickname ? `Nickname set to "${nickname}"` : 'Nickname cleared');
+    setTimeout(() => setAcctMsg(''), 2500);
     loadAccounts();
   }
 
@@ -331,7 +346,7 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
 
   useInput((input, key) => {
     // Global nav (only when not deep in a multi-step flow)
-    const atTop = mainView === 'accounts' || addStep === 'landing';
+    const atTop = (mainView === 'accounts' && acctMode === 'list') || (mainView === 'add-data' && addStep === 'landing');
 
     if (atTop) {
       if (handleNavKey(input, 'accounts', onNavigate)) return;
@@ -378,6 +393,14 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
         return;
       }
 
+      if (acctMode === 'nickname') {
+        if (key.escape) { setAcctMode('list'); setNicknameInput(''); return; }
+        if (key.return) { saveNickname(); return; }
+        if (key.backspace || key.delete) { setNicknameInput((v) => v.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNicknameInput((v) => v + input); return; }
+        return;
+      }
+
       // list mode
       if (key.escape) { onNavigate('dashboard'); return; }
       if (key.tab) { setMainView('add-data'); return; }
@@ -385,6 +408,11 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
       if (key.downArrow) { setAcctCursor((c) => Math.min(linkedAccounts.length - 1, c + 1)); return; }
       if (input === 'e' && linkedAccounts[acctCursor]) {
         openEdit(linkedAccounts[acctCursor]);
+        return;
+      }
+      if (input === 'n' && linkedAccounts[acctCursor]) {
+        setNicknameInput(linkedAccounts[acctCursor].nickname ?? '');
+        setAcctMode('nickname');
         return;
       }
       if (input === 'v' && linkedAccounts[acctCursor]?.id.startsWith('manual-')) {
@@ -558,7 +586,7 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
         </Box>
         {mainView === 'accounts' && acctMode === 'list' && (
           <Text dimColor>
-            ↑↓ select  ·  [e] edit type{selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [s] sync  ·  [l] link bank
+            ↑↓ select  ·  [e] edit type  ·  [n] nickname{selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [s] sync  ·  [l] link bank
           </Text>
         )}
         {mainView === 'accounts' && acctMode === 'edit' && (
@@ -591,8 +619,9 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
                       {isSelected ? '▶ ' : '  '}
                     </Text>
                     <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
-                      {truncate(acct.name, 28).padEnd(28)}
+                      {truncate(acct.nickname ?? acct.name, 28).padEnd(28)}
                     </Text>
+                    {acct.nickname && <Text dimColor={!isSelected} color={isSelected ? 'yellow' : undefined}>✎</Text>}
                     <Text dimColor>{acct.mask ? `···${acct.mask}` : '      '}</Text>
                     <Text dimColor>{label}</Text>
                     <Text dimColor>{institution.padEnd(16)}</Text>
@@ -612,6 +641,20 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
           <Text dimColor>{linkedAccounts.length} account{linkedAccounts.length !== 1 ? 's' : ''}</Text>
           {syncMsg && <Text color={syncStatus === 'syncing' ? 'yellow' : 'green'}>{syncMsg}</Text>}
           {acctMsg && <Text color="green">{acctMsg}</Text>}
+
+          {/* Nickname panel */}
+          {acctMode === 'nickname' && selectedAcct && (
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+              <Text bold>Nickname: {selectedAcct.name}</Text>
+              <Text dimColor>Leave empty to clear nickname</Text>
+              <Box marginTop={1}>
+                <Text>Nickname: </Text>
+                <Text color="yellow">{nicknameInput}</Text>
+                <Text color="cyan">▊</Text>
+              </Box>
+              <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
+            </Box>
+          )}
 
           {/* Update-value panel */}
           {acctMode === 'update-value' && selectedAcct && (

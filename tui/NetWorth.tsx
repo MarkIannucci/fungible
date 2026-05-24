@@ -10,6 +10,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 type AccountBalance = {
   name: string;
+  nickname: string | null;
   type: string;
   subtype: string | null;
   balance: number;
@@ -33,7 +34,7 @@ function dateLabel(d: string) {
 
 function loadData(): { accounts: AccountBalance[]; history: HistoryRow[] } {
   const accounts = db.prepare(`
-    SELECT a.name, a.type, a.subtype, bh.balance
+    SELECT a.name, a.nickname, a.type, a.subtype, bh.balance
     FROM accounts a
     JOIN balance_history bh ON bh.account_id = a.id
     WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
@@ -131,7 +132,7 @@ export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => 
             <Text bold color="green">Assets</Text>
             {view === 'accounts' ? assets.map((a) => (
               <Box key={a.name + a.balance} gap={2}>
-                <Text dimColor>{truncate(a.name, NAME_W).padEnd(NAME_W)}</Text>
+                <Text dimColor>{truncate(a.nickname ?? a.name, NAME_W).padEnd(NAME_W)}</Text>
                 <Text>{fmt(a.balance).padStart(AMT_W)}</Text>
                 <Text dimColor>{a.subtype ?? a.type}</Text>
               </Box>
@@ -155,7 +156,7 @@ export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => 
             <Text bold color="red">Liabilities</Text>
             {view === 'accounts' ? liabilities.map((a) => (
               <Box key={a.name + a.balance} gap={2}>
-                <Text dimColor>{truncate(a.name, NAME_W).padEnd(NAME_W)}</Text>
+                <Text dimColor>{truncate(a.nickname ?? a.name, NAME_W).padEnd(NAME_W)}</Text>
                 <Text>{fmt(a.balance).padStart(AMT_W)}</Text>
               </Box>
             )) : liabilityTypes.map((t) => (

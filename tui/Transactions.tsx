@@ -25,7 +25,7 @@ type Tx = {
 
 type TagOption = { id: number; name: string };
 
-type Mode = 'list' | 'search' | 'edit' | 'edit-rule' | 'tag';
+type Mode = 'list' | 'search' | 'edit' | 'edit-rule' | 'tag' | 'tag-all';
 type EditField = 'name' | 'category';
 type SortMode = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
 
@@ -333,6 +333,34 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
       return;
     }
 
+    if (mode === 'tag-all') {
+      if (key.escape) { setMode('list'); return; }
+      if (key.upArrow) { setTagCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setTagCursor((c) => Math.min(filteredTags.length - 1, c + 1)); return; }
+      if (key.return) {
+        const t = filteredTags[tagCursor];
+        let tagId: number | null = null;
+        if (t) {
+          tagId = t.id;
+        } else if (tagInput.trim()) {
+          db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)').run(tagInput.trim());
+          tagId = (db.prepare('SELECT id FROM tags WHERE name = ?').get(tagInput.trim()) as { id: number }).id;
+        }
+        if (tagId !== null) {
+          const insert = db.prepare('INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)');
+          for (const tx of txs) insert.run(tx.id, tagId);
+          setStatusMsg(`Tagged ${txs.length} transaction${txs.length !== 1 ? 's' : ''}`);
+          setTimeout(() => setStatusMsg(''), 2500);
+          setMode('list');
+          load(search, true);
+        }
+        return;
+      }
+      if (key.backspace || key.delete) { setTagInput((t) => t.slice(0, -1)); setTagCursor(0); return; }
+      if (input && !key.ctrl && !key.meta) { setTagInput((t) => t + input); setTagCursor(0); return; }
+      return;
+    }
+
     if (mode === 'edit') {
       if (key.escape) { setMode('list'); return; }
       if (editField === 'name') {
@@ -399,8 +427,22 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
       if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
       if (input === 'e' && selected) openEdit();
       if (input === 'g' && selected) openTagPanel();
+      if (input === 'G' && txs.length > 0) {
+        const tags = db.prepare('SELECT id, name FROM tags ORDER BY name').all() as TagOption[];
+        setAllTags(tags);
+        setTagInput('');
+        setTagCursor(0);
+        setMode('tag-all');
+        return;
+      }
       if (input === 'x' && selected?.manual_category) clearOverride();
       if (input === 'i' && selected) toggleIgnored();
+      if (input === 'd' && selected?.id.startsWith('csv-')) {
+        db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ?').run(selected.id);
+        db.prepare('DELETE FROM transactions WHERE id = ?').run(selected.id);
+        load(search);
+        return;
+      }
     }
   }, { isActive: isActive !== false });
 
@@ -446,7 +488,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
           {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
         </Text>
         <Text dimColor>
-          {from ? '← → month  ·  ' : ''}[Tab] sort  ·  [/] search  ·  [u] uncategorized  [a] all  ·  [e] edit  [g] tag  [x] undo  [i] ignore
+          {from ? '← → month  ·  ' : ''}[Tab] sort  ·  [/] search  ·  [u] uncategorized  [a] all  ·  [e] edit  [g] tag  [G] tag all  [x] undo  [i] ignore  [d] delete
         </Text>
       </Box>
 
@@ -534,6 +576,31 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
             <Box marginTop={1}><Text dimColor>No tags yet — type a name and Enter to create one</Text></Box>
           )}
           <Box marginTop={1}><Text dimColor>Space/Enter toggle  ·  Esc close</Text></Box>
+        </Box>
+      )}
+
+      {mode === 'tag-all' && (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+          <Text bold>Tag all <Text color="cyan">{txs.length}</Text> visible transactions</Text>
+          <Box marginTop={1} gap={2}>
+            <Text dimColor>Tag: </Text>
+            <Text color="yellow">{tagInput}</Text>
+            <Text color="cyan">▊</Text>
+          </Box>
+          {filteredTags.length === 0 && tagInput ? (
+            <Box marginTop={1}><Text dimColor>Enter to create & apply "{tagInput}"</Text></Box>
+          ) : (
+            filteredTags.map((t, i) => {
+              const isSel = i === tagCursor;
+              return (
+                <Box key={t.id}>
+                  <Text color={isSel ? 'cyan' : undefined}>{isSel ? '▶ ' : '  '}</Text>
+                  <Text dimColor={!isSel}>{t.name}</Text>
+                </Box>
+              );
+            })
+          )}
+          <Box marginTop={1}><Text dimColor>↑↓ select  ·  Enter apply  ·  Esc cancel</Text></Box>
         </Box>
       )}
 

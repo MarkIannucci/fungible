@@ -7,7 +7,7 @@ import { fmt, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 
 type Tag = { id: number; name: string; count: number };
-type Mode = 'list' | 'search' | 'add' | 'detail';
+type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
 function getTags(): Tag[] {
   return db.prepare(`
@@ -67,6 +67,23 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
       return;
     }
 
+    if (mode === 'rename') {
+      if (key.escape) { setMode('list'); setNewName(''); return; }
+      if (key.return && newName.trim()) {
+        const tag = visibleTags[cursor];
+        if (tag) {
+          db.prepare('UPDATE tags SET name = ? WHERE id = ?').run(newName.trim(), tag.id);
+          load();
+        }
+        setNewName('');
+        setMode('list');
+        return;
+      }
+      if (key.backspace || key.delete) { setNewName((n) => n.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) { setNewName((n) => n + input); return; }
+      return;
+    }
+
     if (mode === 'detail') {
       if (key.escape) { setMode('list'); return; }
       if (key.leftArrow) {
@@ -107,6 +124,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
     if (key.upArrow) { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(visibleTags.length - 1, c + 1)); return; }
     if (input === 'a') { setNewName(''); setMode('add'); return; }
+    if (input === 'r' && visibleTags[cursor]) { setNewName(visibleTags[cursor].name); setMode('rename'); return; }
     if (input === 'd' && visibleTags[cursor]) {
       const tag = visibleTags[cursor];
       db.prepare('DELETE FROM transaction_tags WHERE tag_id = ?').run(tag.id);
@@ -196,7 +214,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
         <>
           <Box justifyContent="space-between" marginTop={1}>
             <Text bold>Tags{search ? <Text color="yellow">  /{search}</Text> : null}</Text>
-            <Text dimColor>[/] search  ·  [a] add  [d] delete  ·  Enter detail  ·  [t] transactions</Text>
+            <Text dimColor>[/] search  ·  [a] add  [r] rename  [d] delete  ·  Enter detail  ·  [t] transactions</Text>
           </Box>
           {mode === 'search' && (
             <Box marginTop={1}>
@@ -236,7 +254,18 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
               <Box marginTop={1}>
                 <Text>Name: </Text>
                 <Text color="yellow">{newName}</Text>
-                <Text color="cyan">█</Text>
+                <Text color="cyan">▊</Text>
+              </Box>
+            </Box>
+          )}
+          {mode === 'rename' && visibleTags[cursor] && (
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+              <Text bold>Rename Tag</Text>
+              <Text dimColor>Enter save · Esc cancel</Text>
+              <Box marginTop={1}>
+                <Text>Name: </Text>
+                <Text color="yellow">{newName}</Text>
+                <Text color="cyan">▊</Text>
               </Box>
             </Box>
           )}

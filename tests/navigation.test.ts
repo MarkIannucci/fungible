@@ -41,23 +41,30 @@ const SCREENS = [
   { file: 'Accounts.tsx',     screen: 'accounts',     key: '8' },
 ];
 
-/** Extract all [N] keys present in the primary nav bar text of a source file.
- *  The primary nav bar is the line that lists multiple [N] shortcut labels for
- *  navigating to OTHER screens. We find the line containing the most [N] tokens. */
+/** Extract all [N] keys present in the nav bar of a source file.
+ *  Handles two patterns:
+ *  1. Inline: lines containing multiple [N] shortcut labels
+ *  2. Component: <NavHints current="screenname" /> implies all other screens */
 function extractNavBarKeys(src: string): string[] {
-  // Find lines that look like nav bar hints: contain at least two [N] patterns
+  // NavHints component: infer all keys except the current screen's
+  const navHintsMatch = src.match(/<NavHints\s+current="([a-z]+)"/);
+  if (navHintsMatch) {
+    const current = navHintsMatch[1];
+    return Object.entries(KEY_TO_SCREEN)
+      .filter(([, dest]) => dest !== current)
+      .map(([k]) => k);
+  }
+
+  // Inline fallback: find line with most [N] patterns
   const lines = src.split('\n');
   let bestLine = '';
   let bestCount = 0;
   for (const line of lines) {
     const matches = line.match(/\[([1-8])\]/g) ?? [];
-    if (matches.length > bestCount) {
-      bestCount = matches.length;
-      bestLine = line;
-    }
+    if (matches.length > bestCount) { bestCount = matches.length; bestLine = line; }
   }
   const keys = (bestLine.match(/\[([1-8])\]/g) ?? []).map((m) => m[1]);
-  return [...new Set(keys)]; // deduplicate
+  return [...new Set(keys)];
 }
 
 /** Extract input handler mappings: { key -> screen } from a source file.

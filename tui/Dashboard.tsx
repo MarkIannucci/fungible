@@ -78,19 +78,22 @@ function getFilteredFlexSummary(from: string, to: string, accountId: string): Fl
   `).get(from, to, accountId) as FlexSummary;
 }
 
-type AccountRow = { id: string; name: string; subtype: string | null; spending: number };
+type AccountRow = { id: string; name: string; subtype: string | null; spending: number; income: number };
 
 function getAccountRows(from: string, to: string): AccountRow[] {
   return db.prepare(`
     SELECT a.id, a.name, a.subtype,
       COALESCE(SUM(CASE WHEN t.amount > 0 AND t.date >= ? AND t.date <= ?
                         AND t.pending = 0 AND t.ignored = 0
-                        AND t.category != 'Transfer' THEN t.amount ELSE 0 END), 0) as spending
+                        AND t.category != 'Transfer' THEN t.amount ELSE 0 END), 0) as spending,
+      COALESCE(-SUM(CASE WHEN t.amount < 0 AND t.date >= ? AND t.date <= ?
+                         AND t.pending = 0 AND t.ignored = 0
+                         AND t.category != 'Transfer' THEN t.amount ELSE 0 END), 0) as income
     FROM accounts a
     LEFT JOIN transactions t ON t.account_id = a.id
     GROUP BY a.id, a.name, a.subtype
     ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 ELSE 2 END, spending DESC
-  `).all(from, to) as AccountRow[];
+  `).all(from, to, from, to) as AccountRow[];
 }
 
 const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }> = [
@@ -234,7 +237,7 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
         <Text dimColor>  [r] cycle</Text>
       </Box>
 
-      <Box justifyContent="space-between" marginTop={1} marginBottom={1}>
+      <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
           <Text bold>{formatPeriodLabel(range, anchor)}</Text>
           {selectedAccount && <Text color="yellow">{selectedAccount.name}</Text>}
@@ -247,6 +250,8 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
             <Text dimColor>[Tab]</Text>
           </Box>
         </Box>
+      </Box>
+      <Box marginBottom={1}>
         <Text dimColor>
           {view === 'account'
             ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear`
@@ -263,21 +268,29 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
           {accountRows.length === 0 ? (
             <Text dimColor>No accounts linked. [8] accounts → link a bank.</Text>
           ) : (
-            accountRows.map((acct, i) => {
-              const isSelected = i === acctCursor;
-              const isFiltered = selectedAccount?.id === acct.id;
-              return (
-                <Box key={acct.id} gap={2}>
-                  <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶' : ' '}</Text>
-                  <Text color={isFiltered ? 'yellow' : isSelected ? 'cyan' : undefined} dimColor={!isSelected && !isFiltered}>
-                    {(acct.name.length > 28 ? acct.name.slice(0, 27) + '…' : acct.name).padEnd(28)}
-                  </Text>
-                  <Text dimColor>{(acct.subtype ?? '').slice(0, 12).padEnd(12)}</Text>
-                  <Text dimColor>{(acct.spending > 0 ? fmt(acct.spending) : '—').padStart(12)}</Text>
-                  {isFiltered && <Text color="yellow">  ● filtered</Text>}
-                </Box>
-              );
-            })
+            <>
+              <Box gap={2} marginBottom={0}>
+                <Text dimColor>{''.padEnd(2)}</Text>
+                <Text dimColor>{'Account'.padEnd(26)}</Text>
+                <Text dimColor>{'Income'.padStart(10)}</Text>
+                <Text dimColor>{'Expenses'.padStart(10)}</Text>
+              </Box>
+              {accountRows.map((acct, i) => {
+                const isSelected = i === acctCursor;
+                const isFiltered = selectedAccount?.id === acct.id;
+                return (
+                  <Box key={acct.id} gap={2}>
+                    <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶' : ' '}</Text>
+                    <Text color={isFiltered ? 'yellow' : isSelected ? 'cyan' : undefined} dimColor={!isSelected && !isFiltered}>
+                      {(acct.name.length > 26 ? acct.name.slice(0, 25) + '…' : acct.name).padEnd(26)}
+                    </Text>
+                    <Text color="green" dimColor={acct.income === 0}>{(acct.income > 0 ? fmt(acct.income) : '—').padStart(10)}</Text>
+                    <Text color="red" dimColor={acct.spending === 0}>{(acct.spending > 0 ? fmt(acct.spending) : '—').padStart(10)}</Text>
+                    {isFiltered && <Text color="yellow">  ●</Text>}
+                  </Box>
+                );
+              })}
+            </>
           )}
           {selectedAccount && (
             <Box marginTop={1}><Text dimColor>[c] clear filter</Text></Box>
