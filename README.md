@@ -21,32 +21,33 @@ A terminal UI for personal finance. Syncs transactions from Plaid, imports CSVs,
 - **Trends** — month-by-month bar charts for expenses, income, net, or any category; per-range aggregation
 - **MCP server** — Claude can read and manage your finances via the Model Context Protocol
 
-## Requirements
+## Install
 
-- Node.js 22+ (uses built-in `node:sqlite`)
-- A [Plaid](https://plaid.com) developer account (free sandbox/development tier works)
+### Homebrew (recommended)
 
-## Setup
+```bash
+brew tap tomfunk/fungible
+brew install fungible
+fungible --setup   # first-time setup wizard
+fungible
+```
+
+### From source
+
+Requires Node.js 22+.
 
 ```bash
 npm install
-```
-
-Create a `.env` file:
-
-```
-PLAID_CLIENT_ID=your_client_id
-PLAID_SECRET=your_secret
-PLAID_ENV=development
-```
-
-## Running
-
-```bash
 npm run dev
 ```
 
-Data is stored at `~/.fungible/fungible.db`.
+On first run, use `--setup` to configure credentials:
+
+```bash
+npm run dev -- --setup
+```
+
+Data and config are stored at `~/.fungible/`. You'll need a free [Plaid](https://plaid.com) developer account to sync bank transactions (sandbox tier works).
 
 ## Screens
 
@@ -209,6 +210,19 @@ Available tools: `spending_summary`, `list_transactions`, `edit_transaction`, `c
 
 Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
+**If installed via Homebrew:**
+```json
+{
+  "mcpServers": {
+    "fungible": {
+      "command": "/opt/homebrew/bin/node",
+      "args": ["--experimental-sqlite", "--no-warnings", "--import", "tsx/esm", "/opt/homebrew/lib/node_modules/fungible/mcp/server.ts"]
+    }
+  }
+}
+```
+
+**If running from source:**
 ```json
 {
   "mcpServers": {
