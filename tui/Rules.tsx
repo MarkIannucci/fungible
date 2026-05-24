@@ -43,7 +43,7 @@ function toggleHidden(category: string, hidden: Set<string>) {
   }
 }
 
-export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => void }) {
+export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean }) {
   const [rules, setRules] = useState<Rule[]>([]);
   const [nameRules, setNameRules] = useState<NameRule[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -318,7 +318,7 @@ export function Rules({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) =>
       if (key.backspace || key.delete) { setNewCategoryName((p) => p.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setNewCategoryName((p) => p + input);
     }
-  });
+  }, { isActive: isActive !== false });
 
   const q = search.toLowerCase();
   const filteredRules = q

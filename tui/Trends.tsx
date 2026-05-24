@@ -296,9 +296,11 @@ function viewColor(view: View): string {
 export function Trends({
   onNavigate,
   initialFilter,
+  isActive,
 }: {
   onNavigate: (s: Screen, f?: TxFilter) => void;
   initialFilter?: TxFilter;
+  isActive?: boolean;
 }) {
   const [views] = useState<View[]>(buildViews);
   const [viewIdx, setViewIdx] = useState(() => {
@@ -342,7 +344,7 @@ export function Trends({
       const row = rows[cursor];
       if (row) onNavigate('transactions', { category: view.category ?? undefined, from: row.from, to: row.to });
     }
-  });
+  }, { isActive: isActive !== false });
 
   const PAGE = 30;
   const pageStart = Math.max(0, Math.min(cursor - Math.floor(PAGE / 2), rows.length - PAGE));

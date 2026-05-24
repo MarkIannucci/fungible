@@ -5,7 +5,7 @@ import { getTagSummary, type MonthlySummary } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
 
 type Tag = { id: number; name: string; count: number };
-type Mode = 'list' | 'add' | 'detail';
+type Mode = 'list' | 'search' | 'add' | 'detail';
 
 const BAR_WIDTH = 20;
 
@@ -28,12 +28,13 @@ function getTags(): Tag[] {
   `).all() as Tag[];
 }
 
-export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => void }) {
+export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean }) {
   const [tags, setTags] = useState<Tag[]>([]);
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
   const [newName, setNewName] = useState('');
   const [statusMsg, setStatusMsg] = useState('');
+  const [search, setSearch] = useState('');
   const [tagSummary, setTagSummary] = useState<MonthlySummary | null>(null);
   const [catCursor, setCatCursor] = useState(0);
 
@@ -46,7 +47,21 @@ export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => 
     setMode('detail');
   }
 
+  const visibleTags = search
+    ? tags.filter((t) => t.name.toLowerCase().includes(search.toLowerCase()))
+    : tags;
+
   useInput((input, key) => {
+    if (mode === 'search') {
+      if (key.escape) { setSearch(''); setMode('list'); setCursor(0); return; }
+      if (key.return) { setMode('list'); return; }
+      if (key.backspace || key.delete) { setSearch((s) => { const next = s.slice(0, -1); if (!next) setMode('list'); return next; }); return; }
+      if (key.upArrow)   { setCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setCursor((c) => Math.min(visibleTags.length - 1, c + 1)); return; }
+      if (input && !key.ctrl && !key.meta) { setSearch((s) => s + input); setCursor(0); return; }
+      return;
+    }
+
     if (mode === 'add') {
       if (key.escape) { setMode('list'); setNewName(''); return; }
       if (key.return && newName.trim()) {
@@ -66,25 +81,25 @@ export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => 
       if (key.leftArrow) {
         const next = Math.max(0, cursor - 1);
         setCursor(next);
-        if (tags[next]) { setTagSummary(getTagSummary(tags[next].name)); setCatCursor(0); }
+        if (visibleTags[next]) { setTagSummary(getTagSummary(visibleTags[next].name)); setCatCursor(0); }
         return;
       }
       if (key.rightArrow) {
-        const next = Math.min(tags.length - 1, cursor + 1);
+        const next = Math.min(visibleTags.length - 1, cursor + 1);
         setCursor(next);
-        if (tags[next]) { setTagSummary(getTagSummary(tags[next].name)); setCatCursor(0); }
+        if (visibleTags[next]) { setTagSummary(getTagSummary(visibleTags[next].name)); setCatCursor(0); }
         return;
       }
       if (key.upArrow) { setCatCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setCatCursor((c) => Math.min((tagSummary?.byCategory.length ?? 1) - 1, c + 1)); return; }
       if (key.return) {
-        const tag = tags[cursor];
+        const tag = visibleTags[cursor];
         const cat = tagSummary?.byCategory[catCursor];
         if (tag) onNavigate('transactions', { tag: tag.name, category: cat?.category });
         return;
       }
-      if (input === 't' && tags[cursor]) {
-        onNavigate('transactions', { tag: tags[cursor].name });
+      if (input === 't' && visibleTags[cursor]) {
+        onNavigate('transactions', { tag: visibleTags[cursor].name });
         return;
       }
       if (input === '1') { onNavigate('dashboard'); return; }
@@ -105,12 +120,16 @@ export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => 
     if (input === '6') { onNavigate('health'); return; }
     if (input === '7') { onNavigate('rules'); return; }
     if (input === '8') { onNavigate('accounts'); return; }
-    if (key.escape) { onNavigate('dashboard'); return; }
+    if (key.escape) {
+      if (search) { setSearch(''); setCursor(0); return; }
+      onNavigate('dashboard'); return;
+    }
+    if (input === '/') { setMode('search'); return; }
     if (key.upArrow) { setCursor((c) => Math.max(0, c - 1)); return; }
-    if (key.downArrow) { setCursor((c) => Math.min(tags.length - 1, c + 1)); return; }
+    if (key.downArrow) { setCursor((c) => Math.min(visibleTags.length - 1, c + 1)); return; }
     if (input === 'a') { setNewName(''); setMode('add'); return; }
-    if (input === 'd' && tags[cursor]) {
-      const tag = tags[cursor];
+    if (input === 'd' && visibleTags[cursor]) {
+      const tag = visibleTags[cursor];
       db.prepare('DELETE FROM transaction_tags WHERE tag_id = ?').run(tag.id);
       db.prepare('DELETE FROM tags WHERE id = ?').run(tag.id);
       setStatusMsg(`Deleted "${tag.name}"`);
@@ -119,17 +138,17 @@ export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => 
       load();
       return;
     }
-    if (key.return && tags[cursor]) {
-      openDetail(tags[cursor]);
+    if (key.return && visibleTags[cursor]) {
+      openDetail(visibleTags[cursor]);
       return;
     }
-    if (input === 't' && tags[cursor]) {
-      onNavigate('transactions', { tag: tags[cursor].name });
+    if (input === 't' && visibleTags[cursor]) {
+      onNavigate('transactions', { tag: visibleTags[cursor].name });
       return;
     }
-  });
+  }, { isActive: isActive !== false });
 
-  const tag = tags[cursor];
+  const tag = visibleTags[cursor];
   const maxCategorySpend = tagSummary?.byCategory[0]?.total ?? 1;
 
   return (
@@ -197,15 +216,23 @@ export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => 
       ) : (
         <>
           <Box justifyContent="space-between" marginTop={1}>
-            <Text bold>Tags</Text>
-            <Text dimColor>[a] add  [d] delete  ·  Enter detail  ·  [t] transactions</Text>
+            <Text bold>Tags{search ? <Text color="yellow">  /{search}</Text> : null}</Text>
+            <Text dimColor>[/] search  ·  [a] add  [d] delete  ·  Enter detail  ·  [t] transactions</Text>
           </Box>
+          {mode === 'search' && (
+            <Box marginTop={1}>
+              <Text color="cyan">/</Text>
+              <Text color="yellow">{search}</Text>
+              <Text color="cyan">█</Text>
+              <Text dimColor>  Esc cancel</Text>
+            </Box>
+          )}
           <Box marginTop={1}><Text dimColor>{'─'.repeat(50)}</Text></Box>
 
-          {tags.length === 0 ? (
-            <Box marginTop={1}><Text dimColor>No tags yet. [a] to create one.</Text></Box>
+          {visibleTags.length === 0 ? (
+            <Box marginTop={1}><Text dimColor>{search ? `No tags matching "${search}".` : 'No tags yet. [a] to create one.'}</Text></Box>
           ) : (
-            tags.map((t, i) => {
+            visibleTags.map((t, i) => {
               const isSelected = i === cursor;
               return (
                 <Box key={t.id} gap={2} marginTop={i === 0 ? 1 : 0}>
@@ -220,7 +247,7 @@ export function Tags({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => 
           )}
 
           <Box marginTop={1}><Text dimColor>{'─'.repeat(50)}</Text></Box>
-          <Text dimColor>{tags.length} tag{tags.length !== 1 ? 's' : ''}</Text>
+          <Text dimColor>{search ? `${visibleTags.length} of ${tags.length}` : `${tags.length}`} tag{tags.length !== 1 ? 's' : ''}</Text>
           {statusMsg && <Text color="green">{statusMsg}</Text>}
 
           {mode === 'add' && (

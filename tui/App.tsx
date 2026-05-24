@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useInput, useApp } from 'ink';
+import { Box, useInput, useApp } from 'ink';
 import { Dashboard } from './Dashboard.js';
 import { Transactions } from './Transactions.js';
 import { Trends } from './Trends.js';
@@ -8,6 +8,7 @@ import { Tags } from './Tags.js';
 import { Rules } from './Rules.js';
 import { Accounts } from './Accounts.js';
 import { Health } from './Health.js';
+import { Chat } from './Chat.js';
 
 export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health';
 
@@ -17,11 +18,13 @@ export type TxFilter = {
   to?: string;
   tag?: string;
   account?: string;
+  accountName?: string;
 };
 
 export function App() {
-  const [screen, setScreen] = useState<Screen>('dashboard');
-  const [txFilter, setTxFilter] = useState<TxFilter>({});
+  const [screen, setScreen]         = useState<Screen>('dashboard');
+  const [txFilter, setTxFilter]     = useState<TxFilter>({});
+  const [chatFocused, setChatFocused] = useState(false);
   const { exit } = useApp();
 
   function navigate(s: Screen, filter?: TxFilter) {
@@ -30,17 +33,36 @@ export function App() {
   }
 
   useInput((input) => {
+    if (chatFocused) return; // chat handles its own input
     if (input === 'q') exit();
   });
 
-  switch (screen) {
-    case 'dashboard':    return <Dashboard onNavigate={navigate} />;
-    case 'transactions': return <Transactions onNavigate={navigate} initialFilter={txFilter} />;
-    case 'trends':       return <Trends onNavigate={navigate} initialFilter={txFilter} />;
-    case 'networth':     return <NetWorth onNavigate={navigate} />;
-    case 'tags':         return <Tags onNavigate={navigate} />;
-    case 'rules':        return <Rules onNavigate={navigate} />;
-    case 'accounts':     return <Accounts onNavigate={navigate} />;
-    case 'health':       return <Health onNavigate={navigate} />;
-  }
+  const screenIsActive = !chatFocused;
+
+  const currentScreen = (() => {
+    switch (screen) {
+      case 'dashboard':    return <Dashboard    onNavigate={navigate} isActive={screenIsActive} />;
+      case 'transactions': return <Transactions onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} />;
+      case 'trends':       return <Trends       onNavigate={navigate} isActive={screenIsActive} initialFilter={txFilter} />;
+      case 'networth':     return <NetWorth     onNavigate={navigate} isActive={screenIsActive} />;
+      case 'tags':         return <Tags         onNavigate={navigate} isActive={screenIsActive} />;
+      case 'rules':        return <Rules        onNavigate={navigate} isActive={screenIsActive} />;
+      case 'accounts':     return <Accounts     onNavigate={navigate} isActive={screenIsActive} />;
+      case 'health':       return <Health       onNavigate={navigate} isActive={screenIsActive} />;
+    }
+  })();
+
+  return (
+    <Box flexDirection="column" height="100%">
+      <Box flexGrow={1}>
+        {currentScreen}
+      </Box>
+      <Chat
+        isActive={chatFocused}
+        onActivate={() => setChatFocused(true)}
+        onDeactivate={() => setChatFocused(false)}
+        onNavigate={navigate}
+      />
+    </Box>
+  );
 }

@@ -6,12 +6,13 @@ import { spawn } from 'node:child_process';
 import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
 import { syncAll } from '../core/sync.js';
+import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import type { Screen, TxFilter } from './App.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type MainView = 'accounts' | 'add-data';
-type AcctMode = 'list' | 'edit';
+type MainView = 'accounts' | 'add-data' | 'dupes';
+type AcctMode = 'list' | 'edit' | 'update-value';
 type EditField = 'type' | 'subtype';
 
 type AddStep =
@@ -27,7 +28,11 @@ type AddStep =
   | 'direction'
   | 'account'
   | 'confirm'
-  | 'done';
+  | 'done'
+  | 'manual-name'
+  | 'manual-value'
+  | 'manual-confirm'
+  | 'manual-done';
 
 type CsvAccount = { id: string; name: string; mask: string | null };
 
@@ -107,7 +112,7 @@ function parseDate(raw: string): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter) => void }) {
+export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean }) {
   // Main view toggle
   const [mainView, setMainView] = useState<MainView>('accounts');
 
@@ -146,7 +151,23 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
   const [csvAccounts, setCsvAccounts] = useState<CsvAccount[]>([]);
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null);
 
-  function loadAccounts() { setLinkedAccounts(getLinkedAccounts()); }
+  // Manual asset state
+  const [manualName, setManualName] = useState('');
+  const [manualValue, setManualValue] = useState('');
+  const [manualValueError, setManualValueError] = useState('');
+
+  // Update-value mode state
+  const [updateValueInput, setUpdateValueInput] = useState('');
+  const [updateValueError, setUpdateValueError] = useState('');
+
+  // Dupes view state
+  const [dupes, setDupes] = useState<DupePair[]>([]);
+  const [dupeCursor, setDupeCursor] = useState(0);
+
+  function loadAccounts() {
+    setLinkedAccounts(getLinkedAccounts());
+    setDupes(getCsvPlaidDupeCandidates());
+  }
   useEffect(() => { loadAccounts(); }, []);
 
   function openEdit(acct: LinkedAccount) {
@@ -186,6 +207,30 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
       setSyncStatus('done');
       setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 3000);
     });
+  }
+
+  function saveManualAsset() {
+    const value = parseFloat(manualValue.replace(/[$,]/g, ''));
+    if (isNaN(value) || value < 0) { setManualValueError('Enter a valid positive number'); return; }
+    const id = `manual-${Date.now()}`;
+    const today = new Date().toISOString().slice(0, 10);
+    db.prepare('INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)').run(id, manualName.trim(), 'other', 'manual');
+    db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(id, value, today);
+    setAddStep('manual-done');
+    loadAccounts();
+  }
+
+  function saveUpdatedValue() {
+    const acct = linkedAccounts[acctCursor];
+    if (!acct) return;
+    const value = parseFloat(updateValueInput.replace(/[$,]/g, ''));
+    if (isNaN(value) || value < 0) { setUpdateValueError('Enter a valid positive number'); return; }
+    const today = new Date().toISOString().slice(0, 10);
+    db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(acct.id, value, today);
+    setAcctMode('list');
+    setAcctMsg(`Updated value for ${acct.name}`);
+    setTimeout(() => setAcctMsg(''), 2500);
+    loadAccounts();
   }
 
   function startPlaidLink() {
@@ -332,6 +377,14 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
         return;
       }
 
+      if (acctMode === 'update-value') {
+        if (key.escape) { setAcctMode('list'); setUpdateValueInput(''); setUpdateValueError(''); return; }
+        if (key.return) { saveUpdatedValue(); return; }
+        if (key.backspace || key.delete) { setUpdateValueInput((v) => v.slice(0, -1)); setUpdateValueError(''); return; }
+        if (input && !key.ctrl && !key.meta) { setUpdateValueInput((v) => v + input); setUpdateValueError(''); return; }
+        return;
+      }
+
       // list mode
       if (key.escape) { onNavigate('dashboard'); return; }
       if (key.tab) { setMainView('add-data'); return; }
@@ -339,6 +392,12 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
       if (key.downArrow) { setAcctCursor((c) => Math.min(linkedAccounts.length - 1, c + 1)); return; }
       if (input === 'e' && linkedAccounts[acctCursor]) {
         openEdit(linkedAccounts[acctCursor]);
+        return;
+      }
+      if (input === 'v' && linkedAccounts[acctCursor]?.id.startsWith('manual-')) {
+        setUpdateValueInput('');
+        setUpdateValueError('');
+        setAcctMode('update-value');
         return;
       }
       if (input === 'r' && linkedAccounts[acctCursor]) {
@@ -357,12 +416,37 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
       return;
     }
 
+    // ── Dupes view ────────────────────────────────────────────────────────────
+    if (mainView === 'dupes') {
+      if (key.escape) { setMainView('accounts'); return; }
+      if (key.tab) { setMainView('accounts'); return; }
+      if (key.upArrow)   { setDupeCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setDupeCursor((c) => Math.min(dupes.length - 1, c + 1)); return; }
+      if (input === 'd' && dupes[dupeCursor]) {
+        db.prepare('DELETE FROM transactions WHERE id = ?').run(dupes[dupeCursor].csvId);
+        const next = getCsvPlaidDupeCandidates();
+        setDupes(next);
+        setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
+        return;
+      }
+      if (input === 'D') {
+        const ids = dupes.map((p) => p.csvId);
+        const placeholders = ids.map(() => '?').join(',');
+        db.prepare(`DELETE FROM transactions WHERE id IN (${placeholders})`).run(...ids);
+        setDupes([]);
+        setDupeCursor(0);
+        return;
+      }
+      return;
+    }
+
     // ── Add-data view ──────────────────────────────────────────────────────────
     if (addStep === 'landing') {
       if (key.escape) { setMainView('accounts'); return; }
-      if (key.tab) { setMainView('accounts'); return; }
+      if (key.tab) { setMainView('dupes'); return; }
       if (input === 'l') { setAddStep('link-plaid'); startPlaidLink(); return; }
       if (input === 'c') { setAddStep('file'); return; }
+      if (input === 'm') { setManualName(''); setAddStep('manual-name'); return; }
       if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
       return;
     }
@@ -435,7 +519,28 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
       if (key.return) { setImportResult(null); setAddStep('landing'); setMainView('accounts'); loadAccounts(); }
       return;
     }
-  });
+
+    if (addStep === 'manual-name') {
+      if (key.escape) { setAddStep('landing'); setManualName(''); return; }
+      if (key.return && manualName.trim()) { setManualValue(''); setManualValueError(''); setAddStep('manual-value'); return; }
+      if (key.backspace || key.delete) { setManualName((n) => n.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) { setManualName((n) => n + input); return; }
+      return;
+    }
+
+    if (addStep === 'manual-value') {
+      if (key.escape) { setAddStep('manual-name'); return; }
+      if (key.return) { saveManualAsset(); return; }
+      if (key.backspace || key.delete) { setManualValue((v) => v.slice(0, -1)); setManualValueError(''); return; }
+      if (input && !key.ctrl && !key.meta) { setManualValue((v) => v + input); setManualValueError(''); return; }
+      return;
+    }
+
+    if (addStep === 'manual-done') {
+      if (key.return) { setManualName(''); setManualValue(''); setAddStep('landing'); setMainView('accounts'); }
+      return;
+    }
+  }, { isActive: isActive !== false });
 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
@@ -449,17 +554,25 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
         <Text dimColor>[1] dash  [2] txns  [3] trends  [4] worth  [5] tags  [6] health  [7] rules</Text>
       </Box>
 
-      <Box justifyContent="space-between" marginTop={1} marginBottom={1}>
+      <Box marginTop={1} marginBottom={1} flexDirection="column" gap={1}>
         <Box gap={3}>
           <Text bold color={mainView === 'accounts' ? 'cyan' : undefined}>Accounts</Text>
           <Text bold color={mainView === 'add-data' ? 'cyan' : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
-          <Text dimColor>[Tab] switch</Text>
+          <Text bold color={mainView === 'dupes' ? 'cyan' : undefined} dimColor={mainView !== 'dupes'}>
+            Dupes{dupes.length > 0 ? ` (${dupes.length})` : ''}
+          </Text>
+          <Text dimColor>[Tab]</Text>
         </Box>
         {mainView === 'accounts' && acctMode === 'list' && (
-          <Text dimColor>↑↓ select  ·  [e] edit type  ·  [r] repair link  ·  [s] sync  ·  [l] link bank</Text>
+          <Text dimColor>
+            ↑↓ select  ·  [e] edit type{selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [s] sync  ·  [l] link bank
+          </Text>
         )}
         {mainView === 'accounts' && acctMode === 'edit' && (
-          <Text dimColor>Tab field  ·  ← → type  ·  Enter save  ·  Esc cancel</Text>
+          <Text dimColor>Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel</Text>
+        )}
+        {mainView === 'dupes' && (
+          <Text dimColor>↑↓ select  ·  [d] delete CSV copy  ·  [D] delete all</Text>
         )}
       </Box>
 
@@ -507,6 +620,20 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
           {syncMsg && <Text color={syncStatus === 'syncing' ? 'yellow' : 'green'}>{syncMsg}</Text>}
           {acctMsg && <Text color="green">{acctMsg}</Text>}
 
+          {/* Update-value panel */}
+          {acctMode === 'update-value' && selectedAcct && (
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+              <Text bold>Update value: {selectedAcct.name}</Text>
+              <Box marginTop={1}>
+                <Text>New value: $</Text>
+                <Text color="yellow">{updateValueInput}</Text>
+                <Text color="cyan">█</Text>
+              </Box>
+              {updateValueError && <Text color="red">{updateValueError}</Text>}
+              <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
+            </Box>
+          )}
+
           {/* Edit panel */}
           {acctMode === 'edit' && selectedAcct && (
             <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
@@ -534,6 +661,38 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
         </>
       )}
 
+      {/* ── Dupes view ────────────────────────────────────────────────── */}
+      {mainView === 'dupes' && (
+        <Box flexDirection="column" marginTop={1}>
+          {dupes.length === 0 ? (
+            <Text color="green">No duplicate candidates found.</Text>
+          ) : (
+            dupes.map((pair, i) => {
+              const isSelected = i === dupeCursor;
+              return (
+                <Box key={pair.csvId} flexDirection="column" marginBottom={1}>
+                  <Box gap={2}>
+                    <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶' : ' '}</Text>
+                    <Text dimColor>{truncate(pair.accountName, 20).padEnd(20)}</Text>
+                    <Text color="yellow">CSV</Text>
+                    <Text dimColor>{pair.csvDate}</Text>
+                    <Text color={isSelected ? 'cyan' : undefined}>{truncate(pair.csvName, 30).padEnd(30)}</Text>
+                    <Text color="red">${Math.abs(pair.csvAmount).toFixed(2)}</Text>
+                  </Box>
+                  <Box gap={2}>
+                    <Text> </Text>
+                    <Text dimColor>{''.padEnd(20)}</Text>
+                    <Text color="green">PLI</Text>
+                    <Text dimColor>{pair.plaidDate}</Text>
+                    <Text dimColor>{truncate(pair.plaidName, 30)}</Text>
+                  </Box>
+                </Box>
+              );
+            })
+          )}
+        </Box>
+      )}
+
       {/* ── Add-data view ─────────────────────────────────────────────── */}
       {mainView === 'add-data' && (
         <>
@@ -542,6 +701,7 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
               <Box flexDirection="column" gap={1} marginTop={1}>
                 <Text color="cyan">[l] Link a bank account  <Text dimColor>Opens Plaid in your browser</Text></Text>
                 <Text color="cyan">[c] Import CSV file      <Text dimColor>Upload a statement export</Text></Text>
+                <Text color="cyan">[m] Manual asset         <Text dimColor>House, car, or other asset</Text></Text>
                 <Text color={syncStatus === 'syncing' ? 'yellow' : 'cyan'}>
                   [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
                 </Text>
@@ -680,6 +840,42 @@ export function Accounts({ onNavigate }: { onNavigate: (s: Screen, f?: TxFilter)
               <Text bold color="green">Import complete</Text>
               <Text>Imported: <Text color="green">{importResult.imported}</Text></Text>
               <Text dimColor>Skipped (duplicates/invalid): {importResult.skipped}</Text>
+              <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
+            </Box>
+          )}
+
+          {addStep === 'manual-name' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>Manual Asset — Name</Text>
+              <Text dimColor>Type a name for this asset (e.g. "House", "Car")</Text>
+              <Box marginTop={1}>
+                <Text>Name: </Text>
+                <Text color="yellow">{manualName}</Text>
+                <Text color="cyan">█</Text>
+              </Box>
+              <Text dimColor>Enter to continue · Esc cancel</Text>
+            </Box>
+          )}
+
+          {addStep === 'manual-value' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>Manual Asset — Current Value</Text>
+              <Text dimColor>Asset: <Text color="cyan">{manualName}</Text></Text>
+              <Box marginTop={1}>
+                <Text>Value: $</Text>
+                <Text color="yellow">{manualValue}</Text>
+                <Text color="cyan">█</Text>
+              </Box>
+              {manualValueError && <Text color="red">{manualValueError}</Text>}
+              <Text dimColor>Enter to save · Esc back</Text>
+            </Box>
+          )}
+
+          {addStep === 'manual-done' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold color="green">Asset added</Text>
+              <Text><Text color="cyan">{manualName}</Text> added to your accounts.</Text>
+              <Text dimColor>Update its value anytime from the Accounts tab with [v].</Text>
               <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
             </Box>
           )}

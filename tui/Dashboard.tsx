@@ -93,15 +93,19 @@ function getFilteredFlexSummary(from: string, to: string, accountId: string): Fl
   `).get(from, to, accountId) as FlexSummary;
 }
 
-type AccountRow = { id: string; name: string; subtype: string | null; balance: number | null };
+type AccountRow = { id: string; name: string; subtype: string | null; spending: number };
 
-function getAccountRows(): AccountRow[] {
+function getAccountRows(from: string, to: string): AccountRow[] {
   return db.prepare(`
     SELECT a.id, a.name, a.subtype,
-      (SELECT balance FROM balance_history WHERE account_id = a.id ORDER BY date DESC LIMIT 1) as balance
+      COALESCE(SUM(CASE WHEN t.amount > 0 AND t.date >= ? AND t.date <= ?
+                        AND t.pending = 0 AND t.ignored = 0
+                        AND t.category != 'Transfer' THEN t.amount ELSE 0 END), 0) as spending
     FROM accounts a
-    ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 ELSE 2 END, a.name
-  `).all() as AccountRow[];
+    LEFT JOIN transactions t ON t.account_id = a.id
+    GROUP BY a.id, a.name, a.subtype
+    ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 ELSE 2 END, spending DESC
+  `).all(from, to) as AccountRow[];
 }
 
 const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }> = [
@@ -111,7 +115,7 @@ const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }
   { key: 'untagged',      label: 'Untagged',      color: 'white'  },
 ];
 
-export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxFilter) => void }) {
+export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, filter?: TxFilter) => void; isActive?: boolean }) {
   const now = new Date();
   const [range, setRange] = useState<Range>('month');
   const [anchor, setAnchor] = useState<Date>(() => getPeriodStart('month', now));
@@ -123,12 +127,17 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
   const [bounds] = useState(getDataBounds);
 
   // Account filter
-  const [accountRows] = useState<AccountRow[]>(getAccountRows);
+  const [accountRows, setAccountRows] = useState<AccountRow[]>(() => {
+    const { from, to } = getPeriodDates('month', getPeriodStart('month', now));
+    return getAccountRows(from, to);
+  });
   const [acctCursor, setAcctCursor] = useState(0);
   const [selectedAccount, setSelectedAccount] = useState<AccountRow | null>(null);
 
   function load(r: Range, a: Date, acct: AccountRow | null) {
     const { from, to } = getPeriodDates(r, a);
+    setAccountRows(getAccountRows(from, to));
+    setAcctCursor(0);
     if (acct) {
       setSummary(getFilteredRangeSummary(from, to, acct.id));
       setFlexData(getFilteredFlexSummary(from, to, acct.id));
@@ -153,20 +162,18 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
       return;
     }
 
-    // Period navigation (not in account picker)
-    if (view !== 'account') {
-      if (key.leftArrow && range !== 'alltime') {
-        const next = navigatePeriod(range, anchor, -1);
-        const { from } = getPeriodDates(range, next);
-        if (from >= bounds.minDate) setAnchor(next);
-        return;
-      }
-      if (key.rightArrow && range !== 'alltime') {
-        const next = navigatePeriod(range, anchor, 1);
-        const { from } = getPeriodDates(range, next);
-        if (from <= bounds.maxDate) setAnchor(next);
-        return;
-      }
+    // Period navigation (all views)
+    if (key.leftArrow && range !== 'alltime') {
+      const next = navigatePeriod(range, anchor, -1);
+      const { from } = getPeriodDates(range, next);
+      if (from >= bounds.minDate) setAnchor(next);
+      return;
+    }
+    if (key.rightArrow && range !== 'alltime') {
+      const next = navigatePeriod(range, anchor, 1);
+      const { from } = getPeriodDates(range, next);
+      if (from <= bounds.maxDate) setAnchor(next);
+      return;
     }
 
     if (view === 'categories') {
@@ -176,7 +183,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
         const cat = categories[catCursor];
         if (cat) {
           const { from, to } = getPeriodDates(range, anchor);
-          onNavigate('transactions', { category: cat.category, from, to, ...(selectedAccount ? { account: selectedAccount.id } : {}) });
+          onNavigate('transactions', { category: cat.category, from, to, ...(selectedAccount ? { account: selectedAccount.id, accountName: selectedAccount.name } : {}) });
         }
         return;
       }
@@ -185,19 +192,26 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
     if (view === 'flex') {
       if (key.return) {
         const { from, to } = getPeriodDates(range, anchor);
-        onNavigate('transactions', { from, to, ...(selectedAccount ? { account: selectedAccount.id } : {}) });
+        onNavigate('transactions', { from, to, ...(selectedAccount ? { account: selectedAccount.id, accountName: selectedAccount.name } : {}) });
         return;
       }
     }
 
     if (view === 'account') {
-      if (key.upArrow   || key.leftArrow)  { setAcctCursor((c) => Math.max(0, c - 1)); return; }
-      if (key.downArrow || key.rightArrow) { setAcctCursor((c) => Math.min(accountRows.length - 1, c + 1)); return; }
+      if (key.upArrow)   { setAcctCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setAcctCursor((c) => Math.min(accountRows.length - 1, c + 1)); return; }
       if (key.return) {
         const acct = accountRows[acctCursor];
         if (acct) {
+          const { from, to } = getPeriodDates(range, anchor);
+          onNavigate('transactions', { account: acct.id, accountName: acct.name, from, to });
+        }
+        return;
+      }
+      if (input === ' ') {
+        const acct = accountRows[acctCursor];
+        if (acct) {
           setSelectedAccount(selectedAccount?.id === acct.id ? null : acct);
-          setView('categories');
         }
         return;
       }
@@ -220,7 +234,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
     if (input === '6') onNavigate('health');
     if (input === '7') onNavigate('rules');
     if (input === '8') onNavigate('accounts');
-  });
+  }, { isActive: isActive !== false });
 
   const maxCategorySpend = categories[0]?.total ?? 1;
   const totalExpenses = summary?.expenses ?? 0;
@@ -256,7 +270,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
         </Box>
         <Text dimColor>
           {view === 'account'
-            ? `↑↓ select  ·  Enter ${selectedAccount ? 'switch' : 'filter'}  ·  [c] clear`
+            ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear`
             : view === 'categories'
             ? '← → period  ·  ↑↓ select  ·  Enter txns'
             : '← → period  ·  Enter txns'}
@@ -277,12 +291,10 @@ export function Dashboard({ onNavigate }: { onNavigate: (s: Screen, filter?: TxF
                 <Box key={acct.id} gap={2}>
                   <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶' : ' '}</Text>
                   <Text color={isFiltered ? 'yellow' : isSelected ? 'cyan' : undefined} dimColor={!isSelected && !isFiltered}>
-                    {acct.name.padEnd(28)}
+                    {(acct.name.length > 28 ? acct.name.slice(0, 27) + '…' : acct.name).padEnd(28)}
                   </Text>
-                  <Text dimColor>{(acct.subtype ?? '').padEnd(12)}</Text>
-                  {acct.balance !== null
-                    ? <Text dimColor>{fmtInt(acct.balance).padStart(12)}</Text>
-                    : <Text dimColor>{'—'.padStart(12)}</Text>}
+                  <Text dimColor>{(acct.subtype ?? '').slice(0, 12).padEnd(12)}</Text>
+                  <Text dimColor>{(acct.spending > 0 ? fmt(acct.spending) : '—').padStart(12)}</Text>
                   {isFiltered && <Text color="yellow">  ● filtered</Text>}
                 </Box>
               );

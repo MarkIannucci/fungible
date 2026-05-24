@@ -55,7 +55,7 @@ function loadData(): { accounts: AccountBalance[]; history: HistoryRow[] } {
 
   const history = (db.prepare(`
     SELECT bh.date,
-      SUM(CASE WHEN a.type IN ('depository','investment') THEN bh.balance ELSE 0 END) as assets,
+      SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END) as assets,
       SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END) as liabilities
     FROM balance_history bh
     JOIN accounts a ON a.id = bh.account_id
@@ -80,7 +80,7 @@ function groupByType(accs: AccountBalance[]): TypeBalance[] {
     .sort((a, b) => b.balance - a.balance);
 }
 
-export function NetWorth({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => void; isActive?: boolean }) {
   const { accounts, history } = loadData();
   const [view, setView] = React.useState<ViewMode>('accounts');
 
@@ -94,9 +94,9 @@ export function NetWorth({ onNavigate }: { onNavigate: (s: Screen) => void }) {
     if (input === '6') { onNavigate('health'); return; }
     if (input === '7') { onNavigate('rules'); return; }
     if (input === '8') { onNavigate('accounts'); return; }
-  });
+  }, { isActive: isActive !== false });
 
-  const assets      = accounts.filter((a) => a.type === 'depository' || a.type === 'investment');
+  const assets      = accounts.filter((a) => a.type === 'depository' || a.type === 'investment' || (a.type === 'other' && a.balance > 0));
   const liabilities = accounts.filter((a) => a.type === 'credit');
 
   const totalAssets      = assets.reduce((s, a) => s + a.balance, 0);

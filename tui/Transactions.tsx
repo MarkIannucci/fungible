@@ -26,8 +26,29 @@ type TagOption = { id: number; name: string };
 
 type Mode = 'list' | 'search' | 'edit' | 'edit-rule' | 'tag';
 type EditField = 'name' | 'category';
+type SortMode = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
 
-function getTxs(category: string | null, from: string | null, to: string | null, search: string, tag: string | null): Tx[] {
+const SORT_CYCLE: SortMode[] = ['date-desc', 'date-asc', 'name-asc', 'name-desc', 'amount-desc', 'amount-asc', 'category-asc', 'category-desc'];
+
+const SORT_ORDER_BY: Record<SortMode, string> = {
+  'date-desc':     't.date DESC, t.id DESC',
+  'date-asc':      't.date ASC, t.id ASC',
+  'amount-desc':   't.amount DESC',
+  'amount-asc':    't.amount ASC',
+  'name-asc':      'COALESCE(t.display_name, t.name) ASC',
+  'name-desc':     'COALESCE(t.display_name, t.name) DESC',
+  'category-asc':  't.category ASC, t.date DESC',
+  'category-desc': 't.category DESC, t.date DESC',
+};
+
+const SORT_LABEL: Record<SortMode, string> = {
+  'date-desc':     'date ↓', 'date-asc':      'date ↑',
+  'amount-desc':   'amount ↓', 'amount-asc':  'amount ↑',
+  'name-asc':      'name ↑', 'name-desc':     'name ↓',
+  'category-asc':  'category ↑', 'category-desc': 'category ↓',
+};
+
+function getTxs(category: string | null, from: string | null, to: string | null, search: string, tag: string | null, account: string | null, sort: SortMode): Tx[] {
   const conditions: string[] = [];
   const args: (string | number)[] = [];
 
@@ -44,6 +65,7 @@ function getTxs(category: string | null, from: string | null, to: string | null,
     conditions.push('EXISTS (SELECT 1 FROM transaction_tags tt JOIN tags tg ON tg.id = tt.tag_id WHERE tt.transaction_id = t.id AND tg.name = ?)');
     args.push(tag);
   }
+  if (account) { conditions.push('t.account_id = ?'); args.push(account); }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   return db.prepare(`
@@ -51,7 +73,7 @@ function getTxs(category: string | null, from: string | null, to: string | null,
       (SELECT GROUP_CONCAT(tg2.name, ', ') FROM transaction_tags tt2 JOIN tags tg2 ON tg2.id = tt2.tag_id WHERE tt2.transaction_id = t.id) as tag_names
     FROM transactions t
     ${where}
-    ORDER BY t.date DESC
+    ORDER BY ${SORT_ORDER_BY[sort]}
     LIMIT 200
   `).all(...args) as Tx[];
 }
@@ -105,11 +127,14 @@ function countMatches(pattern: string, matchType: 'name' | 'regex'): number {
   } catch { return 0; }
 }
 
-export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter }) {
+export function Transactions({ onNavigate, initialFilter, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean }) {
   const [category, setCategory] = useState<string | null>(initialFilter?.category ?? null);
   const [from, setFrom] = useState<string | null>(initialFilter?.from ?? null);
   const [to, setTo] = useState<string | null>(initialFilter?.to ?? null);
   const [tag, setTag] = useState<string | null>(initialFilter?.tag ?? null);
+  const [account, setAccount] = useState<string | null>(initialFilter?.account ?? null);
+  const [accountName, setAccountName] = useState<string | null>(initialFilter?.accountName ?? null);
+  const [sort, setSort] = useState<SortMode>('date-desc');
   const [bounds] = useState(getDataBounds);
   const [search, setSearch] = useState('');
   const [searchInput, setSearchInput] = useState('');
@@ -133,13 +158,13 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
   const [tagInput, setTagInput] = useState('');
 
   function load(s = search, keepCursor = false) {
-    const rows = getTxs(category, from, to, s, tag);
+    const rows = getTxs(category, from, to, s, tag, account, sort);
     setTxs(rows);
     if (!keepCursor) setCursor(0);
     else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
   }
 
-  useEffect(() => { load(); }, [category, from, to, search, tag]);
+  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort]);
 
   const selected = txs[cursor];
 
@@ -340,6 +365,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
     }
 
     if (mode === 'list') {
+      if (key.tab) { setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]); return; }
       if (input === '1') { onNavigate('dashboard'); return; }
       if (input === '3') { onNavigate('trends'); return; }
       if (input === '4') { onNavigate('networth'); return; }
@@ -351,6 +377,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
         if (search) { setSearch(''); setSearchInput(''); return; }
         if (from) { setFrom(null); setTo(null); return; }
         if (tag) { setTag(null); return; }
+        if (account) { setAccount(null); setAccountName(null); return; }
         onNavigate('dashboard');
         return;
       }
@@ -373,14 +400,14 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
       if (input === '/') { setMode('search'); return; }
       if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
       if (key.downArrow) setCursor((c) => Math.min(txs.length - 1, c + 1));
-      if (input === 'u') { setSearch(''); setSearchInput(''); setCategory('Uncategorized'); setFrom(null); setTo(null); setTag(null); }
-      if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setFrom(null); setTo(null); setTag(null); }
+      if (input === 'u') { setSearch(''); setSearchInput(''); setCategory('Uncategorized'); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
+      if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
       if (input === 'e' && selected) openEdit();
       if (input === 'g' && selected) openTagPanel();
       if (input === 'x' && selected?.manual_category) clearOverride();
       if (input === 'i' && selected) toggleIgnored();
     }
-  });
+  }, { isActive: isActive !== false });
 
   const PAGE = 20;
   const pageStart = Math.max(0, Math.min(cursor - Math.floor(PAGE / 2), txs.length - PAGE));
@@ -397,6 +424,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
   }
 
   const filterLabel = [
+    accountName,
     tag ? `#${tag}` : null,
     search ? `"${search}"` : null,
     category,
@@ -423,7 +451,7 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
           {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
         </Text>
         <Text dimColor>
-          {from ? '← → month  ·  ' : ''}[/] search  ·  [u] uncategorized  [a] all  ·  [e] edit  [g] tag  [x] undo  [i] ignore
+          {from ? '← → month  ·  ' : ''}[Tab] sort  ·  [/] search  ·  [u] uncategorized  [a] all  ·  [e] edit  [g] tag  [x] undo  [i] ignore
         </Text>
       </Box>
 
@@ -438,10 +466,18 @@ export function Transactions({ onNavigate, initialFilter }: { onNavigate: (s: Sc
       <Box marginTop={1}><Text dimColor>{'─'.repeat(80)}</Text></Box>
 
       <Box gap={2} marginTop={1}>
-        <Text dimColor>{'  DATE      '}</Text>
-        <Text dimColor>{'DESCRIPTION'.padEnd(36)}</Text>
-        <Text dimColor>{'AMOUNT'.padStart(10)}</Text>
-        <Text dimColor>{'CATEGORY'}</Text>
+        <Text color={sort.startsWith('date') ? 'cyan' : undefined} dimColor={!sort.startsWith('date')}>
+          {'  DATE ' + (sort === 'date-desc' ? '↓' : sort === 'date-asc' ? '↑' : ' ') + '   '}
+        </Text>
+        <Text color={sort.startsWith('name') ? 'cyan' : undefined} dimColor={!sort.startsWith('name')}>
+          {('DESCRIPTION' + (sort === 'name-asc' ? ' ↑' : sort === 'name-desc' ? ' ↓' : '  ')).padEnd(38)}
+        </Text>
+        <Text color={sort.startsWith('amount') ? 'cyan' : undefined} dimColor={!sort.startsWith('amount')}>
+          {('AMOUNT' + (sort === 'amount-desc' ? ' ↓' : sort === 'amount-asc' ? ' ↑' : '  ')).padStart(12)}
+        </Text>
+        <Text color={sort.startsWith('category') ? 'cyan' : undefined} dimColor={!sort.startsWith('category')}>
+          {'CATEGORY' + (sort === 'category-asc' ? ' ↑' : sort === 'category-desc' ? ' ↓' : '')}
+        </Text>
       </Box>
 
       {visible.map((tx) => {

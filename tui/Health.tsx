@@ -66,7 +66,7 @@ function loadHealthData(): HealthData {
 
   const nwRow = db.prepare(`
     SELECT
-      COALESCE(SUM(CASE WHEN a.type IN ('depository','investment') THEN bh.balance ELSE 0 END), 0) -
+      COALESCE(SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END), 0) -
       COALESCE(SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END), 0) AS net_worth
     FROM accounts a
     JOIN balance_history bh ON bh.account_id = a.id
@@ -128,7 +128,7 @@ function runwayColor(months: number, green: number, yellow: number) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function Health({ onNavigate }: { onNavigate: (s: Screen) => void }) {
+export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => void; isActive?: boolean }) {
   const [data] = useState<HealthData>(loadHealthData);
 
   // Round raw avg to nearest $500 as the default dial value
@@ -177,7 +177,7 @@ export function Health({ onNavigate }: { onNavigate: (s: Screen) => void }) {
       if (currentDial === 'growth')     setGrowth(DEFAULT_GROWTH);
       return;
     }
-  });
+  }, { isActive: isActive !== false });
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const cashMonths   = monthlySpend > 0 ? data.cash   / monthlySpend : 0;

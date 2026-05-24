@@ -4,6 +4,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { initDb, db } from '../core/db.js';
 import { getMonthlySummary, getRangeSummary, getTagSummary } from '../core/queries.js';
+import { getBalances, getFinancialHealth, getSpendingTrends } from '../core/agent-context.js';
+import { getFinanceTopicList, getFinanceGuide, formatGuideSection, formatFullGuide, type GuideTopic } from '../core/finance-guide.js';
 import { categorize } from '../core/categorize.js';
 import { syncAll } from '../core/sync.js';
 
@@ -492,6 +494,169 @@ server.tool(
       }
       return { content: [{ type: 'text', text: `Removed #${tag} from "${tx.name}"` }] };
     }
+  }
+);
+
+// ── get_balances ──────────────────────────────────────────────────────────────
+
+server.tool(
+  'get_balances',
+  'Get current balances for all accounts, plus net worth, total cash (depository), and total liquid (depository + brokerage) amounts.',
+  {},
+  async () => {
+    const b = getBalances();
+    if (b.accounts.length === 0) {
+      return { content: [{ type: 'text', text: 'No balance data available. Sync accounts first.' }] };
+    }
+
+    const assetLines = b.accounts
+      .filter((a) => a.isAsset)
+      .map((a) => `  ${a.name.padEnd(32).slice(0, 32)}  $${a.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(12)}  (${a.subtype ?? a.type})`);
+
+    const liabLines = b.accounts
+      .filter((a) => a.isLiability)
+      .map((a) => `  ${a.name.padEnd(32).slice(0, 32)}  $${a.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(12)}`);
+
+    const fmt = (n: number) => `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    const lines = [
+      '## Current Balances',
+      '',
+      '### Assets',
+      ...assetLines,
+      `  ${'Total assets'.padEnd(32)}  ${fmt(b.totalAssets).padStart(13)}`,
+      '',
+      '### Liabilities',
+      ...(liabLines.length ? liabLines : ['  (none)']),
+      `  ${'Total liabilities'.padEnd(32)}  ${fmt(b.totalLiabilities).padStart(13)}`,
+      '',
+      '### Summary',
+      `- Net Worth:  ${b.netWorth >= 0 ? '+' : '-'}${fmt(b.netWorth)}`,
+      `- Cash (checking/savings):  ${fmt(b.cash)}`,
+      `- Liquid (incl. brokerage): ${fmt(b.liquid)}`,
+    ];
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+);
+
+// ── get_financial_health ──────────────────────────────────────────────────────
+
+server.tool(
+  'get_financial_health',
+  'Get financial health metrics: cash and liquid runway, FIRE number and progress, estimated years to retirement. Uses last 12 months of transactions for spending/savings averages.',
+  {
+    withdrawal_rate: z.number().min(0.5).max(10).default(4).describe('Safe withdrawal rate % (default 4)'),
+    growth_rate:     z.number().min(0).max(20).default(7).describe('Expected annual growth rate % (default 7)'),
+  },
+  async ({ withdrawal_rate, growth_rate }) => {
+    const h = getFinancialHealth(withdrawal_rate, growth_rate);
+
+    const fmt  = (n: number) => `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    const fmtM = (n: number) => Number.isFinite(n) && n < 999 ? `${n.toFixed(1)} months` : '∞';
+    const pct  = (n: number) => `${(n * 100).toFixed(1)}%`;
+
+    const lines = [
+      '## Financial Health',
+      '',
+      '### Runway',
+      `- Cash runway:   ${fmtM(h.cashRunwayMonths)}  (${fmt(h.cash)} in checking/savings)`,
+      `- Liquid runway: ${fmtM(h.liquidRunwayMonths)}  (${fmt(h.liquid)} incl. brokerage)`,
+      '',
+      '### Averages (last 12 months)',
+      `- Monthly expenses: ${fmt(h.avgMonthlyExpenses)}`,
+      `- Monthly savings:  ${fmt(h.avgMonthlySavings)}`,
+      '',
+      '### FIRE',
+      `- Net worth:    ${h.netWorth >= 0 ? '+' : '-'}${fmt(h.netWorth)}`,
+      `- FIRE number:  ${fmt(h.fireNumber)}  (${h.avgMonthlyExpenses * 12 > 0 ? `${fmt(h.avgMonthlyExpenses * 12)}/yr ÷ ${withdrawal_rate}%` : 'n/a'})`,
+      `- Progress:     ${pct(h.fireProgress)}`,
+      `- Years to FIRE: ${h.yearsToFire === null ? '100+' : h.yearsToFire === 0 ? 'Achieved!' : `~${Math.ceil(h.yearsToFire)} years`}`,
+      `- Assumptions: ${withdrawal_rate}% withdrawal, ${growth_rate}% growth`,
+    ];
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+);
+
+// ── get_trends ────────────────────────────────────────────────────────────────
+
+server.tool(
+  'get_trends',
+  'Get month-by-month spending trends for the last N months. Optionally filter to a specific category.',
+  {
+    months:   z.number().int().min(1).max(60).default(12).describe('Number of months to look back (default 12)'),
+    category: z.string().optional().describe('Category name to track (optional; omit for overall)'),
+  },
+  async ({ months, category }) => {
+    const rows = getSpendingTrends(months, category);
+    if (rows.length === 0) return { content: [{ type: 'text', text: 'No data.' }] };
+
+    const fmt = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+
+    const header = category
+      ? `## ${category} — Monthly Trend (last ${months} months)`
+      : `## Spending Trend (last ${months} months)`;
+
+    const lines = [header, ''];
+
+    if (category) {
+      lines.push(`${'Month'.padEnd(12)}  ${'Category'.padStart(10)}  ${'Expenses'.padStart(10)}  ${'Income'.padStart(10)}  ${'Net'.padStart(10)}`);
+      lines.push('─'.repeat(58));
+      for (const r of rows) {
+        lines.push(
+          `${r.label.padEnd(12)}  ${fmt(r.categoryTotal ?? 0).padStart(10)}  ${fmt(r.expenses).padStart(10)}  ${fmt(r.income).padStart(10)}  ${(r.net >= 0 ? '+' : '') + fmt(r.net).padStart(9)}`
+        );
+      }
+    } else {
+      lines.push(`${'Month'.padEnd(12)}  ${'Expenses'.padStart(10)}  ${'Income'.padStart(10)}  ${'Net'.padStart(10)}`);
+      lines.push('─'.repeat(48));
+      for (const r of rows) {
+        lines.push(
+          `${r.label.padEnd(12)}  ${fmt(r.expenses).padStart(10)}  ${fmt(r.income).padStart(10)}  ${(r.net >= 0 ? '+' : '') + fmt(r.net).padStart(9)}`
+        );
+      }
+    }
+
+    const avgExp = rows.reduce((s, r) => s + r.expenses, 0) / rows.length;
+    const avgInc = rows.reduce((s, r) => s + r.income,   0) / rows.length;
+    lines.push('');
+    lines.push(`Averages over ${rows.length} months: expenses ${fmt(avgExp)}/mo, income ${fmt(avgInc)}/mo`);
+
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+);
+
+// ── get_finance_guide ─────────────────────────────────────────────────────────
+
+server.tool(
+  'get_finance_guide',
+  'Get opinionated personal finance guidance. Call without a topic for an overview of all topics; call with a topic for detailed advice on that area.',
+  {
+    topic: z.enum([
+      'priorities', 'emergency-fund', 'debt', 'employer-match',
+      'hsa', 'ira', '401k', 'investing', 'budgeting', 'fire',
+      'housing', 'car', 'insurance',
+    ]).optional().describe('Specific topic (omit for topic list overview)'),
+  },
+  async ({ topic }) => {
+    if (!topic) {
+      const topics = getFinanceTopicList();
+      const lines = [
+        '## Personal Finance Guide — Topics',
+        '',
+        ...topics.map((t) => `- **${t.topic}** — ${t.title}: ${t.summary}`),
+        '',
+        'Call get_finance_guide with a topic name for detailed guidance.',
+      ];
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    }
+
+    const section = getFinanceGuide(topic as GuideTopic);
+    if (Array.isArray(section)) {
+      return { content: [{ type: 'text', text: formatFullGuide() }] };
+    }
+    return { content: [{ type: 'text', text: formatGuideSection(section) }] };
   }
 );
 
