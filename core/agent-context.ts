@@ -5,6 +5,7 @@
  */
 
 import { db } from './db.js';
+import { yearsToFire } from './health.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -118,23 +119,6 @@ export function getBalances(): BalanceSummary {
 
 // ─── Financial Health ─────────────────────────────────────────────────────────
 
-function calcYearsToFire(
-  netWorth: number,
-  monthlySavings: number,
-  target: number,
-  annualGrowthPct = 7,
-): number | null {
-  if (target <= 0) return 0;
-  if (netWorth >= target) return 0;
-  const r = Math.pow(1 + annualGrowthPct / 100, 1 / 12) - 1;
-  let wealth = netWorth;
-  for (let month = 1; month <= 1200; month++) {
-    wealth = wealth * (1 + r) + monthlySavings;
-    if (wealth >= target) return month / 12;
-  }
-  return null;
-}
-
 export function getFinancialHealth(
   withdrawalRate = 4,
   annualGrowthPct = 7,
@@ -165,7 +149,7 @@ export function getFinancialHealth(
   const annualSpend = avgMonthlyExpenses * 12;
   const fireNumber  = annualSpend / (withdrawalRate / 100);
   const fireProgress = fireNumber > 0 ? Math.max(0, balances.netWorth) / fireNumber : 0;
-  const yearsToFire = calcYearsToFire(
+  const yearsToFireVal = yearsToFire(
     balances.netWorth, avgMonthlySavings, fireNumber, annualGrowthPct
   );
 
@@ -179,7 +163,7 @@ export function getFinancialHealth(
     liquidRunwayMonths,
     fireNumber,
     fireProgress,
-    yearsToFire,
+    yearsToFire: yearsToFireVal,
   };
 }
 
