@@ -131,7 +131,12 @@ In tag detail, `↑ ↓` selects a category and `Enter` drills into transactions
 
 ### Financial Health `[6]`
 
-Displays cash runway, liquid runway, net worth, FIRE number with progress, and estimated years to retirement.
+Displays a full financial picture across four sections:
+
+- **Snapshot** — savings rate (color-coded) and estimated monthly income
+- **Runway** — months of cash and liquid coverage at current spending
+- **Debt** — net cash position (checking minus credit debt), months to debt-free at current savings rate (hidden if no debt)
+- **Retirement** — net worth, FIRE number with progress bar, Coast FIRE (years until growth alone covers retirement if you stop saving now), estimated years to FIRE
 
 | Key | Action |
 |-----|--------|
