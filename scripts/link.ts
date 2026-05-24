@@ -1,8 +1,9 @@
 import 'dotenv/config';
 import http from 'node:http';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { initDb, db } from '../core/db.js';
 import { createLinkToken, exchangePublicToken } from '../core/plaid.js';
+import { encryptToken } from '../core/crypto.js';
 
 initDb();
 
@@ -126,7 +127,7 @@ async function main() {
             INSERT INTO plaid_items (item_id, access_token, institution_name)
             VALUES (?, ?, ?)
             ON CONFLICT(item_id) DO UPDATE SET access_token=excluded.access_token, institution_name=excluded.institution_name
-          `).run(itemId, accessToken, institutionName);
+          `).run(itemId, encryptToken(accessToken), institutionName);
 
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end(successPage());
@@ -150,7 +151,7 @@ async function main() {
   server.listen(PORT, () => {
     const url = `http://localhost:${PORT}`;
     console.log(`Opening ${url} ...`);
-    exec(`open "${url}"`);
+    execFile('open', [url]);
   });
 }
 

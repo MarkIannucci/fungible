@@ -3,6 +3,7 @@ import { db } from './db.js';
 import { categorize } from './categorize.js';
 import { applyNameRules } from './rename.js';
 import { deduplicateCsvVsPlaid } from './dedup.js';
+import { decryptToken } from './crypto.js';
 import type { Transaction } from 'plaid';
 
 export async function syncTransactions(accessToken: string, itemId: string) {
@@ -108,7 +109,7 @@ export async function syncAll(force = false) {
       results.push({ itemId: item.item_id, added: 0, modified: 0, removed: 0, dupes: 0, skipped: true });
       continue;
     }
-    const result = await syncTransactions(item.access_token, item.item_id);
+    const result = await syncTransactions(decryptToken(item.access_token), item.item_id);
     results.push({ itemId: item.item_id, ...result, skipped: false });
   }
   return results;

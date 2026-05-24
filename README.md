@@ -47,7 +47,7 @@ On first run, use `--setup` to configure credentials:
 npm run dev -- --setup
 ```
 
-Data and config are stored at `~/.fungible/`. You'll need a free [Plaid](https://plaid.com) developer account to sync bank transactions (sandbox tier works).
+Data and config are stored at `~/.fungible/`. Plaid access tokens are encrypted at rest using a key file at `~/.fungible/key` — do not delete this file or you will need to re-link your bank accounts. You'll need a free [Plaid](https://plaid.com) developer account to sync bank transactions (sandbox tier works).
 
 ## Screens
 

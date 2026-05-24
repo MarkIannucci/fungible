@@ -14,6 +14,7 @@ import { categorize } from './categorize.js';
 import { rebuildDisplayNames } from './rename.js';
 import { syncAll } from './sync.js';
 import { db } from './db.js';
+import { validateRegex } from './rule-utils.js';
 import type { ToolDef } from './llm-provider.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -520,6 +521,7 @@ export async function executeTool(
     }
 
     case 'add_rule': {
+      if (str('match_type') === 'regex') validateRegex(str('pattern'));
       db.prepare(
         'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)'
       ).run(input['priority'] ? num('priority') : 10, str('match_type'), str('pattern'), str('category'), opt('min_amount'), opt('max_amount'));
@@ -543,6 +545,7 @@ export async function executeTool(
     }
 
     case 'add_name_rule': {
+      if (str('match_type') === 'regex') validateRegex(str('pattern'));
       db.prepare(
         'INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES (?, ?, ?, ?, ?)'
       ).run(str('match_type'), str('pattern'), str('replacement'), opt('min_amount'), opt('max_amount'));

@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import { encryptToken } from './crypto.js';
 
 const DATA_DIR = path.join(os.homedir(), '.fungible');
 const DB_PATH = path.join(DATA_DIR, 'fungible.db');
@@ -120,6 +121,13 @@ export function initDb() {
     "UPDATE categories SET flexibility = ? WHERE name = ? AND flexibility IS NULL"
   );
   for (const [cat, flex] of flexDefaults) setFlex.run(flex, cat);
+
+  // Migrate plaintext access tokens to encrypted form (idempotent: encrypted values contain ':')
+  const plainItems = (db.prepare('SELECT item_id, access_token FROM plaid_items').all() as {
+    item_id: string; access_token: string;
+  }[]).filter(r => !r.access_token.includes(':'));
+  const updateToken = db.prepare('UPDATE plaid_items SET access_token = ? WHERE item_id = ?');
+  for (const item of plainItems) updateToken.run(encryptToken(item.access_token), item.item_id);
 
   // Seed default hidden categories (idempotent)
   const hidden = ['Transfer', 'Loan Payment'];
