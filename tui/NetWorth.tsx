@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
-import { handleNavKey } from './nav.js';
+import { NavHints, handleNavKey } from './nav.js';
 
 const BAR_WIDTH = 32;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -100,7 +100,7 @@ export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => 
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [3] trends  [5] tags  [6] health  [7] rules  [8] accounts</Text>
+        <NavHints current="networth" />
       </Box>
 
       <Box marginTop={1} justifyContent="space-between">

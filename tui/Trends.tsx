@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
-import { handleNavKey } from './nav.js';
+import { NavHints, handleNavKey } from './nav.js';
 
 const BAR_WIDTH = 28;
 const HALF_BAR = 14;
@@ -358,7 +358,7 @@ export function Trends({
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [4] worth  [5] tags  [6] health  [7] rules  [8] accounts</Text>
+        <NavHints current="trends" />
       </Box>
 
       <Box gap={2} marginTop={1}>

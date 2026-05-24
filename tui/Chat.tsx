@@ -254,8 +254,8 @@ export function Chat({
 
       {/* Input line */}
       {isActive && !confirm && (
-        <Box gap={1}>
-          <Text color="cyan">›</Text>
+        <Box>
+          <Text color="cyan">› </Text>
           <Text>{input}</Text>
           {!isStreaming && <Text color="cyan">▊</Text>}
         </Box>

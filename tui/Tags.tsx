@@ -4,7 +4,7 @@ import { db } from '../core/db.js';
 import { getTagSummary, type MonthlySummary } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, Divider } from './fmt.js';
-import { handleNavKey } from './nav.js';
+import { NavHints, handleNavKey } from './nav.js';
 
 type Tag = { id: number; name: string; count: number };
 type Mode = 'list' | 'search' | 'add' | 'detail';
@@ -134,7 +134,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [3] trends  [4] worth  [6] health  [7] rules  [8] accounts</Text>
+        <NavHints current="tags" />
       </Box>
 
       {mode === 'detail' && tag && tagSummary ? (

@@ -5,7 +5,7 @@ import { categorize } from '../core/categorize.js';
 import { rebuildDisplayNames } from '../core/rename.js';
 import type { Screen, TxFilter } from './App.js';
 import { Divider } from './fmt.js';
-import { handleNavKey } from './nav.js';
+import { NavHints, handleNavKey } from './nav.js';
 
 type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null };
 type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null };
@@ -333,7 +333,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
       {/* Header */}
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [3] trends  [4] worth  [5] tags  [6] health  [8] accounts</Text>
+        <NavHints current="rules" />
       </Box>
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>

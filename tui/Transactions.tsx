@@ -4,7 +4,7 @@ import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
 import { rebuildDisplayNames } from '../core/rename.js';
 import type { Screen, TxFilter } from './App.js';
-import { handleNavKey } from './nav.js';
+import { NavHints, handleNavKey } from './nav.js';
 
 function getCategories(): string[] {
   return (db.prepare('SELECT name FROM categories ORDER BY name').all() as { name: string }[]).map((r) => r.name);
@@ -438,7 +438,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [3] trends  [4] worth  [5] tags  [6] health  [7] rules  [8] accounts</Text>
+        <NavHints current="transactions" />
       </Box>
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>

@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import type { Screen } from './App.js';
 import { Divider } from './fmt.js';
-import { handleNavKey } from './nav.js';
+import { NavHints, handleNavKey } from './nav.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -196,7 +196,7 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
       {/* Nav */}
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [3] trends  [4] worth  [5] tags  [7] rules  [8] accounts</Text>
+        <NavHints current="health" />
       </Box>
 
       <Box marginTop={1} justifyContent="space-between">

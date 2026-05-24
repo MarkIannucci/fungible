@@ -9,7 +9,7 @@ import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
-import { handleNavKey } from './nav.js';
+import { NavHints, handleNavKey } from './nav.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -544,7 +544,7 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
       {/* Header */}
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <Text dimColor>[1] dash  [2] txns  [3] trends  [4] worth  [5] tags  [6] health  [7] rules</Text>
+        <NavHints current="accounts" />
       </Box>
 
       <Box marginTop={1} marginBottom={1} flexDirection="column" gap={1}>
