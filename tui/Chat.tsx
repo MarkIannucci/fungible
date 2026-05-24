@@ -58,8 +58,12 @@ export function Chat({
   const streamTextRef     = useRef('');
   const confirmResolveRef = useRef<((yes: boolean) => void) | null>(null);
 
+  const MAX_DISPLAY = 200;
   const addDisplay = useCallback((msg: DisplayMsg) => {
-    setDisplayMsgs((prev) => [...prev, msg]);
+    setDisplayMsgs((prev) => {
+      const next = [...prev, msg];
+      return next.length > MAX_DISPLAY ? next.slice(-MAX_DISPLAY) : next;
+    });
   }, []);
 
   // ── Send a message ─────────────────────────────────────────────────────────
@@ -70,6 +74,8 @@ export function Chat({
     addDisplay({ role: 'user', text: text.trim() });
     setIsStreaming(true);
     streamTextRef.current = '';
+    // Snapshot history length so we can roll back on error
+    const historyLenBefore = historyRef.current.length;
 
     try {
       await runAgentTurn(text.trim(), historyRef.current, {
@@ -106,6 +112,8 @@ export function Chat({
       if (final.trim()) addDisplay({ role: 'assistant', text: final });
 
     } catch (e) {
+      // Roll back any partial history mutations from this turn
+      historyRef.current.splice(historyLenBefore);
       addDisplay({ role: 'error', text: `Error: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       setStreamText('');

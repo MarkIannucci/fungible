@@ -2,12 +2,8 @@ import 'dotenv/config';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { initDb, db } from '../core/db.js';
-import { getMonthlySummary, getRangeSummary, getTagSummary } from '../core/queries.js';
-import { getBalances, getFinancialHealth, getSpendingTrends } from '../core/agent-context.js';
-import { getFinanceTopicList, getFinanceGuide, formatGuideSection, formatFullGuide, type GuideTopic } from '../core/finance-guide.js';
-import { categorize } from '../core/categorize.js';
-import { syncAll } from '../core/sync.js';
+import { initDb } from '../core/db.js';
+import { executeTool } from '../core/tools.js';
 
 initDb();
 
@@ -15,6 +11,12 @@ const server = new McpServer({
   name: 'fungible',
   version: '1.0.0',
 });
+
+// Wrap executeTool result in MCP content format
+async function run(name: string, input: Record<string, unknown>) {
+  const text = await executeTool(name, input);
+  return { content: [{ type: 'text' as const, text }] };
+}
 
 // ── spending_summary ──────────────────────────────────────────────────────────
 
@@ -27,31 +29,7 @@ server.tool(
     from:  z.string().optional().describe('Start date YYYY-MM-DD (use with to)'),
     to:    z.string().optional().describe('End date YYYY-MM-DD (use with from)'),
   },
-  async ({ year, month, from, to }) => {
-    let label: string;
-    let summary;
-    if (from && to) {
-      summary = getRangeSummary(from, to);
-      label = `${from} – ${to}`;
-    } else if (year && month) {
-      summary = getMonthlySummary(year, month);
-      label = `${new Date(year, month - 1).toLocaleString('en-US', { month: 'long' })} ${year}`;
-    } else {
-      return { content: [{ type: 'text', text: 'Provide either (year + month) or (from + to).' }] };
-    }
-
-    const lines = [
-      `## ${label}`,
-      `- **Income:** $${summary.income.toFixed(2)}`,
-      `- **Expenses:** $${summary.expenses.toFixed(2)}`,
-      `- **Net:** ${summary.net >= 0 ? '+' : ''}$${summary.net.toFixed(2)}`,
-      '',
-      '### Spending by Category',
-      ...summary.byCategory.map((c) => `- ${c.category}: $${c.total.toFixed(2)}`),
-    ];
-
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  (input) => run('spending_summary', input),
 );
 
 // ── list_transactions ─────────────────────────────────────────────────────────
@@ -60,57 +38,16 @@ server.tool(
   'list_transactions',
   'List transactions with optional filters. Returns date, name, amount, category, account. Ignored transactions are marked.',
   {
-    category:      z.string().optional().describe('Filter by category name'),
-    month:         z.number().int().min(1).max(12).optional().describe('Month 1–12 (use with year)'),
-    year:          z.number().int().optional().describe('4-digit year (use with month)'),
-    from:          z.string().optional().describe('Start date YYYY-MM-DD (use with to)'),
-    to:            z.string().optional().describe('End date YYYY-MM-DD (use with from)'),
-    search:        z.string().optional().describe('Search within name or display name'),
+    category:        z.string().optional().describe('Filter by category name'),
+    month:           z.number().int().min(1).max(12).optional().describe('Month 1–12 (use with year)'),
+    year:            z.number().int().optional().describe('4-digit year (use with month)'),
+    from:            z.string().optional().describe('Start date YYYY-MM-DD (use with to)'),
+    to:              z.string().optional().describe('End date YYYY-MM-DD (use with from)'),
+    search:          z.string().optional().describe('Search within name or display name'),
     include_ignored: z.boolean().default(false).describe('Include ignored transactions (default false)'),
-    limit:         z.number().int().min(1).max(500).default(50).describe('Max results (default 50)'),
+    limit:           z.number().int().min(1).max(500).default(50).describe('Max results (default 50)'),
   },
-  async ({ category, month, year, from, to, search, include_ignored, limit }) => {
-    const conditions: string[] = [];
-    const args: (string | number)[] = [];
-
-    if (!include_ignored) { conditions.push('t.ignored = 0'); }
-    if (category) { conditions.push('t.category = ?'); args.push(category); }
-    if (from && to) {
-      conditions.push('t.date >= ? AND t.date <= ?'); args.push(from, to);
-    } else if (month && year) {
-      const f = `${year}-${String(month).padStart(2, '0')}-01`;
-      const t2 = `${year}-${String(month).padStart(2, '0')}-31`;
-      conditions.push('t.date >= ? AND t.date <= ?'); args.push(f, t2);
-    }
-    if (search) {
-      conditions.push('(t.name LIKE ? OR t.display_name LIKE ?)');
-      args.push(`%${search}%`, `%${search}%`);
-    }
-
-    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-    const rows = db.prepare(`
-      SELECT t.id, t.date, COALESCE(t.display_name, t.name) as name, t.amount,
-             t.category, t.manual_category, t.ignored, a.name as account
-      FROM transactions t
-      LEFT JOIN accounts a ON t.account_id = a.id
-      ${where}
-      ORDER BY t.date DESC
-      LIMIT ?
-    `).all(...args, limit) as {
-      id: string; date: string; name: string; amount: number;
-      category: string; manual_category: string | null; ignored: number; account: string;
-    }[];
-
-    if (rows.length === 0) return { content: [{ type: 'text', text: 'No transactions found.' }] };
-
-    const lines = rows.map((r) => {
-      const sign = r.amount < 0 ? '+' : '-';
-      const flags = [r.manual_category ? '◆' : ' ', r.ignored ? '~' : ' '].join('');
-      return `${r.date}  ${flags}  ${r.name.padEnd(36).slice(0, 36)}  ${sign}$${Math.abs(r.amount).toFixed(2).padStart(9)}  ${r.category}  [${r.id}]`;
-    });
-
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  (input) => run('list_transactions', input),
 );
 
 // ── edit_transaction ──────────────────────────────────────────────────────────
@@ -122,15 +59,7 @@ server.tool(
     id:       z.string().describe('Transaction ID from list_transactions'),
     category: z.string().describe('Category to assign'),
   },
-  async ({ id, category }) => {
-    const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(id) as { name: string } | undefined;
-    if (!tx) return { content: [{ type: 'text', text: `No transaction with id ${id}.` }] };
-
-    db.prepare('UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?')
-      .run(category, category, id);
-
-    return { content: [{ type: 'text', text: `Set "${tx.name}" → ${category} (pinned)` }] };
-  }
+  (input) => run('edit_transaction', input),
 );
 
 // ── clear_edit ────────────────────────────────────────────────────────────────
@@ -141,16 +70,7 @@ server.tool(
   {
     id: z.string().describe('Transaction ID from list_transactions'),
   },
-  async ({ id }) => {
-    const tx = db.prepare('SELECT name, merchant_name, raw_category, amount FROM transactions WHERE id = ?')
-      .get(id) as { name: string; merchant_name: string | null; raw_category: string | null; amount: number } | undefined;
-    if (!tx) return { content: [{ type: 'text', text: `No transaction with id ${id}.` }] };
-
-    const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
-    db.prepare('UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?').run(cat, id);
-
-    return { content: [{ type: 'text', text: `Cleared override on "${tx.name}" — reverted to ${cat}` }] };
-  }
+  (input) => run('clear_edit', input),
 );
 
 // ── ignore_transaction ────────────────────────────────────────────────────────
@@ -162,13 +82,7 @@ server.tool(
     id:     z.string().describe('Transaction ID from list_transactions'),
     ignore: z.boolean().describe('true to ignore, false to un-ignore'),
   },
-  async ({ id, ignore }) => {
-    const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(id) as { name: string } | undefined;
-    if (!tx) return { content: [{ type: 'text', text: `No transaction with id ${id}.` }] };
-
-    db.prepare('UPDATE transactions SET ignored = ? WHERE id = ?').run(ignore ? 1 : 0, id);
-    return { content: [{ type: 'text', text: `"${tx.name}" ${ignore ? 'ignored' : 'un-ignored'}` }] };
-  }
+  (input) => run('ignore_transaction', input),
 );
 
 // ── list_rules ────────────────────────────────────────────────────────────────
@@ -177,24 +91,7 @@ server.tool(
   'list_rules',
   'List all category rules.',
   {},
-  async () => {
-    const rules = db.prepare(
-      'SELECT id, priority, match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC, id ASC'
-    ).all() as { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null }[];
-
-    if (rules.length === 0) return { content: [{ type: 'text', text: 'No rules defined.' }] };
-
-    const lines = rules.map((r) => {
-      const amt = r.min_amount !== null && r.max_amount !== null && r.min_amount === r.max_amount
-        ? ` [$${r.min_amount}]`
-        : r.min_amount !== null && r.max_amount !== null ? ` [$${r.min_amount}–$${r.max_amount}]`
-        : r.min_amount !== null ? ` [≥$${r.min_amount}]`
-        : r.max_amount !== null ? ` [≤$${r.max_amount}]`
-        : '';
-      return `[${r.id}] pri=${r.priority} ${r.match_type.padEnd(5)} "${r.pattern}"${amt} → ${r.category}`;
-    });
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  () => run('list_rules', {}),
 );
 
 // ── add_rule ──────────────────────────────────────────────────────────────────
@@ -210,29 +107,7 @@ server.tool(
     min_amount: z.number().optional().describe('Minimum transaction amount (optional)'),
     max_amount: z.number().optional().describe('Maximum transaction amount (optional)'),
   },
-  async ({ pattern, match_type, category, priority, min_amount, max_amount }) => {
-    db.prepare(
-      'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(priority, match_type, pattern, category, min_amount ?? null, max_amount ?? null);
-
-    const rows = db.prepare(
-      'SELECT id, name, merchant_name, raw_category FROM transactions WHERE manual_category IS NULL'
-    ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null }[];
-
-    const update = db.prepare('UPDATE transactions SET category = ? WHERE id = ?');
-    let count = 0;
-    for (const tx of rows) {
-      const cat = categorize(tx.name, tx.merchant_name, tx.raw_category);
-      if (cat !== 'Uncategorized') { update.run(cat, tx.id); count++; }
-    }
-
-    return {
-      content: [{
-        type: 'text',
-        text: `Rule added: "${pattern}" → ${category}\nRecategorized ${count} transactions.`,
-      }],
-    };
-  }
+  (input) => run('add_rule', input),
 );
 
 // ── delete_rule ───────────────────────────────────────────────────────────────
@@ -243,13 +118,7 @@ server.tool(
   {
     id: z.number().int().describe('Rule ID from list_rules'),
   },
-  async ({ id }) => {
-    const rule = db.prepare('SELECT * FROM category_rules WHERE id = ?').get(id) as { pattern: string; category: string } | undefined;
-    if (!rule) return { content: [{ type: 'text', text: `No rule with id ${id}.` }] };
-
-    db.prepare('DELETE FROM category_rules WHERE id = ?').run(id);
-    return { content: [{ type: 'text', text: `Deleted rule [${id}]: "${rule.pattern}" → ${rule.category}` }] };
-  }
+  (input) => run('delete_rule', input),
 );
 
 // ── list_name_rules ───────────────────────────────────────────────────────────
@@ -258,24 +127,7 @@ server.tool(
   'list_name_rules',
   'List all name rules (rules that rename transaction display names).',
   {},
-  async () => {
-    const rules = db.prepare(
-      'SELECT id, match_type, pattern, replacement, min_amount, max_amount FROM name_rules ORDER BY id ASC'
-    ).all() as { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null }[];
-
-    if (rules.length === 0) return { content: [{ type: 'text', text: 'No name rules defined.' }] };
-
-    const lines = rules.map((r) => {
-      const amt = r.min_amount !== null && r.max_amount !== null && r.min_amount === r.max_amount
-        ? ` [$${r.min_amount}]`
-        : r.min_amount !== null && r.max_amount !== null ? ` [$${r.min_amount}–$${r.max_amount}]`
-        : r.min_amount !== null ? ` [≥$${r.min_amount}]`
-        : r.max_amount !== null ? ` [≤$${r.max_amount}]`
-        : '';
-      return `[${r.id}] ${r.match_type.padEnd(5)} "${r.pattern}"${amt} → "${r.replacement}"`;
-    });
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  () => run('list_name_rules', {}),
 );
 
 // ── add_name_rule ─────────────────────────────────────────────────────────────
@@ -290,22 +142,7 @@ server.tool(
     min_amount:  z.number().optional().describe('Minimum transaction amount (optional)'),
     max_amount:  z.number().optional().describe('Maximum transaction amount (optional)'),
   },
-  async ({ pattern, match_type, replacement, min_amount, max_amount }) => {
-    db.prepare(
-      'INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES (?, ?, ?, ?, ?)'
-    ).run(match_type, pattern, replacement, min_amount ?? null, max_amount ?? null);
-
-    // Rebuild display names for all transactions
-    const { rebuildDisplayNames } = await import('../core/rename.js');
-    const count = rebuildDisplayNames();
-
-    return {
-      content: [{
-        type: 'text',
-        text: `Name rule added: "${pattern}" → "${replacement}"\nUpdated display names for ${count} transactions.`,
-      }],
-    };
-  }
+  (input) => run('add_name_rule', input),
 );
 
 // ── delete_name_rule ──────────────────────────────────────────────────────────
@@ -316,13 +153,7 @@ server.tool(
   {
     id: z.number().int().describe('Name rule ID from list_name_rules'),
   },
-  async ({ id }) => {
-    const rule = db.prepare('SELECT * FROM name_rules WHERE id = ?').get(id) as { pattern: string; replacement: string } | undefined;
-    if (!rule) return { content: [{ type: 'text', text: `No name rule with id ${id}.` }] };
-
-    db.prepare('DELETE FROM name_rules WHERE id = ?').run(id);
-    return { content: [{ type: 'text', text: `Deleted name rule [${id}]: "${rule.pattern}" → "${rule.replacement}"` }] };
-  }
+  (input) => run('delete_name_rule', input),
 );
 
 // ── list_hidden_categories ────────────────────────────────────────────────────
@@ -331,11 +162,7 @@ server.tool(
   'list_hidden_categories',
   'List categories hidden from totals and charts (e.g. Transfer, Loan Payment).',
   {},
-  async () => {
-    const rows = db.prepare('SELECT category FROM hidden_categories ORDER BY category').all() as { category: string }[];
-    if (rows.length === 0) return { content: [{ type: 'text', text: 'No hidden categories.' }] };
-    return { content: [{ type: 'text', text: rows.map((r) => r.category).join('\n') }] };
-  }
+  () => run('list_hidden_categories', {}),
 );
 
 // ── toggle_hidden_category ────────────────────────────────────────────────────
@@ -347,15 +174,7 @@ server.tool(
     category: z.string().describe('Category name, e.g. "Transfer"'),
     hide:     z.boolean().describe('true to hide, false to unhide'),
   },
-  async ({ category, hide }) => {
-    if (hide) {
-      db.prepare('INSERT OR IGNORE INTO hidden_categories (category) VALUES (?)').run(category);
-      return { content: [{ type: 'text', text: `"${category}" is now hidden.` }] };
-    } else {
-      db.prepare('DELETE FROM hidden_categories WHERE category = ?').run(category);
-      return { content: [{ type: 'text', text: `"${category}" is now visible.` }] };
-    }
-  }
+  (input) => run('toggle_hidden_category', input),
 );
 
 // ── list_accounts ─────────────────────────────────────────────────────────────
@@ -364,18 +183,7 @@ server.tool(
   'list_accounts',
   'List all connected bank accounts.',
   {},
-  async () => {
-    const accounts = db.prepare(
-      'SELECT name, type, subtype, mask, institution_name FROM accounts'
-    ).all() as { name: string; type: string; subtype: string; mask: string | null; institution_name: string | null }[];
-
-    if (accounts.length === 0) return { content: [{ type: 'text', text: 'No accounts connected.' }] };
-
-    const lines = accounts.map(
-      (a) => `${a.name} (${a.subtype}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`
-    );
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  () => run('list_accounts', {}),
 );
 
 // ── sync ──────────────────────────────────────────────────────────────────────
@@ -384,15 +192,7 @@ server.tool(
   'sync',
   'Sync latest transactions from Plaid for all connected accounts.',
   {},
-  async () => {
-    const results = await syncAll();
-    const lines = results.map(
-      (r) => `${r.itemId}: +${r.added} added, ${r.modified} modified, ${r.removed} removed, ${(r as any).dupes ?? 0} dupes removed`
-    );
-    const total = results.reduce((s, r) => s + r.added, 0);
-    lines.push(`\nTotal new transactions: ${total}`);
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  () => run('sync', {}),
 );
 
 // ── uncategorized_summary ─────────────────────────────────────────────────────
@@ -403,21 +203,7 @@ server.tool(
   {
     limit: z.number().int().min(1).max(100).default(30),
   },
-  async ({ limit }) => {
-    const rows = db.prepare(`
-      SELECT name, COUNT(*) as count
-      FROM transactions
-      WHERE category = 'Uncategorized' AND ignored = 0
-      GROUP BY name
-      ORDER BY count DESC
-      LIMIT ?
-    `).all(limit) as { name: string; count: number }[];
-
-    if (rows.length === 0) return { content: [{ type: 'text', text: 'No uncategorized transactions.' }] };
-
-    const lines = rows.map((r) => `${String(r.count).padStart(4)}x  ${r.name}`);
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  (input) => run('uncategorized_summary', input),
 );
 
 // ── list_tags ─────────────────────────────────────────────────────────────────
@@ -426,19 +212,7 @@ server.tool(
   'list_tags',
   'List all tags with transaction counts.',
   {},
-  async () => {
-    const rows = db.prepare(`
-      SELECT t.name, COUNT(tt.transaction_id) as count
-      FROM tags t
-      LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
-      GROUP BY t.id
-      ORDER BY t.name
-    `).all() as { name: string; count: number }[];
-
-    if (rows.length === 0) return { content: [{ type: 'text', text: 'No tags defined.' }] };
-    const lines = rows.map((r) => `${r.name.padEnd(30)} ${r.count} transaction${r.count !== 1 ? 's' : ''}`);
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  () => run('list_tags', {}),
 );
 
 // ── tag_summary ───────────────────────────────────────────────────────────────
@@ -449,23 +223,7 @@ server.tool(
   {
     tag: z.string().describe('Tag name'),
   },
-  async ({ tag }) => {
-    const summary = getTagSummary(tag);
-
-    const lines = [
-      `## #${tag}`,
-      `- **Income:** $${summary.income.toFixed(2)}`,
-      `- **Expenses:** $${summary.expenses.toFixed(2)}`,
-      `- **Net:** ${summary.net >= 0 ? '+' : ''}$${summary.net.toFixed(2)}`,
-      '',
-      '### Spending by Category',
-      ...(summary.byCategory.length
-        ? summary.byCategory.map((c) => `- ${c.category}: $${c.total.toFixed(2)}`)
-        : ['No expense data for this tag.']),
-    ];
-
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  (input) => run('tag_summary', input),
 );
 
 // ── tag_transaction ───────────────────────────────────────────────────────────
@@ -478,23 +236,7 @@ server.tool(
     tag: z.string().describe('Tag name'),
     add: z.boolean().describe('true to add the tag, false to remove it'),
   },
-  async ({ id, tag, add }) => {
-    const tx = db.prepare('SELECT name FROM transactions WHERE id = ?').get(id) as { name: string } | undefined;
-    if (!tx) return { content: [{ type: 'text', text: `No transaction with id ${id}.` }] };
-
-    if (add) {
-      db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)').run(tag);
-      const tagRow = db.prepare('SELECT id FROM tags WHERE name = ?').get(tag) as { id: number };
-      db.prepare('INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)').run(id, tagRow.id);
-      return { content: [{ type: 'text', text: `Tagged "${tx.name}" with #${tag}` }] };
-    } else {
-      const tagRow = db.prepare('SELECT id FROM tags WHERE name = ?').get(tag) as { id: number } | undefined;
-      if (tagRow) {
-        db.prepare('DELETE FROM transaction_tags WHERE transaction_id = ? AND tag_id = ?').run(id, tagRow.id);
-      }
-      return { content: [{ type: 'text', text: `Removed #${tag} from "${tx.name}"` }] };
-    }
-  }
+  (input) => run('tag_transaction', input),
 );
 
 // ── get_balances ──────────────────────────────────────────────────────────────
@@ -503,80 +245,19 @@ server.tool(
   'get_balances',
   'Get current balances for all accounts, plus net worth, total cash (depository), and total liquid (depository + brokerage) amounts.',
   {},
-  async () => {
-    const b = getBalances();
-    if (b.accounts.length === 0) {
-      return { content: [{ type: 'text', text: 'No balance data available. Sync accounts first.' }] };
-    }
-
-    const assetLines = b.accounts
-      .filter((a) => a.isAsset)
-      .map((a) => `  ${a.name.padEnd(32).slice(0, 32)}  $${a.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(12)}  (${a.subtype ?? a.type})`);
-
-    const liabLines = b.accounts
-      .filter((a) => a.isLiability)
-      .map((a) => `  ${a.name.padEnd(32).slice(0, 32)}  $${a.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).padStart(12)}`);
-
-    const fmt = (n: number) => `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-    const lines = [
-      '## Current Balances',
-      '',
-      '### Assets',
-      ...assetLines,
-      `  ${'Total assets'.padEnd(32)}  ${fmt(b.totalAssets).padStart(13)}`,
-      '',
-      '### Liabilities',
-      ...(liabLines.length ? liabLines : ['  (none)']),
-      `  ${'Total liabilities'.padEnd(32)}  ${fmt(b.totalLiabilities).padStart(13)}`,
-      '',
-      '### Summary',
-      `- Net Worth:  ${b.netWorth >= 0 ? '+' : '-'}${fmt(b.netWorth)}`,
-      `- Cash (checking/savings):  ${fmt(b.cash)}`,
-      `- Liquid (incl. brokerage): ${fmt(b.liquid)}`,
-    ];
-
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  () => run('get_balances', {}),
 );
 
 // ── get_financial_health ──────────────────────────────────────────────────────
 
 server.tool(
   'get_financial_health',
-  'Get financial health metrics: cash and liquid runway, FIRE number and progress, estimated years to retirement. Uses last 12 months of transactions for spending/savings averages.',
+  'Get financial health metrics: cash and liquid runway, FIRE number and progress, estimated years to retirement.',
   {
     withdrawal_rate: z.number().min(0.5).max(10).default(4).describe('Safe withdrawal rate % (default 4)'),
     growth_rate:     z.number().min(0).max(20).default(7).describe('Expected annual growth rate % (default 7)'),
   },
-  async ({ withdrawal_rate, growth_rate }) => {
-    const h = getFinancialHealth(withdrawal_rate, growth_rate);
-
-    const fmt  = (n: number) => `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-    const fmtM = (n: number) => Number.isFinite(n) && n < 999 ? `${n.toFixed(1)} months` : '∞';
-    const pct  = (n: number) => `${(n * 100).toFixed(1)}%`;
-
-    const lines = [
-      '## Financial Health',
-      '',
-      '### Runway',
-      `- Cash runway:   ${fmtM(h.cashRunwayMonths)}  (${fmt(h.cash)} in checking/savings)`,
-      `- Liquid runway: ${fmtM(h.liquidRunwayMonths)}  (${fmt(h.liquid)} incl. brokerage)`,
-      '',
-      '### Averages (last 12 months)',
-      `- Monthly expenses: ${fmt(h.avgMonthlyExpenses)}`,
-      `- Monthly savings:  ${fmt(h.avgMonthlySavings)}`,
-      '',
-      '### FIRE',
-      `- Net worth:    ${h.netWorth >= 0 ? '+' : '-'}${fmt(h.netWorth)}`,
-      `- FIRE number:  ${fmt(h.fireNumber)}  (${h.avgMonthlyExpenses * 12 > 0 ? `${fmt(h.avgMonthlyExpenses * 12)}/yr ÷ ${withdrawal_rate}%` : 'n/a'})`,
-      `- Progress:     ${pct(h.fireProgress)}`,
-      `- Years to FIRE: ${h.yearsToFire === null ? '100+' : h.yearsToFire === 0 ? 'Achieved!' : `~${Math.ceil(h.yearsToFire)} years`}`,
-      `- Assumptions: ${withdrawal_rate}% withdrawal, ${growth_rate}% growth`,
-    ];
-
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  (input) => run('get_financial_health', input),
 );
 
 // ── get_trends ────────────────────────────────────────────────────────────────
@@ -588,43 +269,7 @@ server.tool(
     months:   z.number().int().min(1).max(60).default(12).describe('Number of months to look back (default 12)'),
     category: z.string().optional().describe('Category name to track (optional; omit for overall)'),
   },
-  async ({ months, category }) => {
-    const rows = getSpendingTrends(months, category);
-    if (rows.length === 0) return { content: [{ type: 'text', text: 'No data.' }] };
-
-    const fmt = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-
-    const header = category
-      ? `## ${category} — Monthly Trend (last ${months} months)`
-      : `## Spending Trend (last ${months} months)`;
-
-    const lines = [header, ''];
-
-    if (category) {
-      lines.push(`${'Month'.padEnd(12)}  ${'Category'.padStart(10)}  ${'Expenses'.padStart(10)}  ${'Income'.padStart(10)}  ${'Net'.padStart(10)}`);
-      lines.push('─'.repeat(58));
-      for (const r of rows) {
-        lines.push(
-          `${r.label.padEnd(12)}  ${fmt(r.categoryTotal ?? 0).padStart(10)}  ${fmt(r.expenses).padStart(10)}  ${fmt(r.income).padStart(10)}  ${(r.net >= 0 ? '+' : '') + fmt(r.net).padStart(9)}`
-        );
-      }
-    } else {
-      lines.push(`${'Month'.padEnd(12)}  ${'Expenses'.padStart(10)}  ${'Income'.padStart(10)}  ${'Net'.padStart(10)}`);
-      lines.push('─'.repeat(48));
-      for (const r of rows) {
-        lines.push(
-          `${r.label.padEnd(12)}  ${fmt(r.expenses).padStart(10)}  ${fmt(r.income).padStart(10)}  ${(r.net >= 0 ? '+' : '') + fmt(r.net).padStart(9)}`
-        );
-      }
-    }
-
-    const avgExp = rows.reduce((s, r) => s + r.expenses, 0) / rows.length;
-    const avgInc = rows.reduce((s, r) => s + r.income,   0) / rows.length;
-    lines.push('');
-    lines.push(`Averages over ${rows.length} months: expenses ${fmt(avgExp)}/mo, income ${fmt(avgInc)}/mo`);
-
-    return { content: [{ type: 'text', text: lines.join('\n') }] };
-  }
+  (input) => run('get_trends', input),
 );
 
 // ── get_finance_guide ─────────────────────────────────────────────────────────
@@ -639,25 +284,7 @@ server.tool(
       'housing', 'car', 'insurance',
     ]).optional().describe('Specific topic (omit for topic list overview)'),
   },
-  async ({ topic }) => {
-    if (!topic) {
-      const topics = getFinanceTopicList();
-      const lines = [
-        '## Personal Finance Guide — Topics',
-        '',
-        ...topics.map((t) => `- **${t.topic}** — ${t.title}: ${t.summary}`),
-        '',
-        'Call get_finance_guide with a topic name for detailed guidance.',
-      ];
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
-    }
-
-    const section = getFinanceGuide(topic as GuideTopic);
-    if (Array.isArray(section)) {
-      return { content: [{ type: 'text', text: formatFullGuide() }] };
-    }
-    return { content: [{ type: 'text', text: formatGuideSection(section) }] };
-  }
+  (input) => run('get_finance_guide', input),
 );
 
 // ── start ─────────────────────────────────────────────────────────────────────
