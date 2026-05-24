@@ -3,44 +3,18 @@ import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
 import { rebuildDisplayNames } from '../core/rename.js';
+import { getTransactions, getAllCategories, getDataBounds, type TxRow, type SortMode } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
 
-function getCategories(): string[] {
-  return (db.prepare('SELECT name FROM categories ORDER BY name').all() as { name: string }[]).map((r) => r.name);
-}
-
-type Tx = {
-  id: string;
-  date: string;
-  name: string;
-  display_name: string | null;
-  merchant_name: string | null;
-  amount: number;
-  category: string;
-  manual_category: string | null;
-  ignored: number;
-  tag_names: string | null;
-};
+type Tx = TxRow;
 
 type TagOption = { id: number; name: string };
 
 type Mode = 'list' | 'search' | 'edit' | 'edit-rule' | 'tag' | 'tag-all' | 'edit-all';
 type EditField = 'name' | 'category';
-type SortMode = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
 
 const SORT_CYCLE: SortMode[] = ['date-desc', 'date-asc', 'name-asc', 'name-desc', 'amount-desc', 'amount-asc', 'category-asc', 'category-desc'];
-
-const SORT_ORDER_BY: Record<SortMode, string> = {
-  'date-desc':     't.date DESC, t.id DESC',
-  'date-asc':      't.date ASC, t.id ASC',
-  'amount-desc':   't.amount DESC',
-  'amount-asc':    't.amount ASC',
-  'name-asc':      'COALESCE(t.display_name, t.name) ASC',
-  'name-desc':     'COALESCE(t.display_name, t.name) DESC',
-  'category-asc':  't.category ASC, t.date DESC',
-  'category-desc': 't.category DESC, t.date DESC',
-};
 
 const SORT_LABEL: Record<SortMode, string> = {
   'date-desc':     'date ↓', 'date-asc':      'date ↑',
@@ -48,36 +22,6 @@ const SORT_LABEL: Record<SortMode, string> = {
   'name-asc':      'name ↑', 'name-desc':     'name ↓',
   'category-asc':  'category ↑', 'category-desc': 'category ↓',
 };
-
-function getTxs(category: string | null, from: string | null, to: string | null, search: string, tag: string | null, account: string | null, sort: SortMode): Tx[] {
-  const conditions: string[] = [];
-  const args: (string | number)[] = [];
-
-  if (category) { conditions.push('t.category = ?'); args.push(category); }
-  if (from && to) {
-    conditions.push('t.date >= ? AND t.date <= ?');
-    args.push(from, to);
-  }
-  if (search) {
-    conditions.push('(t.name LIKE ? OR t.display_name LIKE ? OR t.merchant_name LIKE ?)');
-    args.push(`%${search}%`, `%${search}%`, `%${search}%`);
-  }
-  if (tag) {
-    conditions.push('EXISTS (SELECT 1 FROM transaction_tags tt JOIN tags tg ON tg.id = tt.tag_id WHERE tt.transaction_id = t.id AND tg.name = ?)');
-    args.push(tag);
-  }
-  if (account) { conditions.push('t.account_id = ?'); args.push(account); }
-
-  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-  return db.prepare(`
-    SELECT t.id, t.date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored,
-      (SELECT GROUP_CONCAT(tg2.name, ', ') FROM transaction_tags tt2 JOIN tags tg2 ON tg2.id = tt2.tag_id WHERE tt2.transaction_id = t.id) as tag_names
-    FROM transactions t
-    ${where}
-    ORDER BY ${SORT_ORDER_BY[sort]}
-    LIMIT 200
-  `).all(...args) as Tx[];
-}
 
 function fmt(amount: number) {
   const s = `$${Math.abs(amount).toFixed(2)}`;
@@ -143,7 +87,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
   const [statusMsg, setStatusMsg] = useState('');
-  const [categories, setCategories] = useState<string[]>(getCategories);
+  const [categories, setCategories] = useState<string[]>(getAllCategories);
 
   // Edit panel state
   const [editField, setEditField] = useState<EditField>('name');
@@ -159,7 +103,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
   const [tagInput, setTagInput] = useState('');
 
   function load(s = search, keepCursor = false) {
-    const rows = getTxs(category, from, to, s, tag, account, sort);
+    const rows = getTransactions({ category, from, to, search: s, tag, account, sort });
     setTxs(rows);
     if (!keepCursor) setCursor(0);
     else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
@@ -171,7 +115,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
 
   function openEdit() {
     if (!selected) return;
-    const cats = getCategories();
+    const cats = getAllCategories();
     setCategories(cats);
     setEditName('');
     setEditCatCursor(Math.max(0, cats.indexOf(selected.category)));
@@ -446,7 +390,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
       if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
       if (input === 'e' && selected) openEdit();
       if (input === 'E' && txs.length > 0) {
-        const cats = getCategories();
+        const cats = getAllCategories();
         setCategories(cats);
         setEditCatCursor(0);
         setMode('edit-all');

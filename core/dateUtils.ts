@@ -50,6 +50,69 @@ export function navigatePeriod(range: Range, anchor: Date, delta: -1 | 1): Date 
   return d;
 }
 
+export function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+export function weekLabel(from: string, to: string): string {
+  const d1 = new Date(from + 'T12:00:00');
+  const d2 = new Date(to + 'T12:00:00');
+  const m1 = MONTHS[d1.getMonth()]; const m2 = MONTHS[d2.getMonth()];
+  if (m1 === m2) return `${m1} ${d1.getDate()}–${d2.getDate()} ${d1.getFullYear()}`;
+  if (d1.getFullYear() === d2.getFullYear()) return `${m1} ${d1.getDate()} – ${m2} ${d2.getDate()} ${d1.getFullYear()}`;
+  return `${m1} ${d1.getDate()} ${d1.getFullYear()} – ${m2} ${d2.getDate()} ${d2.getFullYear()}`;
+}
+
+export type TrendsRange = 'week' | 'month' | 'quarter' | 'year';
+
+const Q_FROM = ['01', '04', '07', '10'];
+const Q_TO   = ['03', '06', '09', '12'];
+
+export function generatePeriods(
+  range: TrendsRange,
+  from: string,
+  to: string,
+): Array<{ label: string; from: string; to: string }> {
+  const result: Array<{ label: string; from: string; to: string }> = [];
+
+  if (range === 'month') {
+    let y = parseInt(from.slice(0, 4));
+    let m = parseInt(from.slice(5, 7));
+    const endY = parseInt(to.slice(0, 4));
+    const endM = parseInt(to.slice(5, 7));
+    while (y < endY || (y === endY && m <= endM)) {
+      result.push({ label: `${MONTHS[m - 1]} ${y}`, from: `${y}-${pad(m)}-01`, to: `${y}-${pad(m)}-31` });
+      if (++m > 12) { m = 1; y++; }
+    }
+  } else if (range === 'quarter') {
+    let y = parseInt(from.slice(0, 4));
+    let q = Math.floor((parseInt(from.slice(5, 7)) - 1) / 3) + 1;
+    const endY = parseInt(to.slice(0, 4));
+    const endQ = Math.floor((parseInt(to.slice(5, 7)) - 1) / 3) + 1;
+    while (y < endY || (y === endY && q <= endQ)) {
+      result.push({ label: `Q${q} ${y}`, from: `${y}-${Q_FROM[q - 1]}-01`, to: `${y}-${Q_TO[q - 1]}-31` });
+      if (++q > 4) { q = 1; y++; }
+    }
+  } else if (range === 'year') {
+    let y = parseInt(from.slice(0, 4));
+    const endY = parseInt(to.slice(0, 4));
+    while (y <= endY) {
+      result.push({ label: `${y}`, from: `${y}-01-01`, to: `${y}-12-31` });
+      y++;
+    }
+  } else {
+    let current = from;
+    while (current <= to) {
+      const end = addDays(current, 6);
+      result.push({ label: weekLabel(current, end), from: current, to: end });
+      current = addDays(current, 7);
+    }
+  }
+  return result;
+}
+
 export function formatPeriodLabel(range: Range, anchor: Date): string {
   switch (range) {
     case 'week': {

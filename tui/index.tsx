@@ -1,4 +1,7 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+config({ path: join(homedir(), '.fungible', '.env') });
 import React from 'react';
 import { render } from 'ink';
 import { initDb } from '../core/db.js';

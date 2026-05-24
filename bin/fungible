@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -e
+
+# Resolve symlinks so this works whether invoked directly or via brew/npm link
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  [[ "$SCRIPT_SOURCE" != /* ]] && SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE"
+done
+PACKAGE_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")/.." && pwd)"
+
+exec node --experimental-sqlite --no-warnings \
+  --import "$PACKAGE_DIR/node_modules/tsx/esm/index.js" \
+  "$PACKAGE_DIR/tui/index.tsx" "$@"

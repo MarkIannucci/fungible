@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
+import { addDays, weekLabel, type TrendsRange } from '../core/dateUtils.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
@@ -13,7 +14,6 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const Q_FROM = ['01', '04', '07', '10'];
 const Q_TO   = ['03', '06', '09', '12'];
 
-type TrendsRange = 'week' | 'month' | 'quarter' | 'year';
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
 const RANGE_LABELS: Record<TrendsRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
 
@@ -56,21 +56,6 @@ function buildViews(): View[] {
     { mode: 'flex',          category: null, flex: 'discretionary', label: 'Discretionary' },
     ...cats.map((r) => ({ mode: 'category' as ViewMode, category: r.category, flex: null, label: r.category })),
   ];
-}
-
-function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr + 'T12:00:00');
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function weekLabel(from: string, to: string): string {
-  const d1 = new Date(from + 'T12:00:00');
-  const d2 = new Date(to + 'T12:00:00');
-  const m1 = MONTHS[d1.getMonth()]; const m2 = MONTHS[d2.getMonth()];
-  if (m1 === m2) return `${m1} ${d1.getDate()}–${d2.getDate()} ${d1.getFullYear()}`;
-  if (d1.getFullYear() === d2.getFullYear()) return `${m1} ${d1.getDate()} – ${m2} ${d2.getDate()} ${d1.getFullYear()}`;
-  return `${m1} ${d1.getDate()} ${d1.getFullYear()} – ${m2} ${d2.getDate()} ${d2.getFullYear()}`;
 }
 
 // Returns all periods in the DB date range, so we always show a consistent row count.

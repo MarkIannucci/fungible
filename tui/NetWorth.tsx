@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Text, useInput } from 'ink';
-import { db } from '../core/db.js';
+import { getAccountsWithBalances, type AccountBalance, type HistoryRow } from '../core/queries.js';
 import type { Screen } from './App.js';
 import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
@@ -8,55 +8,13 @@ import { NavHints, handleNavKey } from './nav.js';
 const BAR_WIDTH = 32;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-type AccountBalance = {
-  name: string;
-  nickname: string | null;
-  type: string;
-  subtype: string | null;
-  balance: number;
-};
-
 type TypeBalance = { label: string; balance: number };
 
 type ViewMode = 'accounts' | 'types';
 
-type HistoryRow = {
-  date: string;
-  assets: number;
-  liabilities: number;
-  net: number;
-};
-
 function dateLabel(d: string) {
   const dt = new Date(d + 'T12:00:00');
   return `${MONTHS[dt.getMonth()]} ${dt.getDate()} ${dt.getFullYear()}`;
-}
-
-function loadData(): { accounts: AccountBalance[]; history: HistoryRow[] } {
-  const accounts = db.prepare(`
-    SELECT a.name, a.nickname, a.type, a.subtype, bh.balance
-    FROM accounts a
-    JOIN balance_history bh ON bh.account_id = a.id
-    WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
-    ORDER BY
-      CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 ELSE 2 END,
-      bh.balance DESC
-  `).all() as AccountBalance[];
-
-  const history = (db.prepare(`
-    SELECT bh.date,
-      SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END) as assets,
-      SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END) as liabilities
-    FROM balance_history bh
-    JOIN accounts a ON a.id = bh.account_id
-    GROUP BY bh.date
-    ORDER BY bh.date
-  `).all() as { date: string; assets: number; liabilities: number }[]).map((r) => ({
-    ...r,
-    net: r.assets - r.liabilities,
-  }));
-
-  return { accounts, history };
 }
 
 function groupByType(accs: AccountBalance[]): TypeBalance[] {
@@ -71,7 +29,7 @@ function groupByType(accs: AccountBalance[]): TypeBalance[] {
 }
 
 export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => void; isActive?: boolean }) {
-  const { accounts, history } = loadData();
+  const { accounts, history } = getAccountsWithBalances();
   const [view, setView] = React.useState<ViewMode>('accounts');
 
   useInput((input, key) => {

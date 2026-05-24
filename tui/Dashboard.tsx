@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { getRangeSummary, getFlexSummary, type MonthlySummary, type FlexSummary } from '../core/queries.js';
+import { getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, type MonthlySummary, type FlexSummary, type AccountRow } from '../core/queries.js';
 import { db } from '../core/db.js';
 import {
   getPeriodStart, getPeriodDates, navigatePeriod, formatPeriodLabel,
@@ -17,27 +17,6 @@ type DashView = 'categories' | 'flex' | 'account';
 function pct(part: number, total: number) {
   if (total === 0) return '0%';
   return `${Math.round((part / total) * 100)}%`;
-}
-
-function getUncategorizedCount(from: string, to: string, accountId?: string) {
-  const where = accountId ? 'AND account_id = ?' : '';
-  const args = accountId ? [from, to, accountId] : [from, to];
-  return (db.prepare(`
-    SELECT COUNT(*) as c FROM transactions
-    WHERE category = 'Uncategorized' AND pending = 0 AND ignored = 0
-      AND date >= ? AND date <= ? ${where}
-  `).get(...args) as { c: number }).c;
-}
-
-function getDataBounds() {
-  const row = db.prepare(`
-    SELECT MIN(date) as minDate, MAX(date) as maxDate
-    FROM transactions WHERE pending = 0 AND ignored = 0
-  `).get() as { minDate: string | null; maxDate: string | null } | null;
-  return {
-    minDate: row?.minDate ?? '2000-01-01',
-    maxDate: row?.maxDate ?? '2099-12-31',
-  };
 }
 
 function getFilteredRangeSummary(from: string, to: string, accountId: string): MonthlySummary {
@@ -76,24 +55,6 @@ function getFilteredFlexSummary(from: string, to: string, accountId: string): Fl
       AND t.pending = 0 AND t.ignored = 0
       AND t.category NOT IN (SELECT category FROM hidden_categories)
   `).get(from, to, accountId) as FlexSummary;
-}
-
-type AccountRow = { id: string; name: string; subtype: string | null; spending: number; income: number };
-
-function getAccountRows(from: string, to: string): AccountRow[] {
-  return db.prepare(`
-    SELECT a.id, a.name, a.subtype,
-      COALESCE(SUM(CASE WHEN t.amount > 0 AND t.date >= ? AND t.date <= ?
-                        AND t.pending = 0 AND t.ignored = 0
-                        AND t.category != 'Transfer' THEN t.amount ELSE 0 END), 0) as spending,
-      COALESCE(-SUM(CASE WHEN t.amount < 0 AND t.date >= ? AND t.date <= ?
-                         AND t.pending = 0 AND t.ignored = 0
-                         AND t.category != 'Transfer' THEN t.amount ELSE 0 END), 0) as income
-    FROM accounts a
-    LEFT JOIN transactions t ON t.account_id = a.id
-    GROUP BY a.id, a.name, a.subtype
-    ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 ELSE 2 END, spending DESC
-  `).all(from, to, from, to) as AccountRow[];
 }
 
 const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }> = [

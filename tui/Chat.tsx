@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { runAgentTurn } from '../core/agent.js';
 import type { Message } from '../core/llm-provider.js';
 import { detectProvider, getProviderModel } from '../core/llm-provider.js';
+import { truncate } from '../core/fmt.js';
 import type { Screen, TxFilter } from './App.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -28,10 +29,6 @@ function providerLabel(): string {
   } catch {
     return 'no key set';
   }
-}
-
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────

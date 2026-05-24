@@ -3,13 +3,11 @@ import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
 import { rebuildDisplayNames } from '../core/rename.js';
+import { getAllRules, getAllNameRules, getAllCategories, getCategoryDetails, getHiddenCategorySet, toggleHiddenCategory, type Rule, type NameRule, type CategoryDetail } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
 import { Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 
-type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null };
-type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null };
-type CategoryDetail = { name: string; flexibility: 'fixed' | 'flexible' | 'discretionary' | null };
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
 const FLEX_COLORS: Record<string, string> = { fixed: 'red', flexible: 'yellow', discretionary: 'cyan' };
@@ -18,31 +16,8 @@ type Section = 'rules' | 'names' | 'categories';
 
 const SECTIONS: Section[] = ['rules', 'names', 'categories'];
 
-function getRules(): Rule[] {
-  return db.prepare('SELECT id, priority, match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC, id ASC').all() as Rule[];
-}
-function getNameRules(): NameRule[] {
-  return db.prepare('SELECT id, match_type, pattern, replacement, min_amount, max_amount FROM name_rules ORDER BY id ASC').all() as NameRule[];
-}
-function getCategories(): string[] {
-  return (db.prepare('SELECT name FROM categories ORDER BY name').all() as { name: string }[]).map((r) => r.name);
-}
-function getCategoryDetails(): CategoryDetail[] {
-  return db.prepare('SELECT name, flexibility FROM categories ORDER BY name').all() as CategoryDetail[];
-}
 function getUncategorizedCount() {
   return (db.prepare("SELECT COUNT(*) as c FROM transactions WHERE category = 'Uncategorized'").get() as { c: number }).c;
-}
-function getHiddenSet(): Set<string> {
-  const rows = db.prepare('SELECT category FROM hidden_categories').all() as { category: string }[];
-  return new Set(rows.map((r) => r.category));
-}
-function toggleHidden(category: string, hidden: Set<string>) {
-  if (hidden.has(category)) {
-    db.prepare('DELETE FROM hidden_categories WHERE category = ?').run(category);
-  } else {
-    db.prepare('INSERT OR IGNORE INTO hidden_categories (category) VALUES (?)').run(category);
-  }
 }
 
 export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean }) {
@@ -83,11 +58,11 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
   const [search, setSearch] = useState('');
 
   function load() {
-    setRules(getRules());
-    setNameRules(getNameRules());
+    setRules(getAllRules());
+    setNameRules(getAllNameRules());
     setUncategorized(getUncategorizedCount());
-    setHiddenSet(getHiddenSet());
-    setCategories(getCategories());
+    setHiddenSet(getHiddenCategorySet());
+    setCategories(getAllCategories());
     setCatDetails(getCategoryDetails());
   }
 
@@ -231,7 +206,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
         if (input === 'a') { setNewCategoryName(''); setMode('add-category-name'); return; }
         if (input === 'h' && categories[catListCursor]) {
           const cat = categories[catListCursor];
-          toggleHidden(cat, hiddenSet);
+          toggleHiddenCategory(cat, hiddenSet);
           setStatusMsg(`${cat} is now ${hiddenSet.has(cat) ? 'visible' : 'hidden'}`);
           setTimeout(() => setStatusMsg(''), 2000);
           load();

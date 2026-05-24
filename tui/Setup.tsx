@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { seedRules } from '../core/seed-rules.js';
@@ -19,8 +20,10 @@ type Step =
 type PlaidEnv = 'sandbox' | 'development' | 'production';
 const PLAID_ENVS: PlaidEnv[] = ['sandbox', 'development', 'production'];
 
+const ENV_PATH = path.join(os.homedir(), '.fungible', '.env');
+
 function readEnv(): Record<string, string> {
-  const envPath = path.join(process.cwd(), '.env');
+  const envPath = ENV_PATH;
   const out: Record<string, string> = {};
   if (!fs.existsSync(envPath)) return out;
   for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
@@ -31,7 +34,7 @@ function readEnv(): Record<string, string> {
 }
 
 function writeEnv(values: Record<string, string>) {
-  const envPath = path.join(process.cwd(), '.env');
+  const envPath = ENV_PATH;
   const existing = readEnv();
   const merged = { ...existing, ...values };
   const content = Object.entries(merged).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
@@ -297,7 +300,7 @@ export function Setup() {
             <Text dimColor>{seedResult.rules} rules seeded · {seedResult.recategorized} transactions recategorized</Text>
           )}
           <Box marginTop={1} flexDirection="column">
-            <Text>Run <Text color="cyan">npm run dev</Text> to launch fungible.</Text>
+            <Text>Run <Text color="cyan">fungible</Text> to launch.</Text>
           </Box>
           <Box marginTop={1}><Text dimColor>Press Enter to exit</Text></Box>
         </Box>

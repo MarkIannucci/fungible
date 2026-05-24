@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import fs from 'node:fs';
-import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
 import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
+import { parseCSV, parseDate, generateTxId } from '../core/csv.js';
+import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
@@ -36,19 +36,6 @@ type AddStep =
   | 'manual-confirm'
   | 'manual-done';
 
-type CsvAccount = { id: string; name: string; mask: string | null };
-
-type LinkedAccount = {
-  id: string;
-  name: string;
-  nickname: string | null;
-  type: string;
-  subtype: string | null;
-  institution_name: string | null;
-  mask: string | null;
-  last_synced: string | null;
-};
-
 const ACCOUNT_TYPES = ['depository', 'investment', 'credit', 'loan', 'other'] as const;
 
 const SUBTYPES: Record<string, string[]> = {
@@ -67,47 +54,6 @@ function fmtDate(d: string | null): string {
   if (!d) return 'never';
   const dt = new Date(d + 'T12:00:00');
   return `${MONTHS[dt.getMonth()]} ${dt.getDate()}`;
-}
-
-function getLinkedAccounts(): LinkedAccount[] {
-  return db.prepare(`
-    SELECT a.id, a.name, a.nickname, a.type, a.subtype, a.institution_name, a.mask,
-      (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
-    FROM accounts a
-    ORDER BY
-      CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END,
-      a.name
-  `).all() as LinkedAccount[];
-}
-
-function getCsvAccounts(): CsvAccount[] {
-  return db.prepare('SELECT id, name, mask FROM accounts').all() as CsvAccount[];
-}
-
-function parseCSV(filePath: string): { headers: string[]; rows: string[][] } {
-  const text = fs.readFileSync(filePath, 'utf8').trim();
-  const lines = text.split('\n');
-  const parse = (line: string) =>
-    line.match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g)?.map((v) => v.replace(/^"|"$/g, '').trim()) ?? [];
-  const headers = parse(lines[0]);
-  const rows = lines.slice(1).filter(Boolean).map(parse);
-  return { headers, rows };
-}
-
-function txId(mask: string, date: string, name: string, amount: number) {
-  return 'csv-' + crypto.createHash('sha1')
-    .update(`${mask}|${date}|${name.trim().toLowerCase()}|${amount}`)
-    .digest('hex').slice(0, 16);
-}
-
-function parseDate(raw: string): string {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(raw)) {
-    const [m, d, y] = raw.split('/');
-    const fullYear = y.length === 2 ? (parseInt(y) < 50 ? `20${y}` : `19${y}`) : y;
-    return `${fullYear}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-  }
-  return raw;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -332,7 +278,7 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
       if (!rawDate || !name || isNaN(amount)) { skipped++; continue; }
       const date = parseDate(rawDate);
       const category = categorize(name, null, null);
-      const id = txId(acct.mask ?? acct.id, date, name, amount);
+      const id = generateTxId(acct.mask ?? acct.id, date, name, amount);
       const changes = (insert.run(id, acct.id, date, name, amount, category) as any).changes;
       if (changes > 0) imported++; else skipped++;
     }

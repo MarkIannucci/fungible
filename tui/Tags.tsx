@@ -1,23 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
-import { getTagSummary, type MonthlySummary } from '../core/queries.js';
+import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 
-type Tag = { id: number; name: string; count: number };
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
-
-function getTags(): Tag[] {
-  return db.prepare(`
-    SELECT t.id, t.name, COUNT(tt.transaction_id) as count
-    FROM tags t
-    LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
-    GROUP BY t.id
-    ORDER BY t.name
-  `).all() as Tag[];
-}
 
 export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean }) {
   const [tags, setTags] = useState<Tag[]>([]);
@@ -29,7 +18,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
   const [tagSummary, setTagSummary] = useState<MonthlySummary | null>(null);
   const [catCursor, setCatCursor] = useState(0);
 
-  function load() { setTags(getTags()); }
+  function load() { setTags(getAllTags()); }
   useEffect(() => { load(); }, []);
 
   function openDetail(tag: Tag) {

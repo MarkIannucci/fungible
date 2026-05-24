@@ -1,131 +1,26 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { db } from '../core/db.js';
 import type { Screen } from './App.js';
 import { Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
+import { loadHealthData, yearsToFire, coastYears, savingsRateColor, runwayColor, type HealthData } from '../core/health.js';
+import { fmt, fmtPct, fmtMonths } from '../core/fmt.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DEFAULT_WITHDRAWAL = 4.0;
-const DEFAULT_GROWTH = 7.0;
-const SPEND_STEP = 100;
-const WITHDRAW_STEP = 0.5;
-const GROWTH_STEP = 1.0;
-const PROGRESS_BAR_WIDTH = 22;
+const DEFAULT_WITHDRAWAL    = 4.0;
+const DEFAULT_GROWTH        = 7.0;
+const SPEND_STEP            = 100;
+const WITHDRAW_STEP         = 0.5;
+const GROWTH_STEP           = 1.0;
+const PROGRESS_BAR_WIDTH    = 22;
 
 const DIALS = ['spend', 'savings', 'withdrawal', 'growth'] as const;
 type Dial = typeof DIALS[number];
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type HealthData = {
-  avgMonthlyExpenses: number;   // raw avg, not rounded
-  monthlySavings: number;       // avg monthly (income - expenses) past 12mo
-  cash: number;                 // depository accounts
-  liquid: number;               // depository + brokerage
-  netWorth: number;             // all assets - liabilities
-};
-
-// ─── Data loading ─────────────────────────────────────────────────────────────
-
-function loadHealthData(): HealthData {
-  const expRow = db.prepare(`
-    SELECT
-      COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) / 12.0  AS avg_expenses,
-      COALESCE(
-        -SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END) -
-         SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),
-        0
-      ) / 12.0 AS avg_savings
-    FROM transactions
-    WHERE date >= date('now', '-12 months')
-      AND pending = 0 AND ignored = 0
-      AND category NOT IN (SELECT category FROM hidden_categories)
-      AND category != 'Transfer'
-  `).get() as { avg_expenses: number; avg_savings: number };
-
-  const cashRow = db.prepare(`
-    SELECT COALESCE(SUM(bh.balance), 0) AS cash
-    FROM accounts a
-    JOIN balance_history bh ON bh.account_id = a.id
-    WHERE a.type = 'depository'
-      AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
-  `).get() as { cash: number };
-
-  // Liquid = cash + brokerage (not retirement accounts)
-  const liquidRow = db.prepare(`
-    SELECT COALESCE(SUM(bh.balance), 0) AS liquid
-    FROM accounts a
-    JOIN balance_history bh ON bh.account_id = a.id
-    WHERE (
-      a.type = 'depository'
-      OR (a.type = 'investment' AND LOWER(COALESCE(a.subtype, ''))
-          IN ('brokerage', 'cash isa', 'non-taxable brokerage account'))
-    )
-    AND bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
-  `).get() as { liquid: number };
-
-  const nwRow = db.prepare(`
-    SELECT
-      COALESCE(SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END), 0) -
-      COALESCE(SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END), 0) AS net_worth
-    FROM accounts a
-    JOIN balance_history bh ON bh.account_id = a.id
-    WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
-  `).get() as { net_worth: number };
-
-  return {
-    avgMonthlyExpenses: expRow.avg_expenses,
-    monthlySavings: expRow.avg_savings,
-    cash: cashRow.cash,
-    liquid: liquidRow.liquid,
-    netWorth: nwRow.net_worth,
-  };
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmt(n: number, decimals = 0) {
-  return `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
-}
-
-function fmtPct(n: number) {
-  return `${n.toFixed(1)}%`;
-}
-
-function fmtMonths(n: number) {
-  if (!isFinite(n) || n > 999) return '∞';
-  return `${n.toFixed(1)} mo`;
-}
-
 function progressBar(ratio: number, width = PROGRESS_BAR_WIDTH) {
   const filled = Math.min(width, Math.max(0, Math.round(Math.min(1, ratio) * width)));
   return '█'.repeat(filled) + '░'.repeat(width - filled);
-}
-
-/** Iterate month by month to find years until wealth >= target. */
-function yearsToFire(
-  netWorth: number,
-  monthlySavings: number,
-  target: number,
-  annualGrowthPct: number,
-): number | null {
-  if (target <= 0) return 0;
-  if (netWorth >= target) return 0;
-  const r = Math.pow(1 + annualGrowthPct / 100, 1 / 12) - 1;
-  let wealth = netWorth;
-  for (let month = 1; month <= 1200; month++) {
-    wealth = wealth * (1 + r) + monthlySavings;
-    if (wealth >= target) return month / 12;
-  }
-  return null; // > 100 years
-}
-
-function runwayColor(months: number, green: number, yellow: number) {
-  if (months >= green) return 'green';
-  if (months >= yellow) return 'yellow';
-  return 'red';
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -133,15 +28,14 @@ function runwayColor(months: number, green: number, yellow: number) {
 export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => void; isActive?: boolean }) {
   const [data] = useState<HealthData>(loadHealthData);
 
-  // Round raw avg to nearest $500 as the default dial value
   const defaultSpend   = Math.max(SPEND_STEP, Math.round(data.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP);
   const defaultSavings = Math.round(data.monthlySavings / SPEND_STEP) * SPEND_STEP;
 
-  const [dialIdx, setDialIdx] = useState(0);
+  const [dialIdx, setDialIdx]           = useState(0);
   const [monthlySpend, setMonthlySpend] = useState(defaultSpend);
   const [monthlySavings, setMonthlySavings] = useState(defaultSavings);
-  const [withdrawal, setWithdrawal] = useState(DEFAULT_WITHDRAWAL);
-  const [growth, setGrowth] = useState(DEFAULT_GROWTH);
+  const [withdrawal, setWithdrawal]     = useState(DEFAULT_WITHDRAWAL);
+  const [growth, setGrowth]             = useState(DEFAULT_GROWTH);
 
   const currentDial: Dial = DIALS[dialIdx];
 
@@ -175,21 +69,30 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
     }
   }, { isActive: isActive !== false });
 
-  // ── Derived ────────────────────────────────────────────────────────────────
+  // ── Derived ─────────────────────────────────────────────────────────────────
   const cashMonths   = monthlySpend > 0 ? data.cash   / monthlySpend : 0;
   const liquidMonths = monthlySpend > 0 ? data.liquid / monthlySpend : 0;
 
-  const annualSpend  = monthlySpend * 12;
-  const fireNumber   = annualSpend / (withdrawal / 100);
-  const fireProgress = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
-  const years        = yearsToFire(data.netWorth, monthlySavings, fireNumber, growth);
+  const annualSpend    = monthlySpend * 12;
+  const fireNumber     = annualSpend / (withdrawal / 100);
+  const fireProgress   = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
+  const years          = yearsToFire(data.netWorth, monthlySavings, fireNumber, growth);
+  const coast          = coastYears(data.netWorth, fireNumber, growth);
+
+  const savingsRate = data.monthlyIncome > 0
+    ? (monthlySavings / data.monthlyIncome) * 100
+    : null;
+
+  const netCash        = data.cash - data.totalDebt;
+  const remainingDebt  = Math.max(0, data.totalDebt - data.cash);
+  const debtMonths     = monthlySavings > 0 ? remainingDebt / monthlySavings : null;
 
   const spendChanged    = monthlySpend !== defaultSpend;
   const savingsChanged  = monthlySavings !== defaultSavings;
   const withdrawChanged = withdrawal !== DEFAULT_WITHDRAWAL;
   const growthChanged   = growth !== DEFAULT_GROWTH;
 
-  const L = 18; // label column width
+  const L = 18;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
@@ -204,6 +107,39 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
         <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>
       </Box>
       <Divider />
+
+      {/* ── Snapshot ───────────────────────────────────────────────────────── */}
+      <Box flexDirection="column" marginTop={1}>
+        <Text bold dimColor>SNAPSHOT</Text>
+        <Box gap={3} marginTop={1}>
+          <Text dimColor>{'Savings rate'.padEnd(L)}</Text>
+          {savingsRate === null ? (
+            <Text dimColor>{'—'.padStart(8)}</Text>
+          ) : (
+            <Text bold color={savingsRateColor(savingsRate)}>
+              {fmtPct(savingsRate).padStart(8)}
+            </Text>
+          )}
+          <Text dimColor>
+            {savingsRate === null
+              ? 'no income found in transactions'
+              : savingsRate < 0
+                ? 'spending more than earning'
+                : savingsRate < 10
+                  ? 'aim for 20%+'
+                  : savingsRate < 20
+                    ? 'getting there — aim for 20%+'
+                    : savingsRate >= 50
+                      ? 'FIRE pace'
+                      : 'on track'}
+          </Text>
+        </Box>
+        <Box gap={3}>
+          <Text dimColor>{'Monthly income'.padEnd(L)}</Text>
+          <Text bold>{fmt(data.monthlyIncome).padStart(8)}</Text>
+          <Text dimColor>avg past 12 months</Text>
+        </Box>
+      </Box>
 
       {/* ── Runway ─────────────────────────────────────────────────────────── */}
       <Box flexDirection="column" marginTop={1}>
@@ -224,6 +160,39 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
         </Box>
       </Box>
 
+      {/* ── Debt (only shown if there is debt) ─────────────────────────────── */}
+      {data.totalDebt > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold dimColor>DEBT</Text>
+          <Box gap={3} marginTop={1}>
+            <Text dimColor>{'Net cash'.padEnd(L)}</Text>
+            <Text bold color={netCash >= 0 ? 'green' : 'red'}>
+              {(netCash < 0 ? '-' : '') + fmt(netCash).padStart(8)}
+            </Text>
+            <Text dimColor>
+              {netCash >= 0
+                ? `${fmt(data.cash)} cash · ${fmt(data.totalDebt)} debt — could pay off now`
+                : `${fmt(data.cash)} cash · ${fmt(data.totalDebt)} debt`}
+            </Text>
+          </Box>
+          {netCash < 0 && (
+            <Box gap={3}>
+              <Text dimColor>{'Debt-free in'.padEnd(L)}</Text>
+              {debtMonths === null ? (
+                <Text color="red">{'no surplus'.padStart(8)}</Text>
+              ) : (
+                <Text bold color={debtMonths <= 6 ? 'green' : debtMonths <= 24 ? 'yellow' : 'white'}>
+                  {fmtMonths(debtMonths).padStart(8)}
+                </Text>
+              )}
+              <Text dimColor>
+                {debtMonths !== null ? `${fmt(remainingDebt)} remaining after cash` : 'increase savings to pay off debt'}
+              </Text>
+            </Box>
+          )}
+        </Box>
+      )}
+
       {/* ── Retirement ─────────────────────────────────────────────────────── */}
       <Box flexDirection="column" marginTop={1}>
         <Text bold dimColor>RETIREMENT</Text>
@@ -238,6 +207,23 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
           <Text bold>{fmt(fireNumber).padStart(12)}</Text>
           <Text dimColor>  {fmtPct(fireProgress * 100)}</Text>
           <Text color="cyan" dimColor>{progressBar(fireProgress)}</Text>
+        </Box>
+        <Box gap={3}>
+          <Text dimColor>{'Coast FIRE'.padEnd(L)}</Text>
+          {coast === null ? (
+            <Text dimColor>{'—'.padStart(12)}</Text>
+          ) : coast === 0 ? (
+            <Text color="green" bold>{'Achieved!'.padStart(12)}</Text>
+          ) : (
+            <Text bold color="cyan">{`~${Math.ceil(coast)} yr`.padStart(12)}</Text>
+          )}
+          <Text dimColor>
+            {coast === null
+              ? 'need positive net worth'
+              : coast === 0
+                ? 'growth alone covers retirement'
+                : 'if you stop saving now'}
+          </Text>
         </Box>
         <Box gap={3}>
           <Text dimColor>{'Est. years away'.padEnd(L)}</Text>
@@ -256,7 +242,6 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
       <Text bold dimColor>ASSUMPTIONS</Text>
 
       <Box flexDirection="column" marginTop={1}>
-        {/* Monthly spending */}
         <Box gap={2}>
           <Text color={currentDial === 'spend' ? 'cyan' : undefined}>
             {currentDial === 'spend' ? '▶' : ' '} {'Monthly spending'.padEnd(16)}
@@ -271,7 +256,6 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
           </Text>
         </Box>
 
-        {/* Monthly savings */}
         <Box gap={2}>
           <Text color={currentDial === 'savings' ? 'cyan' : undefined}>
             {currentDial === 'savings' ? '▶' : ' '} {'Monthly savings'.padEnd(16)}
@@ -286,7 +270,6 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
           </Text>
         </Box>
 
-        {/* Withdrawal rate */}
         <Box gap={2}>
           <Text color={currentDial === 'withdrawal' ? 'cyan' : undefined}>
             {currentDial === 'withdrawal' ? '▶' : ' '} {'Withdrawal rate'.padEnd(16)}
@@ -301,7 +284,6 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
           </Text>
         </Box>
 
-        {/* Growth rate */}
         <Box gap={2}>
           <Text color={currentDial === 'growth' ? 'cyan' : undefined}>
             {currentDial === 'growth' ? '▶' : ' '} {'Growth rate'.padEnd(16)}
@@ -315,6 +297,7 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
               : `real annual return${growthChanged ? ' (modified)' : ''}`}
           </Text>
         </Box>
+
       </Box>
     </Box>
   );
