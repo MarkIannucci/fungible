@@ -222,7 +222,7 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
         </Text>
       </Box>
 
-      <Divider width={60} />
+      <Divider />
 
       {view === 'account' ? (
         <Box flexDirection="column" marginTop={1}>
@@ -282,7 +282,7 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
             )}
           </Box>
 
-          <Divider width={60} />
+          <Divider />
 
           {view === 'categories' ? (
             <Box flexDirection="column" marginTop={1}>

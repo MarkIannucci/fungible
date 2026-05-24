@@ -6,6 +6,7 @@ import { rebuildDisplayNames } from '../core/rename.js';
 import { getTransactions, getAllCategories, getDataBounds, type TxRow, type SortMode } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
 import { NavHints, handleNavKey } from './nav.js';
+import { Divider } from './fmt.js';
 
 type Tx = TxRow;
 
@@ -488,7 +489,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
           <Text dimColor>  Esc cancel</Text>
         </Box>
       )}
-      <Box marginTop={1}><Text dimColor>{'─'.repeat(80)}</Text></Box>
+      <Box marginTop={1}><Divider /></Box>
 
       <Box gap={2} marginTop={1}>
         <Text color={sort.startsWith('date') ? 'cyan' : undefined} dimColor={!sort.startsWith('date')}>
@@ -532,7 +533,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
         );
       })}
 
-      <Text dimColor>{'─'.repeat(80)}</Text>
+      <Divider />
       <Text dimColor>{txs.length} transactions{txs.length === 200 ? ' (limit 200)' : ''}</Text>
       {statusMsg && <Text color="green">{statusMsg}</Text>}
 

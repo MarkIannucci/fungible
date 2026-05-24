@@ -151,7 +151,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
             <Text dimColor>← → tag  ·  ↑↓ category  ·  Enter txns  ·  [t] all txns  ·  Esc back</Text>
           </Box>
 
-          <Divider width={60} />
+          <Divider />
 
           <Box gap={6} marginY={1}>
             <Box flexDirection="column">
@@ -174,7 +174,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
             </Box>
           </Box>
 
-          <Divider width={60} />
+          <Divider />
 
           <Box flexDirection="column" marginTop={1}>
             <Text bold dimColor>SPENDING BY CATEGORY</Text>
@@ -213,7 +213,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
               <Text dimColor>  Esc cancel</Text>
             </Box>
           )}
-          <Box marginTop={1}><Divider width={50} /></Box>
+          <Box marginTop={1}><Divider /></Box>
 
           {visibleTags.length === 0 ? (
             <Box marginTop={1}><Text dimColor>{search ? `No tags matching "${search}".` : 'No tags yet. [a] to create one.'}</Text></Box>
@@ -232,7 +232,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
             })
           )}
 
-          <Box marginTop={1}><Divider width={50} /></Box>
+          <Box marginTop={1}><Divider /></Box>
           <Text dimColor>{search ? `${visibleTags.length} of ${tags.length}` : `${tags.length}`} tag{tags.length !== 1 ? 's' : ''}</Text>
           {statusMsg && <Text color="green">{statusMsg}</Text>}
 
