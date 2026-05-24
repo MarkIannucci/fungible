@@ -10,6 +10,10 @@ while [ -L "$SCRIPT_SOURCE" ]; do
 done
 PACKAGE_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")/.." && pwd)"
 
+# Resolve tsx/esm via Node's module resolution (handles any tsx version)
+TSX_ESM=$(node --no-warnings -e \
+  "const r=require('module').createRequire('$PACKAGE_DIR/package.json');process.stdout.write(r.resolve('tsx/esm'))")
+
 exec node --experimental-sqlite --no-warnings \
-  --import "$PACKAGE_DIR/node_modules/tsx/esm/index.js" \
+  --import "$TSX_ESM" \
   "$PACKAGE_DIR/tui/index.tsx" "$@"
