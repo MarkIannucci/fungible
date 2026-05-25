@@ -23,6 +23,14 @@ A terminal UI for personal finance. Syncs transactions from Plaid, imports CSVs,
 - **Trends** — month-by-month bar charts for expenses, income, net, or any category; per-range aggregation
 - **MCP server** — Claude can read and manage your finances via the Model Context Protocol
 
+## Try it (no account needed)
+
+```bash
+fungible --demo
+```
+
+Spins up a fully pre-loaded instance with fake accounts, transactions, tags, and rules — completely isolated from any real data. Good for exploring all the screens before connecting a bank.
+
 ## Install
 
 ### Homebrew (recommended)
