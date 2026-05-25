@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect version bump
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "new=false" >> $GITHUB_OUTPUT
+            echo "No new version — skipping release."
+          else
+            echo "new=true" >> $GITHUB_OUTPUT
+            echo "New version detected: $TAG"
+          fi
+
+      - name: Create tag
+        if: steps.version.outputs.new == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.version.outputs.tag }}
+          git push origin ${{ steps.version.outputs.tag }}
+
+      - name: Update Homebrew formula
+        if: steps.version.outputs.new == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          TAG=${{ steps.version.outputs.tag }}
+          TARBALL_URL="https://github.com/tomfunk/fungible/archive/refs/tags/${TAG}.tar.gz"
+
+          # Give GitHub a moment to serve the tarball after tagging
+          sleep 5
+
+          SHA=$(curl -sL "$TARBALL_URL" | sha256sum | awk '{print $1}')
+          echo "sha256: $SHA"
+
+          git clone https://x-access-token:${TAP_TOKEN}@github.com/tomfunk/homebrew-fungible.git
+          cd homebrew-fungible
+
+          sed -i "s|/refs/tags/v[^/]*.tar.gz|/refs/tags/${TAG}.tar.gz|" Formula/fungible.rb
+          sed -i "s/sha256 \"[a-f0-9]*\"/sha256 \"${SHA}\"/" Formula/fungible.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/fungible.rb
+          git commit -m "Update to ${TAG}"
+          git push
