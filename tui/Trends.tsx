@@ -346,13 +346,16 @@ export function Trends({
         <NavHints current="trends" />
       </Box>
 
-      <Box gap={2} marginTop={1}>
-        {TRENDS_RANGES.map((r) => (
-          <Text key={r} color={r === range ? 'cyan' : undefined} dimColor={r !== range} bold={r === range}>
-            {RANGE_LABELS[r]}
-          </Text>
-        ))}
-        <Text dimColor>  [r] cycle</Text>
+      <Box justifyContent="space-between" marginTop={1}>
+        <Text bold>Trends</Text>
+        <Box gap={2}>
+          {TRENDS_RANGES.map((r) => (
+            <Text key={r} color={r === range ? 'cyan' : undefined} dimColor={r !== range} bold={r === range}>
+              {RANGE_LABELS[r]}
+            </Text>
+          ))}
+          <Text dimColor>[r] cycle</Text>
+        </Box>
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
