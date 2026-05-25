@@ -365,7 +365,7 @@ export function Trends({
           <Text dimColor>← {posLabel} →</Text>
         </Box>
       </Box>
-      <Box marginTop={1}><Divider /></Box>
+      <Divider />
 
       {rows.length === 0 ? (
         <Box marginTop={1}><Text dimColor>No data.</Text></Box>

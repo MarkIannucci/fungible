@@ -1,7 +1,7 @@
 export type Range = 'week' | 'month' | 'quarter' | 'year' | 'alltime';
 export const RANGES: Range[] = ['week', 'month', 'quarter', 'year', 'alltime'];
 export const RANGE_LABELS: Record<Range, string> = {
-  week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year', alltime: 'All Time',
+  week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year', alltime: 'All',
 };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

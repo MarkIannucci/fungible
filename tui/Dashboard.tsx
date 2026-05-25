@@ -212,14 +212,9 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
         <Box gap={2}>
           <Text bold>{formatPeriodLabel(range, anchor)}</Text>
           {selectedAccount && <Text color="yellow">{selectedAccount.name}</Text>}
-          <Box gap={1}>
-            <Text color={view === 'categories' ? 'cyan' : undefined} dimColor={view !== 'categories'}>categories</Text>
-            <Text dimColor>/</Text>
-            <Text color={view === 'flex' ? 'cyan' : undefined} dimColor={view !== 'flex'}>flex</Text>
-            <Text dimColor>/</Text>
-            <Text color={view === 'account' ? 'cyan' : undefined} dimColor={view !== 'account'}>account</Text>
-            <Text dimColor>[Tab]</Text>
-          </Box>
+          <Text dimColor>
+            {view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}  [Tab]
+          </Text>
         </Box>
       </Box>
 

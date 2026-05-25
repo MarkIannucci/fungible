@@ -467,7 +467,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
           {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
         </Text>
         <Text dimColor>
-          {from ? '← →  ' : ''}[Tab] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore  [d] delete
+          {from ? '← →  ' : ''}[Tab] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore
         </Text>
       </Box>
 
