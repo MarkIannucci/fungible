@@ -1,9 +1,11 @@
 {
   "name": "fungible",
   "version": "1.0.5",
-  "description": "",
-  "main": "index.js",
+  "description": "Terminal UI for personal finance — Plaid sync, CSV import, AI assistant, and MCP server",
   "type": "module",
+  "homepage": "https://github.com/tomfunk/fungible",
+  "author": "Thomas",
+  "keywords": ["finance", "budget", "plaid", "terminal", "tui", "mcp", "cli"],
   "scripts": {
     "dev": "node --experimental-sqlite --no-warnings --import tsx/esm tui/index.tsx",
     "setup": "node --experimental-sqlite --no-warnings --import tsx/esm tui/index.tsx --setup",
