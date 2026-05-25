@@ -18,4 +18,6 @@ jobs:
 
       - run: npm ci
 
+      - run: npm run typecheck
+
       - run: node --experimental-sqlite --no-warnings ./node_modules/.bin/vitest run

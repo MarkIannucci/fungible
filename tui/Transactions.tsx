@@ -48,16 +48,6 @@ function applyRuleToAll() {
   return count;
 }
 
-function getDataBounds() {
-  const row = db.prepare(`
-    SELECT MIN(date) as minDate, MAX(date) as maxDate
-    FROM transactions WHERE pending = 0 AND ignored = 0
-  `).get() as { minDate: string | null; maxDate: string | null } | null;
-  return {
-    minDate: row?.minDate ?? '2000-01-01',
-    maxDate: row?.maxDate ?? '2099-12-31',
-  };
-}
 
 function countMatches(pattern: string, matchType: 'name' | 'regex'): number {
   if (!pattern) return 0;
