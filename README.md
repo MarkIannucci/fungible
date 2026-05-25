@@ -1,4 +1,4 @@
-# fungible
+<img src="logo.png" alt="fungible" width="400" />
 
 [![CI](https://github.com/tomfunk/fungible/actions/workflows/ci.yml/badge.svg)](https://github.com/tomfunk/fungible/actions/workflows/ci.yml)
 
