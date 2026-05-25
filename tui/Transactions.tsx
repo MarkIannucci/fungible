@@ -467,7 +467,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
           {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
         </Text>
         <Text dimColor>
-          {from ? '← → month  ·  ' : ''}[Tab] sort  ·  [/] search  ·  [u] uncategorized  [a] all  ·  [e/E] edit  [g/G] tag  [x/X] reset  [i/I] ignore  [d] delete
+          {from ? '← →  ' : ''}[Tab] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore  [d] delete
         </Text>
       </Box>
 
@@ -486,7 +486,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
           {'  DATE ' + (sort === 'date-desc' ? '↓' : sort === 'date-asc' ? '↑' : ' ') + '   '}
         </Text>
         <Text color={sort.startsWith('name') ? 'cyan' : undefined} dimColor={!sort.startsWith('name')}>
-          {('DESCRIPTION' + (sort === 'name-asc' ? ' ↑' : sort === 'name-desc' ? ' ↓' : '  ')).padEnd(38)}
+          {('DESCRIPTION' + (sort === 'name-asc' ? ' ↑' : sort === 'name-desc' ? ' ↓' : '  ')).padEnd(28)}
         </Text>
         <Text color={sort.startsWith('amount') ? 'cyan' : undefined} dimColor={!sort.startsWith('amount')}>
           {('AMOUNT' + (sort === 'amount-desc' ? ' ↓' : sort === 'amount-asc' ? ' ↑' : '  ')).padStart(12)}
@@ -506,7 +506,7 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
             <Text color={isSelected ? 'cyan' : undefined} dimColor={isIgnored && !isSelected}>
               {isSelected ? '▶ ' : '  '}{tx.date}
             </Text>
-            <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.name, 36)}</Text>
+            <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.name, 26)}</Text>
             <Text color={isIgnored ? undefined : tx.amount < 0 ? 'green' : undefined} dimColor={isIgnored}>
               {fmt(tx.amount).padStart(10)}
             </Text>
@@ -514,10 +514,10 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
               color={isIgnored ? undefined : tx.category === 'Uncategorized' ? 'yellow' : isPinned ? 'magenta' : undefined}
               dimColor={isIgnored || !isSelected}
             >
-              {isPinned ? '◆ ' : '  '}{isIgnored ? '~' : ''}{tx.category}
+              {truncate((isPinned ? '◆ ' : '  ') + (isIgnored ? '~' : '') + tx.category, 16)}
             </Text>
-            {hasTags && (
-              <Text color="cyan" dimColor={!isSelected}># {tx.tag_names}</Text>
+            {hasTags && isSelected && (
+              <Text color="cyan"># {tx.tag_names}</Text>
             )}
           </Box>
         );
