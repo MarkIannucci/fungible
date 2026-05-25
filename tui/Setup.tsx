@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { seedRules } from '../core/seed-rules.js';
+import { DATA_DIR } from '../core/paths.js';
 
 type Step =
   | 'welcome'
@@ -20,7 +20,7 @@ type Step =
 type PlaidEnv = 'sandbox' | 'development' | 'production';
 const PLAID_ENVS: PlaidEnv[] = ['sandbox', 'development', 'production'];
 
-const ENV_PATH = path.join(os.homedir(), '.fungible', '.env');
+const ENV_PATH = path.join(DATA_DIR, '.env');
 
 function readEnv(): Record<string, string> {
   const envPath = ENV_PATH;

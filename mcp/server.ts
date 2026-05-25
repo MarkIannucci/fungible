@@ -1,7 +1,7 @@
 import { config } from 'dotenv';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
-config({ path: join(homedir(), '.fungible', '.env') });
+import { DATA_DIR } from '../core/paths.js';
+config({ path: join(DATA_DIR, '.env') });
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';

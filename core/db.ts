@@ -1,10 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
-import os from 'node:os';
 import fs from 'node:fs';
 import { encryptToken } from './crypto.js';
+import { DATA_DIR } from './paths.js';
 
-const DATA_DIR = path.join(os.homedir(), '.fungible');
 const DB_PATH = path.join(DATA_DIR, 'fungible.db');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });

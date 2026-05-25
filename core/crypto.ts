@@ -1,9 +1,9 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { DATA_DIR } from './paths.js';
 
-const KEY_PATH = path.join(os.homedir(), '.fungible', 'key');
+const KEY_PATH = path.join(DATA_DIR, 'key');
 const ALGORITHM = 'aes-256-gcm';
 
 function loadOrCreateKey(): Buffer {

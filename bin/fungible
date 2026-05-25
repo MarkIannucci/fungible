@@ -10,6 +10,14 @@ while [ -L "$SCRIPT_SOURCE" ]; do
 done
 PACKAGE_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")/.." && pwd)"
 
+# Demo mode: use a separate data directory so real data is untouched
+for arg in "$@"; do
+  if [[ "$arg" == "--demo" ]]; then
+    export FUNGIBLE_DATA_DIR="$HOME/.fungible-demo"
+    break
+  fi
+done
+
 # Resolve tsx/esm via Node's module resolution (handles any tsx version)
 TSX_ESM=$(node --no-warnings -e \
   "const r=require('module').createRequire('$PACKAGE_DIR/package.json');process.stdout.write(r.resolve('tsx/esm'))")

@@ -8,6 +8,7 @@
   "keywords": ["finance", "budget", "plaid", "terminal", "tui", "mcp", "cli"],
   "scripts": {
     "dev": "node --experimental-sqlite --no-warnings --import tsx/esm tui/index.tsx",
+    "demo": "FUNGIBLE_DATA_DIR=$HOME/.fungible-demo node --experimental-sqlite --no-warnings --import tsx/esm tui/index.tsx --demo",
     "setup": "node --experimental-sqlite --no-warnings --import tsx/esm tui/index.tsx --setup",
     "link": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/link.ts",
     "import-csv": "node --experimental-sqlite --no-warnings --import tsx/esm scripts/import-csv.ts",
