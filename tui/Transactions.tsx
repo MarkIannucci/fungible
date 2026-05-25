@@ -461,13 +461,15 @@ export function Transactions({ onNavigate, initialFilter, isActive }: { onNaviga
         <Text bold color="cyan">fungible</Text>
         <NavHints current="transactions" />
       </Box>
-      <Box justifyContent="space-between" marginTop={1}>
+      <Box marginTop={1}>
         <Text bold>
           Transactions
           {filterLabel ? <Text color="yellow">  {filterLabel}</Text> : null}
         </Text>
+      </Box>
+      <Box justifyContent="flex-end">
         <Text dimColor>
-          {from ? '← →  ' : ''}[Tab] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore
+          {from ? '← →  ·  ' : ''}[Tab] sort  ·  [/] search  ·  [e] edit  [g] tag  [i] ignore  [d] delete
         </Text>
       </Box>
 
