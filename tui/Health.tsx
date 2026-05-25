@@ -103,7 +103,7 @@ export function Health({ onNavigate, isActive }: { onNavigate: (s: Screen) => vo
       </Box>
 
       <Box marginTop={1} justifyContent="space-between">
-        <Text bold color="cyan">Financial Health</Text>
+        <Text bold>Financial Health</Text>
         <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>
       </Box>
       <Divider />

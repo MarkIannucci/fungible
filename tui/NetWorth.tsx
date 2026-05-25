@@ -64,7 +64,7 @@ export function NetWorth({ onNavigate, isActive }: { onNavigate: (s: Screen) => 
 
       <Box marginTop={1} justifyContent="space-between">
         <Box>
-          <Text bold color="cyan">Net Worth</Text>
+          <Text bold>Net Worth</Text>
           {current && <Text dimColor>  as of {dateLabel(current.date)}</Text>}
         </Box>
         <Text dimColor>[Tab] {view === 'accounts' ? 'by type' : 'by account'}</Text>

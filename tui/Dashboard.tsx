@@ -189,6 +189,11 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
         <NavHints current="dashboard" />
       </Box>
 
+      <Box justifyContent="space-between" marginTop={1}>
+        <Text bold>Dashboard</Text>
+        <Text dimColor>← → period  ·  [r] range  ·  [Tab] view</Text>
+      </Box>
+
       <Box gap={2} marginTop={1}>
         {RANGES.map((r) => (
           <Text key={r} color={r === range ? 'cyan' : undefined} dimColor={r !== range} bold={r === range}>

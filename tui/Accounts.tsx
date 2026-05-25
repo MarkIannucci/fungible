@@ -538,9 +538,9 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
 
       <Box marginTop={1} marginBottom={1} flexDirection="column" gap={1}>
         <Box gap={3}>
-          <Text bold color={mainView === 'accounts' ? 'cyan' : undefined}>Accounts</Text>
-          <Text bold color={mainView === 'add-data' ? 'cyan' : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
-          <Text bold color={mainView === 'dupes' ? 'cyan' : undefined} dimColor={mainView !== 'dupes'}>
+          <Text bold color={mainView === 'accounts' ? 'white' : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
+          <Text bold color={mainView === 'add-data' ? 'white' : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
+          <Text bold color={mainView === 'dupes' ? 'white' : undefined} dimColor={mainView !== 'dupes'}>
             Dupes{dupes.length > 0 ? ` (${dupes.length})` : ''}
           </Text>
           <Text dimColor>[Tab]</Text>

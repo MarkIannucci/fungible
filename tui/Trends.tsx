@@ -357,7 +357,7 @@ export function Trends({
 
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>
-          <Text bold color={color}>{view.label}</Text>
+          <Text bold>{view.label}</Text>
           <Text dimColor>← {posLabel} →</Text>
         </Box>
         <Text dimColor>← → view  ·  ↑↓ navigate  ·  Enter drill in</Text>

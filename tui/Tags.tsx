@@ -147,7 +147,7 @@ export function Tags({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxF
       {mode === 'detail' && tag && tagSummary ? (
         <>
           <Box justifyContent="space-between" marginTop={1} marginBottom={1}>
-            <Text bold># {tag.name} <Text dimColor>← {cursor + 1} / {tags.length} →</Text></Text>
+            <Text bold>Tags <Text dimColor>— # {tag.name}  ← {cursor + 1} / {tags.length} →</Text></Text>
             <Text dimColor>← → tag  ·  ↑↓ category  ·  Enter txns  ·  [t] all txns  ·  Esc back</Text>
           </Box>
 
