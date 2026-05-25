@@ -348,22 +348,22 @@ export function Trends({
 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Trends</Text>
+        <Text dimColor>← → view  ·  ↑↓ navigate  ·  [r] range  ·  Enter drill in</Text>
+      </Box>
+
+      <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>
           {TRENDS_RANGES.map((r) => (
             <Text key={r} color={r === range ? 'cyan' : undefined} dimColor={r !== range} bold={r === range}>
               {RANGE_LABELS[r]}
             </Text>
           ))}
-          <Text dimColor>[r] cycle</Text>
+          <Text dimColor>[r]</Text>
         </Box>
-      </Box>
-
-      <Box justifyContent="space-between" marginTop={1}>
         <Box gap={2}>
           <Text bold>{view.label}</Text>
           <Text dimColor>← {posLabel} →</Text>
         </Box>
-        <Text dimColor>← → view  ·  ↑↓ navigate  ·  Enter drill in</Text>
       </Box>
       <Box marginTop={1}><Divider /></Box>
 

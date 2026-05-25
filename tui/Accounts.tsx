@@ -536,7 +536,7 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
         <NavHints current="accounts" />
       </Box>
 
-      <Box marginTop={1} marginBottom={1} flexDirection="column" gap={1}>
+      <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
           <Text bold color={mainView === 'accounts' ? 'white' : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
           <Text bold color={mainView === 'add-data' ? 'white' : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
@@ -545,20 +545,18 @@ export function Accounts({ onNavigate, isActive }: { onNavigate: (s: Screen, f?:
           </Text>
           <Text dimColor>[Tab]</Text>
         </Box>
-        {mainView === 'accounts' && acctMode === 'list' && (
-          <Text dimColor>
-            ↑↓ select  ·  [e] edit type  ·  [n] nickname{selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [d] delete  ·  [s] sync
-          </Text>
-        )}
-        {mainView === 'accounts' && acctMode === 'edit' && (
-          <Text dimColor>Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel</Text>
-        )}
-        {mainView === 'dupes' && (
-          <Text dimColor>↑↓ select  ·  [d] delete CSV copy  ·  [D] delete all</Text>
-        )}
+        <Text dimColor>
+          {mainView === 'accounts' && acctMode === 'list'
+            ? `↑↓ select  ·  [e] edit  ·  [n] nick${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] value' : '  ·  [r] repair'}  ·  [d] del  ·  [s] sync`
+            : mainView === 'accounts' && acctMode === 'edit'
+            ? 'Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel'
+            : mainView === 'dupes'
+            ? '↑↓ select  ·  [d] del CSV  ·  [D] del all'
+            : ''}
+        </Text>
       </Box>
 
-      <Divider />
+      <Box marginTop={1}><Divider /></Box>
 
       {/* ── Accounts view ─────────────────────────────────────────────── */}
       {mainView === 'accounts' && (

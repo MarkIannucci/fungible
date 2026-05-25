@@ -191,20 +191,25 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Dashboard</Text>
-        <Text dimColor>← → period  ·  [r] range  ·  [Tab] view</Text>
-      </Box>
-
-      <Box gap={2} marginTop={1}>
-        {RANGES.map((r) => (
-          <Text key={r} color={r === range ? 'cyan' : undefined} dimColor={r !== range} bold={r === range}>
-            {RANGE_LABELS[r]}
-          </Text>
-        ))}
-        <Text dimColor>  [r] cycle</Text>
+        <Text dimColor>
+          {view === 'account'
+            ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view`
+            : view === 'categories'
+            ? '← → period  ·  ↑↓ select  ·  Enter txns  ·  [Tab] view'
+            : '← → period  ·  Enter txns  ·  [Tab] view'}
+        </Text>
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
-        <Box gap={3}>
+        <Box gap={2}>
+          {RANGES.map((r) => (
+            <Text key={r} color={r === range ? 'cyan' : undefined} dimColor={r !== range} bold={r === range}>
+              {RANGE_LABELS[r]}
+            </Text>
+          ))}
+          <Text dimColor>[r]</Text>
+        </Box>
+        <Box gap={2}>
           <Text bold>{formatPeriodLabel(range, anchor)}</Text>
           {selectedAccount && <Text color="yellow">{selectedAccount.name}</Text>}
           <Box gap={1}>
@@ -217,17 +222,8 @@ export function Dashboard({ onNavigate, isActive }: { onNavigate: (s: Screen, fi
           </Box>
         </Box>
       </Box>
-      <Box marginBottom={1}>
-        <Text dimColor>
-          {view === 'account'
-            ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear`
-            : view === 'categories'
-            ? '← → period  ·  ↑↓ select  ·  Enter txns'
-            : '← → period  ·  Enter txns'}
-        </Text>
-      </Box>
 
-      <Divider />
+      <Box marginTop={1}><Divider /></Box>
 
       {view === 'account' ? (
         <Box flexDirection="column" marginTop={1}>
