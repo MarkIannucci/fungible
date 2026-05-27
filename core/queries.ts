@@ -301,11 +301,12 @@ export type LinkedAccount = {
   institution_name: string | null;
   mask: string | null;
   last_synced: string | null;
+  item_id: string | null;
 };
 
 export function getLinkedAccounts(): LinkedAccount[] {
   return db.prepare(`
-    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask,
+    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.item_id,
       (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
     FROM accounts a
     ORDER BY

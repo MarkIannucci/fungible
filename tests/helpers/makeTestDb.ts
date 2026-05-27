@@ -83,6 +83,9 @@ export function makeTestDb(): DatabaseSync {
       balance REAL NOT NULL,
       date TEXT NOT NULL
     );
+    CREATE UNIQUE INDEX idx_balance_history_acct_date ON balance_history(account_id, date);
+
+    CREATE TABLE excluded_plaid_accounts (account_id TEXT PRIMARY KEY);
   `);
   return db;
 }

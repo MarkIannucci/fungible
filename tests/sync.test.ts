@@ -1,22 +1,27 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const itemRemove = vi.fn();
+const accountsGet = vi.fn();
+const transactionsSync = vi.fn();
 
 vi.mock('../core/db.js', async () => {
   const { makeTestDb } = await import('./helpers/makeTestDb.js');
   return { db: makeTestDb() };
 });
 vi.mock('../core/plaid.js', () => ({
-  getPlaidClient: () => ({ itemRemove }),
+  getPlaidClient: () => ({ itemRemove, accountsGet, transactionsSync }),
   isPlaidConfigured: () => true,
 }));
 vi.mock('../core/crypto.js', () => ({
   decryptToken: (t: string) => t,
   encryptToken: (t: string) => t,
 }));
+vi.mock('../core/categorize.js', () => ({ categorize: () => 'Uncategorized' }));
+vi.mock('../core/rename.js', () => ({ applyNameRules: (n: string) => n }));
+vi.mock('../core/dedup.js', () => ({ deduplicateCsvVsPlaid: () => 0 }));
 
 import { db } from '../core/db.js';
-import { removeLink } from '../core/sync.js';
+import { removeLink, syncTransactions } from '../core/sync.js';
 
 const count = (table: string, where = '', ...args: string[]) =>
   (db.prepare(`SELECT COUNT(*) c FROM ${table} ${where}`).get(...args) as { c: number }).c;
@@ -34,10 +39,17 @@ function seedLink(itemId: string, accts: string[]) {
   }
 }
 
+function makePlaidAccount(id: string) {
+  return { account_id: id, name: id, type: 'depository', subtype: 'checking', mask: null, balances: { current: 100 } };
+}
+
 beforeEach(() => {
   itemRemove.mockReset();
   itemRemove.mockResolvedValue({});
-  for (const t of ['transaction_tags', 'transactions', 'balance_history', 'accounts', 'sync_state', 'plaid_items', 'tags']) {
+  accountsGet.mockReset();
+  transactionsSync.mockReset();
+  transactionsSync.mockResolvedValue({ data: { added: [], modified: [], removed: [], has_more: false, next_cursor: 'cur' } });
+  for (const t of ['transaction_tags', 'transactions', 'balance_history', 'accounts', 'sync_state', 'plaid_items', 'tags', 'excluded_plaid_accounts']) {
     db.exec(`DELETE FROM ${t}`);
   }
 });
@@ -87,5 +99,26 @@ describe('removeLink', () => {
 
     expect(count('accounts', "WHERE id = 'csv-acct-1'")).toBe(1);
     expect(count('transactions', "WHERE account_id = 'csv-acct-1'")).toBe(1);
+  });
+});
+
+describe('syncTransactions — excluded accounts', () => {
+  it('does not recreate an account whose id is in excluded_plaid_accounts', async () => {
+    db.prepare("INSERT INTO excluded_plaid_accounts (account_id) VALUES ('a1')").run();
+    accountsGet.mockResolvedValue({ data: { accounts: [makePlaidAccount('a1'), makePlaidAccount('a2')] } });
+
+    await syncTransactions('tok', 'itemX');
+
+    expect(count('accounts', "WHERE id = 'a1'")).toBe(0);
+    expect(count('accounts', "WHERE id = 'a2'")).toBe(1);
+  });
+
+  it('does not snapshot a balance for an excluded account', async () => {
+    db.prepare("INSERT INTO excluded_plaid_accounts (account_id) VALUES ('a1')").run();
+    accountsGet.mockResolvedValue({ data: { accounts: [makePlaidAccount('a1')] } });
+
+    await syncTransactions('tok', 'itemX');
+
+    expect(count('balance_history', "WHERE account_id = 'a1'")).toBe(0);
   });
 });

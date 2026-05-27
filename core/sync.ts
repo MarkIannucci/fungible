@@ -32,6 +32,8 @@ export async function syncTransactions(accessToken: string, itemId: string) {
   // Upsert accounts and snapshot balances
   const accountsResponse = await getPlaidClient().accountsGet({ access_token: accessToken });
   const today = new Date().toISOString().slice(0, 10);
+  const excludedRows = db.prepare('SELECT account_id FROM excluded_plaid_accounts').all() as { account_id: string }[];
+  const excluded = new Set(excludedRows.map((r) => r.account_id));
   const upsertAccount = db.prepare(`
     INSERT INTO accounts (id, name, type, subtype, mask, item_id)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -42,6 +44,7 @@ export async function syncTransactions(accessToken: string, itemId: string) {
     ON CONFLICT(account_id, date) DO UPDATE SET balance=excluded.balance
   `);
   for (const acct of accountsResponse.data.accounts) {
+    if (excluded.has(acct.account_id)) continue;
     upsertAccount.run(acct.account_id, acct.name, acct.type, acct.subtype ?? null, acct.mask ?? null, itemId);
     const balance = acct.balances.current;
     if (balance !== null && balance !== undefined) {

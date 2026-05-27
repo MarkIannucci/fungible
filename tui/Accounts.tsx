@@ -208,6 +208,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function deleteAccount() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
+    if (acct.item_id) {
+      db.prepare('INSERT OR IGNORE INTO excluded_plaid_accounts (account_id) VALUES (?)').run(acct.id);
+    }
     db.prepare('DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id = ?)').run(acct.id);
     db.prepare('DELETE FROM transactions WHERE account_id = ?').run(acct.id);
     db.prepare('DELETE FROM balance_history WHERE account_id = ?').run(acct.id);
