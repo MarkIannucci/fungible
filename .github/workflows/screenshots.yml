@@ -3,6 +3,7 @@ name: Update Screenshots
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   screenshots:
@@ -22,7 +23,11 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           TAG="v$VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
+          # Always run on manual dispatch; otherwise only on new version tags
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "new=true" >> $GITHUB_OUTPUT
+            echo "Manual dispatch — running regardless of version."
+          elif git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "new=false" >> $GITHUB_OUTPUT
             echo "Tag $TAG already exists — skipping."
           else
