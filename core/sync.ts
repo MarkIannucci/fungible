@@ -33,16 +33,16 @@ export async function syncTransactions(accessToken: string, itemId: string) {
   const accountsResponse = await getPlaidClient().accountsGet({ access_token: accessToken });
   const today = new Date().toISOString().slice(0, 10);
   const upsertAccount = db.prepare(`
-    INSERT INTO accounts (id, name, type, subtype, mask)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET name=excluded.name
+    INSERT INTO accounts (id, name, type, subtype, mask, item_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET name=excluded.name, item_id=excluded.item_id
   `);
   const upsertBalance = db.prepare(`
     INSERT INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)
     ON CONFLICT(account_id, date) DO UPDATE SET balance=excluded.balance
   `);
   for (const acct of accountsResponse.data.accounts) {
-    upsertAccount.run(acct.account_id, acct.name, acct.type, acct.subtype ?? null, acct.mask ?? null);
+    upsertAccount.run(acct.account_id, acct.name, acct.type, acct.subtype ?? null, acct.mask ?? null, itemId);
     const balance = acct.balances.current;
     if (balance !== null && balance !== undefined) {
       upsertBalance.run(acct.account_id, balance, today);
@@ -95,6 +95,25 @@ export async function syncTransactions(accessToken: string, itemId: string) {
 
   const dupes = deduplicateCsvVsPlaid();
   return { added: added.length, modified: modified.length, removed: removedIds.length, dupes };
+}
+
+export async function removeLink(itemId: string): Promise<{ plaidRemoved: boolean }> {
+  const row = db.prepare('SELECT access_token FROM plaid_items WHERE item_id = ?').get(itemId) as { access_token: string } | undefined;
+  let plaidRemoved = false;
+  if (row) {
+    // Best-effort: an expired/invalid token or network error must not block local cleanup.
+    try {
+      await getPlaidClient().itemRemove({ access_token: decryptToken(row.access_token) });
+      plaidRemoved = true;
+    } catch {}
+  }
+  db.prepare('DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id IN (SELECT id FROM accounts WHERE item_id = ?))').run(itemId);
+  db.prepare('DELETE FROM transactions WHERE account_id IN (SELECT id FROM accounts WHERE item_id = ?)').run(itemId);
+  db.prepare('DELETE FROM balance_history WHERE account_id IN (SELECT id FROM accounts WHERE item_id = ?)').run(itemId);
+  db.prepare('DELETE FROM accounts WHERE item_id = ?').run(itemId);
+  db.prepare('DELETE FROM sync_state WHERE account_id = ?').run(itemId);
+  db.prepare('DELETE FROM plaid_items WHERE item_id = ?').run(itemId);
+  return { plaidRemoved };
 }
 
 const DEBOUNCE_MS = 15 * 60 * 1000; // 15 minutes

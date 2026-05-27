@@ -13,6 +13,7 @@ import {
   getRecentTransactions,
   hasAccounts,
   getOwnerRows,
+  getPlaidLinks,
 } from '../core/queries.js';
 
 let txId = 0;
@@ -341,5 +342,27 @@ describe('getOwnerRows', () => {
     db.prepare("INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored) VALUES ('oob', 'a1', '2024-12-31', 'tx', 999, 'Shopping', 0, 0)").run();
     const rows = getOwnerRows('2025-01-01', '2025-01-31');
     expect(rows.find((r) => r.owner === 'Mark')?.spending).toBe(100);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getPlaidLinks', () => {
+  beforeEach(() => { db.exec('DELETE FROM plaid_items'); });
+
+  it('counts only accounts whose item_id matches the link', () => {
+    db.prepare("INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES ('itemA', 'tok', 'Fidelity', 123)").run();
+    db.prepare("INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES ('itemB', 'tok', 'Fidelity', null)").run();
+    // Two accounts under A, one under B, and one CSV account (item_id NULL) that must not be counted.
+    db.prepare("INSERT INTO accounts (id, name, type, item_id) VALUES ('a1', 'Checking', 'depository', 'itemA')").run();
+    db.prepare("INSERT INTO accounts (id, name, type, item_id) VALUES ('a2', 'Savings', 'depository', 'itemA')").run();
+    db.prepare("INSERT INTO accounts (id, name, type, item_id) VALUES ('b1', 'Brokerage', 'investment', 'itemB')").run();
+    db.prepare("INSERT INTO accounts (id, name, type, item_id) VALUES ('csv-acct-1', 'Manual', 'depository', NULL)").run();
+
+    const links = getPlaidLinks();
+    expect(links.map((l) => [l.item_id, l.account_count])).toEqual([
+      ['itemA', 2],
+      ['itemB', 1],
+    ]);
+    expect(links[1].last_synced_at).toBeNull();
   });
 });

@@ -12,7 +12,8 @@ export function makeTestDb(): DatabaseSync {
       institution_name TEXT,
       mask TEXT,
       nickname TEXT,
-      owner TEXT
+      owner TEXT,
+      item_id TEXT
     );
 
     CREATE TABLE transactions (
@@ -74,6 +75,13 @@ export function makeTestDb(): DatabaseSync {
       access_token TEXT NOT NULL,
       institution_name TEXT,
       last_synced_at INTEGER
+    );
+
+    CREATE TABLE balance_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id TEXT NOT NULL,
+      balance REAL NOT NULL,
+      date TEXT NOT NULL
     );
   `);
   return db;
