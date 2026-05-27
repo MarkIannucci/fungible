@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { db } from '../core/db.js';
 import { categorize } from '../core/categorize.js';
 import { syncAll, removeLink } from '../core/sync.js';
+import { setAccountDefaultTag, applyDefaultTagToAccount, tagExists } from '../core/accountTags.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate, generateTxId } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, getPlaidLinks, type LinkedAccount, type CsvAccount, type PlaidLink } from '../core/queries.js';
@@ -15,7 +16,7 @@ import { useTerminalWidth } from './useTerminalWidth.js';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MainView = 'accounts' | 'add-data' | 'plaid-links' | 'dupes';
-type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname' | 'owner' | 'confirm-delete';
+type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname' | 'owner' | 'default-tag' | 'default-tag-confirm' | 'confirm-delete';
 type EditField = 'type' | 'subtype';
 
 type AddStep =
@@ -121,6 +122,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   // Owner mode state
   const [ownerInput, setOwnerInput] = useState('');
+
+  // Default-tag mode state
+  const [tagInput, setTagInput] = useState('');
+  const [pendingTagName, setPendingTagName] = useState('');
 
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
@@ -261,6 +266,34 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     loadAccounts();
   }
 
+  function applyDefaultTag(name: string | null) {
+    const acct = linkedAccounts[acctCursor];
+    if (!acct) return;
+    const r = setAccountDefaultTag(acct.id, name);
+    let msg: string;
+    if (!r.newTag) {
+      msg = r.oldTag ? `Removed "${r.oldTag}" from ${r.removed} txn${r.removed !== 1 ? 's' : ''}` : 'Default tag cleared';
+    } else {
+      msg = `Tagged ${r.tagged} txn${r.tagged !== 1 ? 's' : ''} as "${r.newTag}"`;
+      if (r.created) msg += ' (created tag)';
+      if (r.oldTag && r.oldTag !== r.newTag) msg += `; removed "${r.oldTag}" from ${r.removed}`;
+    }
+    setAcctMode('list');
+    setTagInput('');
+    setPendingTagName('');
+    setAcctMsg(msg);
+    setTimeout(() => setAcctMsg(''), 4000);
+    loadAccounts();
+  }
+
+  function submitDefaultTag() {
+    const name = tagInput.trim();
+    if (!name) { applyDefaultTag(null); return; }
+    if (tagExists(name)) { applyDefaultTag(name); return; }
+    setPendingTagName(name);
+    setAcctMode('default-tag-confirm');
+  }
+
   function saveUpdatedValue() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
@@ -349,6 +382,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       const changes = (insert.run(id, acct.id, date, name, amount, category) as any).changes;
       if (changes > 0) imported++; else skipped++;
     }
+    applyDefaultTagToAccount(acct.id);
     setImportResult({ imported, skipped });
     setAddStep('done');
   }
@@ -436,6 +470,20 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         return;
       }
 
+      if (acctMode === 'default-tag') {
+        if (key.escape) { setAcctMode('list'); setTagInput(''); return; }
+        if (key.return) { submitDefaultTag(); return; }
+        if (key.backspace || key.delete) { setTagInput((v) => v.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setTagInput((v) => v + input); return; }
+        return;
+      }
+
+      if (acctMode === 'default-tag-confirm') {
+        if (key.escape || input === 'n') { setAcctMode('default-tag'); return; }
+        if (input === 'y') { applyDefaultTag(pendingTagName); return; }
+        return;
+      }
+
       if (acctMode === 'confirm-delete') {
         if (key.escape || input === 'n') { setAcctMode('list'); return; }
         if (input === 'y') { deleteAccount(); return; }
@@ -459,6 +507,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (input === 'o' && linkedAccounts[acctCursor]) {
         setOwnerInput(linkedAccounts[acctCursor].owner ?? '');
         setAcctMode('owner');
+        return;
+      }
+      if (input === 't' && linkedAccounts[acctCursor]) {
+        setTagInput(linkedAccounts[acctCursor].default_tag ?? '');
+        setPendingTagName('');
+        setAcctMode('default-tag');
         return;
       }
       if (input === 'v' && linkedAccounts[acctCursor]?.id.startsWith('manual-')) {
@@ -685,7 +739,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
-            ? `↑↓ select  ·  [e] edit  ·  [n] nickname  ·  [o] owner${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [d] delete  ·  [s] sync`
+            ? `↑↓ select  ·  [e] edit  ·  [n] nickname  ·  [o] owner  ·  [t] tag${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [d] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
             ? 'Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel'
             : mainView === 'dupes'
@@ -733,6 +787,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                       }
                     </Text>
                     {acct.owner && <Text color={isSelected ? 'magenta' : undefined} dimColor={!isSelected}>{acct.owner}</Text>}
+                    {acct.default_tag && <Text color={isSelected ? 'blue' : undefined} dimColor={!isSelected}>#{acct.default_tag}</Text>}
                   </Box>
                 );
               })}
@@ -787,6 +842,32 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 <Text color="cyan">▊</Text>
               </Box>
               <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
+            </Box>
+          )}
+
+          {/* Default-tag panel */}
+          {acctMode === 'default-tag' && selectedAcct && (
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="blue" paddingX={2} paddingY={1}>
+              <Text bold>Default tag: {selectedAcct.nickname ?? selectedAcct.name}</Text>
+              <Text dimColor>Applied to all of this account's transactions, now and going forward. Leave empty to clear.</Text>
+              <Box marginTop={1}>
+                <Text>Tag: #</Text>
+                <Text color="blue">{tagInput}</Text>
+                <Text color="cyan">▊</Text>
+              </Box>
+              <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
+            </Box>
+          )}
+
+          {/* Default-tag create-confirm panel */}
+          {acctMode === 'default-tag-confirm' && selectedAcct && (
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+              <Text bold color="yellow">Tag "{pendingTagName}" doesn't exist</Text>
+              <Text dimColor>Create it and apply it to all of {selectedAcct.nickname ?? selectedAcct.name}'s transactions?</Text>
+              <Box marginTop={1} gap={4}>
+                <Text color="green">[y] Create & apply</Text>
+                <Text color="red">[n] / Esc back</Text>
+              </Box>
             </Box>
           )}
 

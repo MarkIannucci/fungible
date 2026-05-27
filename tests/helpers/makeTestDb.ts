@@ -13,6 +13,7 @@ export function makeTestDb(): DatabaseSync {
       mask TEXT,
       nickname TEXT,
       owner TEXT,
+      default_tag TEXT,
       item_id TEXT
     );
 

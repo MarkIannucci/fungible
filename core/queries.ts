@@ -296,6 +296,7 @@ export type LinkedAccount = {
   name: string;
   nickname: string | null;
   owner: string | null;
+  default_tag: string | null;
   type: string;
   subtype: string | null;
   institution_name: string | null;
@@ -306,7 +307,7 @@ export type LinkedAccount = {
 
 export function getLinkedAccounts(): LinkedAccount[] {
   return db.prepare(`
-    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.item_id,
+    SELECT a.id, a.name, a.nickname, a.owner, a.default_tag, a.type, a.subtype, a.institution_name, a.mask, a.item_id,
       (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
     FROM accounts a
     ORDER BY

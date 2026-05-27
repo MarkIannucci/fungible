@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
+import { renameDefaultTagReferences, clearDefaultTagReferences } from '../core/accountTags.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
@@ -67,7 +68,13 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
       if (key.return && newName.trim()) {
         const tag = visibleTags[cursor];
         if (tag) {
-          db.prepare('UPDATE tags SET name = ? WHERE id = ?').run(newName.trim(), tag.id);
+          const renamed = newName.trim();
+          db.prepare('UPDATE tags SET name = ? WHERE id = ?').run(renamed, tag.id);
+          const moved = renameDefaultTagReferences(tag.name, renamed);
+          if (moved) {
+            setStatusMsg(`Renamed · updated default tag on ${moved} account${moved !== 1 ? 's' : ''}`);
+            setTimeout(() => setStatusMsg(''), 2500);
+          }
           load();
         }
         setNewName('');
@@ -124,8 +131,9 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
       const tag = visibleTags[cursor];
       db.prepare('DELETE FROM transaction_tags WHERE tag_id = ?').run(tag.id);
       db.prepare('DELETE FROM tags WHERE id = ?').run(tag.id);
-      setStatusMsg(`Deleted "${tag.name}"`);
-      setTimeout(() => setStatusMsg(''), 2000);
+      const cleared = clearDefaultTagReferences(tag.name);
+      setStatusMsg(`Deleted "${tag.name}"${cleared ? ` · cleared default on ${cleared} account${cleared !== 1 ? 's' : ''}` : ''}`);
+      setTimeout(() => setStatusMsg(''), 2500);
       setCursor((c) => Math.max(0, c - 1));
       load();
       return;

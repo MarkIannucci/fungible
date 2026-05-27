@@ -4,6 +4,7 @@ import { categorize } from './categorize.js';
 import { applyNameRules } from './rename.js';
 import { deduplicateCsvVsPlaid } from './dedup.js';
 import { decryptToken } from './crypto.js';
+import { applyDefaultTagToAccount } from './accountTags.js';
 import type { Transaction } from 'plaid';
 
 export async function syncTransactions(accessToken: string, itemId: string) {
@@ -88,6 +89,10 @@ export async function syncTransactions(accessToken: string, itemId: string) {
     const placeholders = removedIds.map(() => '?').join(',');
     db.prepare(`DELETE FROM transactions WHERE id IN (${placeholders})`).run(...removedIds);
   }
+
+  // Apply each account's default tag to its transactions (covers newly added ones).
+  const itemAccounts = db.prepare('SELECT id FROM accounts WHERE item_id = ?').all(itemId) as { id: string }[];
+  for (const a of itemAccounts) applyDefaultTagToAccount(a.id);
 
   // Save cursor and last_synced_at
   db.prepare(`

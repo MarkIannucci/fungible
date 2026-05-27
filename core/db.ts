@@ -97,6 +97,7 @@ export function initDb() {
   try { db.exec('ALTER TABLE plaid_items ADD COLUMN last_synced_at INTEGER'); } catch {}
   try { db.exec('ALTER TABLE accounts ADD COLUMN nickname TEXT'); } catch {}
   try { db.exec('ALTER TABLE accounts ADD COLUMN owner TEXT'); } catch {}
+  try { db.exec('ALTER TABLE accounts ADD COLUMN default_tag TEXT'); } catch {}
   try { db.exec('ALTER TABLE accounts ADD COLUMN item_id TEXT'); } catch {}
   db.exec('CREATE TABLE IF NOT EXISTS excluded_plaid_accounts (account_id TEXT PRIMARY KEY)');
   db.exec(`
