@@ -114,10 +114,11 @@ describe('rebuildDisplayNames', () => {
     ).run(id, name, amount);
   };
 
-  it('returns the count of processed transactions', () => {
+  it('returns the count of changed transactions', () => {
+    insertRule.run('name', 'starbucks', 'Starbucks', null, null);
     insertTx('tx1', 'STARBUCKS #1', 5.00);
     insertTx('tx2', 'NETFLIX.COM', 15.99);
-    expect(rebuildDisplayNames()).toBe(2);
+    expect(rebuildDisplayNames()).toBe(1); // only tx1 matches the rule
   });
 
   it('sets display_name for matching transactions', () => {
@@ -146,11 +147,11 @@ describe('rebuildDisplayNames', () => {
     expect(tx2.display_name).toBeNull();
   });
 
-  it('processes all transactions even with no rules', () => {
+  it('returns 0 when no display names change', () => {
     insertTx('tx1', 'COFFEE SHOP', 3.50);
     insertTx('tx2', 'GAS STATION', 60.00);
     const count = rebuildDisplayNames();
-    expect(count).toBe(2);
+    expect(count).toBe(0);
     const tx1 = db.prepare('SELECT display_name FROM transactions WHERE id = ?').get('tx1') as any;
     expect(tx1.display_name).toBeNull();
   });

@@ -5,7 +5,7 @@ import { categorize } from '../core/categorize.js';
 import { rebuildDisplayNames } from '../core/rename.js';
 import { getAllRules, getAllNameRules, getAllCategories, getCategoryDetails, getHiddenCategorySet, toggleHiddenCategory, type Rule, type NameRule, type CategoryDetail } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
-import { Divider } from './fmt.js';
+import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth } from './useTerminalWidth.js';
 
@@ -119,13 +119,13 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
     // Apply to all transactions without a manual override
     const rows = db.prepare(
-      'SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE manual_category IS NULL'
-    ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number }[];
+      'SELECT id, name, merchant_name, raw_category, amount, category FROM transactions WHERE manual_category IS NULL'
+    ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number; category: string }[];
     const update = db.prepare('UPDATE transactions SET category = ? WHERE id = ?');
     let count = 0;
     for (const tx of rows) {
       const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
-      if (cat !== 'Uncategorized') { update.run(cat, tx.id); count++; }
+      if (cat !== tx.category) { update.run(cat, tx.id); count++; }
     }
 
     setStatusMsg(`Rule saved · recategorized ${count} transactions`);
@@ -219,12 +219,13 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setCatListCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCatListCursor((c) => Math.min(categories.length - 1, c + 1));
         if (input === 'a') { setNewCategoryName(''); setMode('add-category-name'); return; }
-        if (input === 'h' && categories[catListCursor]) {
+        if (input === 'x' && categories[catListCursor]) {
           const cat = categories[catListCursor];
+          const nowHidden = !hiddenSet.has(cat);
           toggleHiddenCategory(cat, hiddenSet);
-          setStatusMsg(`${cat} is now ${hiddenSet.has(cat) ? 'visible' : 'hidden'}`);
+          setHiddenSet(getHiddenCategorySet());
+          setStatusMsg(`${cat} is now ${nowHidden ? 'hidden' : 'visible'}`);
           setTimeout(() => setStatusMsg(''), 2000);
-          load();
           return;
         }
         if (input === 'f' && catDetails[catListCursor]) {
@@ -409,7 +410,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
                 <Text dimColor={!isSelected}>
                   {rule.pattern.length > rulePatW ? rule.pattern.slice(0, rulePatW - 1) + '…' : rule.pattern.padEnd(rulePatW)}
                 </Text>
-                {amtLabel ? <Text color="magenta" dimColor={!isSelected}>{amtLabel.padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
+                {amtLabel ? <Text color="magenta" dimColor={!isSelected}>{truncate(amtLabel, 10).padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
                 <Text color="cyan" dimColor={!isSelected}>{rule.category.length > ruleCatW ? rule.category.slice(0, ruleCatW - 1) + '…' : rule.category.padEnd(ruleCatW)}</Text>
                 <Text dimColor>{rule.priority}</Text>
               </Box>
@@ -450,7 +451,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
                       {rule.pattern.length > namePatW ? rule.pattern.slice(0, namePatW - 1) + '…' : rule.pattern.padEnd(namePatW)}
                     </Text>
                     {amtLabel
-                      ? <Text color="magenta" dimColor={!isSelected}>{amtLabel.padEnd(12)}</Text>
+                      ? <Text color="magenta" dimColor={!isSelected}>{truncate(amtLabel, 12).padEnd(12)}</Text>
                       : <Text>{' '.repeat(12)}</Text>}
                     <Text color="green" dimColor={!isSelected}>{rule.replacement.length > nameReplW ? rule.replacement.slice(0, nameReplW - 1) + '…' : rule.replacement}</Text>
                   </Box>

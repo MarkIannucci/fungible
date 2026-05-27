@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { db } from '../core/db.js';
 import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
 import type { Screen, TxFilter } from './App.js';
-import { fmt, bar, Divider } from './fmt.js';
+import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
 import { useTerminalWidth } from './useTerminalWidth.js';
 
@@ -194,7 +194,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
                     <Box key={row.category} gap={2}>
                       <Text color={isSelected ? 'cyan' : undefined}>
                         {isSelected ? '▶ ' : '  '}
-                        {row.category.padEnd(20)}
+                        {truncate(row.category, 20).padEnd(20)}
                       </Text>
                       <Text color="yellow">{fmt(row.total).padStart(10)}</Text>
                       <Text color="cyan" dimColor={!isSelected}>{bar(row.total, maxCategorySpend)}</Text>

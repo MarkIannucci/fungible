@@ -26,13 +26,15 @@ export function applyNameRules(name: string, amount?: number): string {
 /** Re-apply all name rules to every transaction and update display_name. */
 export function rebuildDisplayNames() {
   const rows = db.prepare(
-    'SELECT id, name, amount FROM transactions'
-  ).all() as { id: string; name: string; amount: number }[];
+    'SELECT id, name, amount, display_name FROM transactions'
+  ).all() as { id: string; name: string; amount: number; display_name: string | null }[];
 
   const update = db.prepare('UPDATE transactions SET display_name = ? WHERE id = ?');
+  let count = 0;
   for (const tx of rows) {
     const display = applyNameRules(tx.name, tx.amount);
-    update.run(display !== tx.name ? display : null, tx.id);
+    const newVal = display !== tx.name ? display : null;
+    if (newVal !== tx.display_name) { update.run(newVal, tx.id); count++; }
   }
-  return rows.length;
+  return count;
 }

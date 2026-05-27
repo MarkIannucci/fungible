@@ -512,22 +512,26 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         const isIgnored = !!tx.ignored;
         const hasTags = !!tx.tag_names;
         return (
-          <Box key={tx.id} gap={2}>
-            <Text color={isSelected ? 'cyan' : undefined} dimColor={isIgnored && !isSelected}>
-              {isSelected ? '▶ ' : '  '}{tx.date}
-            </Text>
-            <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.name, descW).padEnd(descW)}</Text>
-            <Text color={isIgnored ? undefined : tx.amount < 0 ? 'green' : undefined} dimColor={isIgnored}>
-              {fmt(tx.amount).padStart(10)}
-            </Text>
-            <Text
-              color={isIgnored ? undefined : tx.category === 'Uncategorized' ? 'yellow' : isPinned ? 'magenta' : undefined}
-              dimColor={isIgnored || !isSelected}
-            >
-              {truncate((isPinned ? '◆ ' : '  ') + (isIgnored ? '~' : '') + tx.category, catW).padEnd(catW)}
-            </Text>
+          <Box key={tx.id} flexDirection="column">
+            <Box gap={2}>
+              <Text color={isSelected ? 'cyan' : undefined} dimColor={isIgnored && !isSelected}>
+                {isSelected ? '▶ ' : '  '}{tx.date}
+              </Text>
+              <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.name, descW).padEnd(descW)}</Text>
+              <Text color={isIgnored ? undefined : tx.amount < 0 ? 'green' : undefined} dimColor={isIgnored}>
+                {fmt(tx.amount).padStart(10)}
+              </Text>
+              <Text
+                color={isIgnored ? undefined : tx.category === 'Uncategorized' ? 'yellow' : isPinned ? 'magenta' : undefined}
+                dimColor={isIgnored || !isSelected}
+              >
+                {truncate((isPinned ? '◆ ' : '  ') + (isIgnored ? '~' : '') + tx.category, catW).padEnd(catW)}
+              </Text>
+            </Box>
             {hasTags && isSelected && (
-              <Text color="cyan"># {tx.tag_names}</Text>
+              <Box paddingLeft={14}>
+                <Text color="cyan">{truncate('# ' + tx.tag_names, inner - 14)}</Text>
+              </Box>
             )}
           </Box>
         );
