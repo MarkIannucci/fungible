@@ -35,7 +35,10 @@ type AddStep =
   | 'manual-name'
   | 'manual-value'
   | 'manual-confirm'
-  | 'manual-done';
+  | 'manual-done'
+  | 'create-acct-name'
+  | 'create-acct-type'
+  | 'create-acct-done';
 
 const ACCOUNT_TYPES = ['depository', 'investment', 'credit', 'loan', 'other'] as const;
 
@@ -102,6 +105,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [manualName, setManualName] = useState('');
   const [manualValue, setManualValue] = useState('');
   const [manualValueError, setManualValueError] = useState('');
+
+  // Create account state
+  const [createName, setCreateName] = useState('');
+  const [createType, setCreateType] = useState('credit');
+  const [createSubtype, setCreateSubtype] = useState('credit card');
+  const [createField, setCreateField] = useState<'type' | 'subtype'>('type');
 
   // Update-value mode state
   const [updateValueInput, setUpdateValueInput] = useState('');
@@ -175,6 +184,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     db.prepare('INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)').run(id, manualName.trim(), 'other', 'manual');
     db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(id, value, today);
     setAddStep('manual-done');
+    loadAccounts();
+  }
+
+  function saveNewAccount() {
+    const id = `csv-acct-${Date.now()}`;
+    db.prepare('INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)')
+      .run(id, createName.trim(), createType, createSubtype.trim() || null);
+    setAddStep('create-acct-done');
     loadAccounts();
   }
 
@@ -437,6 +454,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.tab) { setMainView('dupes'); return; }
       if (input === 'l') { setAddStep('link-plaid'); startPlaidLink(); return; }
       if (input === 'c') { setAddStep('file'); return; }
+      if (input === 'a') { setCreateName(''); setCreateType('credit'); setCreateSubtype('credit card'); setCreateField('type'); setAddStep('create-acct-name'); return; }
       if (input === 'm') { setManualName(''); setAddStep('manual-name'); return; }
       if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
       return;
@@ -508,6 +526,44 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
     if (addStep === 'done') {
       if (key.return) { setImportResult(null); setAddStep('landing'); setMainView('accounts'); loadAccounts(); }
+      return;
+    }
+
+    if (addStep === 'create-acct-name') {
+      if (key.escape) { setAddStep('landing'); return; }
+      if (key.return && createName.trim()) { setCreateField('type'); setAddStep('create-acct-type'); return; }
+      if (key.backspace || key.delete) { setCreateName((v) => v.slice(0, -1)); return; }
+      if (input && !key.ctrl && !key.meta) { setCreateName((v) => v + input); return; }
+      return;
+    }
+
+    if (addStep === 'create-acct-type') {
+      if (key.escape) { setAddStep('create-acct-name'); return; }
+      if (key.return) { saveNewAccount(); return; }
+      if (key.tab) {
+        setCreateField((f) => f === 'type' ? 'subtype' : 'type');
+        return;
+      }
+      if (createField === 'type' && (key.leftArrow || key.rightArrow)) {
+        const idx = ACCOUNT_TYPES.indexOf(createType as typeof ACCOUNT_TYPES[number]);
+        const next = ACCOUNT_TYPES[(idx + (key.leftArrow ? -1 : 1) + ACCOUNT_TYPES.length) % ACCOUNT_TYPES.length];
+        setCreateType(next);
+        setCreateSubtype(SUBTYPES[next]?.[0] ?? '');
+        return;
+      }
+      if (createField === 'subtype') {
+        const subtypes = SUBTYPES[createType] ?? [];
+        if (subtypes.length > 0 && (key.leftArrow || key.rightArrow)) {
+          const idx = subtypes.indexOf(createSubtype);
+          setCreateSubtype(subtypes[(idx + (key.leftArrow ? -1 : 1) + subtypes.length) % subtypes.length]);
+        }
+        return;
+      }
+      return;
+    }
+
+    if (addStep === 'create-acct-done') {
+      if (key.return) { setCreateName(''); setAddStep('landing'); setMainView('accounts'); }
       return;
     }
 
@@ -725,6 +781,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box flexDirection="column" gap={1} marginTop={1}>
                 <Text color="cyan">[l] Link a bank account  <Text dimColor>Opens Plaid in your browser</Text></Text>
                 <Text color="cyan">[c] Import CSV file      <Text dimColor>Upload a statement export</Text></Text>
+                <Text color="cyan">[a] Create account       <Text dimColor>New account without Plaid</Text></Text>
                 <Text color="cyan">[m] Manual asset         <Text dimColor>House, car, or other asset</Text></Text>
                 <Text color={syncStatus === 'syncing' ? 'yellow' : 'cyan'}>
                   [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
@@ -864,6 +921,54 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text bold color="green">Import complete</Text>
               <Text>Imported: <Text color="green">{importResult.imported}</Text></Text>
               <Text dimColor>Skipped (duplicates/invalid): {importResult.skipped}</Text>
+              <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
+            </Box>
+          )}
+
+          {addStep === 'create-acct-name' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>Create Account — Name</Text>
+              <Text dimColor>Type a name for this account (e.g. "Venture X", "Freedom Unlimited")</Text>
+              <Box marginTop={1}>
+                <Text>Name: </Text>
+                <Text color="yellow">{createName}</Text>
+                <Text color="cyan">█</Text>
+              </Box>
+              <Text dimColor>Enter to continue · Esc cancel</Text>
+            </Box>
+          )}
+
+          {addStep === 'create-acct-type' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>Create Account — Type</Text>
+              <Text dimColor>Account: <Text color="cyan">{createName}</Text></Text>
+              <Box flexDirection="column" marginTop={1} gap={1}>
+                <Box gap={2}>
+                  <Text color={createField === 'type' ? 'cyan' : 'white'}>
+                    {createField === 'type' ? '▶ ' : '  '}Type
+                  </Text>
+                  <Text color={createField === 'type' ? 'cyan' : undefined}>
+                    {'← '}{createType}{'  →'}
+                  </Text>
+                </Box>
+                <Box gap={2}>
+                  <Text color={createField === 'subtype' ? 'cyan' : 'white'}>
+                    {createField === 'subtype' ? '▶ ' : '  '}Subtype
+                  </Text>
+                  <Text color={createField === 'subtype' ? 'cyan' : 'yellow'}>
+                    {'← '}{createSubtype || '—'}{'  →'}
+                  </Text>
+                </Box>
+              </Box>
+              <Text dimColor>Tab switch field · ← → change · Enter save · Esc back</Text>
+            </Box>
+          )}
+
+          {addStep === 'create-acct-done' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold color="green">Account created</Text>
+              <Text><Text color="cyan">{createName}</Text> added as <Text color="yellow">{createType} / {createSubtype}</Text>.</Text>
+              <Text dimColor>Import transactions via Add Data → [c] Import CSV.</Text>
               <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
             </Box>
           )}
