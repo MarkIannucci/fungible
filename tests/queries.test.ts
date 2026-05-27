@@ -12,6 +12,7 @@ import {
   getHiddenCategories,
   getRecentTransactions,
   hasAccounts,
+  getOwnerRows,
 } from '../core/queries.js';
 
 let txId = 0;
@@ -292,5 +293,53 @@ describe('hasAccounts', () => {
       "INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES ('item1', 'tok_abc', 'Chase')"
     ).run();
     expect(hasAccounts()).toBe(true);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getOwnerRows', () => {
+  const addAccount = (id: string, owner: string | null) =>
+    db.prepare("INSERT INTO accounts (id, name, type, owner) VALUES (?, ?, 'depository', ?)").run(id, id, owner);
+  const addTx = (acct: string, amount: number, opts: { category?: string; pending?: number; ignored?: number } = {}) => {
+    txId++;
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+      VALUES (?, ?, '2025-01-15', 'tx', ?, ?, ?, ?)
+    `).run(`o${txId}`, acct, amount, opts.category ?? 'Shopping', opts.pending ?? 0, opts.ignored ?? 0);
+  };
+
+  it('sums expenses per owner', () => {
+    addAccount('a1', 'Mark');
+    addAccount('a2', 'Partner');
+    addTx('a1', 100);
+    addTx('a1', 50);
+    addTx('a2', 200);
+    const rows = getOwnerRows('2025-01-01', '2025-01-31');
+    expect(rows).toEqual([
+      { owner: 'Partner', spending: 200 },
+      { owner: 'Mark', spending: 150 },
+    ]);
+  });
+
+  it('buckets accounts with no owner under Unassigned', () => {
+    addAccount('a1', 'Mark');
+    addAccount('a2', null);
+    addTx('a1', 100);
+    addTx('a2', 75);
+    const rows = getOwnerRows('2025-01-01', '2025-01-31');
+    expect(rows.find((r) => r.owner === 'Unassigned')?.spending).toBe(75);
+  });
+
+  it('excludes income, pending, ignored, hidden categories, and out-of-range txns', () => {
+    db.exec("INSERT INTO hidden_categories VALUES ('Transfer')");
+    addAccount('a1', 'Mark');
+    addTx('a1', 100);                              // counts
+    addTx('a1', -500);                             // income, excluded
+    addTx('a1', 40, { pending: 1 });               // pending, excluded
+    addTx('a1', 40, { ignored: 1 });               // ignored, excluded
+    addTx('a1', 40, { category: 'Transfer' });     // hidden, excluded
+    db.prepare("INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored) VALUES ('oob', 'a1', '2024-12-31', 'tx', 999, 'Shopping', 0, 0)").run();
+    const rows = getOwnerRows('2025-01-01', '2025-01-31');
+    expect(rows.find((r) => r.owner === 'Mark')?.spending).toBe(100);
   });
 });

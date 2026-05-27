@@ -15,7 +15,7 @@ import { useTerminalWidth } from './useTerminalWidth.js';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MainView = 'accounts' | 'add-data' | 'dupes';
-type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname' | 'confirm-delete';
+type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname' | 'owner' | 'confirm-delete';
 type EditField = 'type' | 'subtype';
 
 type AddStep =
@@ -119,6 +119,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Nickname mode state
   const [nicknameInput, setNicknameInput] = useState('');
 
+  // Owner mode state
+  const [ownerInput, setOwnerInput] = useState('');
+
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
@@ -216,6 +219,17 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     db.prepare('UPDATE accounts SET nickname = ? WHERE id = ?').run(nickname, acct.id);
     setAcctMode('list');
     setAcctMsg(nickname ? `Nickname set to "${nickname}"` : 'Nickname cleared');
+    setTimeout(() => setAcctMsg(''), 2500);
+    loadAccounts();
+  }
+
+  function saveOwner() {
+    const acct = linkedAccounts[acctCursor];
+    if (!acct) return;
+    const owner = ownerInput.trim() || null;
+    db.prepare('UPDATE accounts SET owner = ? WHERE id = ?').run(owner, acct.id);
+    setAcctMode('list');
+    setAcctMsg(owner ? `Owner set to "${owner}"` : 'Owner cleared');
     setTimeout(() => setAcctMsg(''), 2500);
     loadAccounts();
   }
@@ -387,6 +401,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         return;
       }
 
+      if (acctMode === 'owner') {
+        if (key.escape) { setAcctMode('list'); setOwnerInput(''); return; }
+        if (key.return) { saveOwner(); return; }
+        if (key.backspace || key.delete) { setOwnerInput((v) => v.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setOwnerInput((v) => v + input); return; }
+        return;
+      }
+
       if (acctMode === 'confirm-delete') {
         if (key.escape || input === 'n') { setAcctMode('list'); return; }
         if (input === 'y') { deleteAccount(); return; }
@@ -405,6 +427,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (input === 'n' && linkedAccounts[acctCursor]) {
         setNicknameInput(linkedAccounts[acctCursor].nickname ?? '');
         setAcctMode('nickname');
+        return;
+      }
+      if (input === 'o' && linkedAccounts[acctCursor]) {
+        setOwnerInput(linkedAccounts[acctCursor].owner ?? '');
+        setAcctMode('owner');
         return;
       }
       if (input === 'v' && linkedAccounts[acctCursor]?.id.startsWith('manual-')) {
@@ -614,7 +641,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
-            ? `↑↓ select  ·  [e] edit  ·  [n] nickname${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [d] delete  ·  [s] sync`
+            ? `↑↓ select  ·  [e] edit  ·  [n] nickname  ·  [o] owner${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [d] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
             ? 'Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel'
             : mainView === 'dupes'
@@ -657,6 +684,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                         : <Text color="yellow">not synced</Text>
                       }
                     </Text>
+                    {acct.owner && <Text color={isSelected ? 'magenta' : undefined} dimColor={!isSelected}>{acct.owner}</Text>}
                   </Box>
                 );
               })}
@@ -694,6 +722,20 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box marginTop={1}>
                 <Text>Nickname: </Text>
                 <Text color="yellow">{nicknameInput}</Text>
+                <Text color="cyan">▊</Text>
+              </Box>
+              <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
+            </Box>
+          )}
+
+          {/* Owner panel */}
+          {acctMode === 'owner' && selectedAcct && (
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="magenta" paddingX={2} paddingY={1}>
+              <Text bold>Owner: {selectedAcct.nickname ?? selectedAcct.name}</Text>
+              <Text dimColor>Who owns this account? Leave empty to clear.</Text>
+              <Box marginTop={1}>
+                <Text>Owner: </Text>
+                <Text color="magenta">{ownerInput}</Text>
                 <Text color="cyan">▊</Text>
               </Box>
               <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, type MonthlySummary, type FlexSummary, type AccountRow } from '../core/queries.js';
+import { getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, getOwnerRows, type MonthlySummary, type FlexSummary, type AccountRow, type OwnerRow } from '../core/queries.js';
 import { db } from '../core/db.js';
 import {
   getPeriodStart, getPeriodDates, navigatePeriod, formatPeriodLabel,
@@ -13,7 +13,7 @@ import { useTerminalWidth } from './useTerminalWidth.js';
 
 const BAR_WIDTH = 20;
 
-type DashView = 'categories' | 'flex' | 'account';
+type DashView = 'categories' | 'flex' | 'account' | 'owner';
 
 function pct(part: number, total: number) {
   if (total === 0) return '0%';
@@ -83,10 +83,12 @@ export function Dashboard({ onNavigate, isActive, showHints }: { onNavigate: (s:
   });
   const [acctCursor, setAcctCursor] = useState(0);
   const [selectedAccount, setSelectedAccount] = useState<AccountRow | null>(null);
+  const [ownerRows, setOwnerRows] = useState<OwnerRow[]>([]);
 
   function load(r: Range, a: Date, acct: AccountRow | null) {
     const { from, to } = getPeriodDates(r, a);
     setAccountRows(getAccountRows(from, to));
+    setOwnerRows(getOwnerRows(from, to));
     setAcctCursor(0);
     if (acct) {
       setSummary(getFilteredRangeSummary(from, to, acct.id));
@@ -120,7 +122,7 @@ export function Dashboard({ onNavigate, isActive, showHints }: { onNavigate: (s:
 
   useInput((input, key) => {
     if (key.tab) {
-      setView((v) => v === 'categories' ? 'flex' : v === 'flex' ? 'account' : 'categories');
+      setView((v) => v === 'categories' ? 'flex' : v === 'flex' ? 'account' : v === 'account' ? 'owner' : 'categories');
       return;
     }
 
@@ -194,6 +196,7 @@ export function Dashboard({ onNavigate, isActive, showHints }: { onNavigate: (s:
 
   const maxCategorySpend = categories[0]?.total ?? 1;
   const totalExpenses = summary?.expenses ?? 0;
+  const maxOwnerSpend = ownerRows[0]?.spending ?? 1;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
@@ -209,6 +212,8 @@ export function Dashboard({ onNavigate, isActive, showHints }: { onNavigate: (s:
             ? `← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view`
             : view === 'categories'
             ? '← → period  ·  ↑↓ select  ·  Enter txns  ·  [Tab] view'
+            : view === 'owner'
+            ? '← → period  ·  [Tab] view'
             : '← → period  ·  Enter txns  ·  [Tab] view'}
         </Text>}
       </Box>
@@ -226,7 +231,7 @@ export function Dashboard({ onNavigate, isActive, showHints }: { onNavigate: (s:
           <Text bold>{formatPeriodLabel(range, anchor)}</Text>
           {selectedAccount && <Text color="yellow">{selectedAccount.name}</Text>}
           <Text dimColor>
-            {view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}{showHints ? '  [Tab]' : ''}
+            {view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : view === 'account' ? 'account' : 'owner'}{showHints ? '  [Tab]' : ''}
           </Text>
         </Box>
       </Box>
@@ -265,6 +270,27 @@ export function Dashboard({ onNavigate, isActive, showHints }: { onNavigate: (s:
           {selectedAccount && (
             <Box marginTop={1}><Text dimColor>[c] clear filter</Text></Box>
           )}
+        </Box>
+      ) : view === 'owner' ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold dimColor>SPENDING BY OWNER</Text>
+          <Box flexDirection="column" marginTop={1}>
+            {ownerRows.length === 0 ? (
+              <Text dimColor>No accounts linked. [8] accounts → link a bank.</Text>
+            ) : (
+              ownerRows.map((row) => (
+                <Box key={row.owner} gap={2}>
+                  <Text>
+                    {'  '}
+                    {row.owner.length > dashCatNameW ? row.owner.slice(0, dashCatNameW - 1) + '…' : row.owner.padEnd(dashCatNameW)}
+                  </Text>
+                  <Text color="yellow">{fmt(row.spending).padStart(10)}</Text>
+                  <Text color="magenta">{bar(row.spending, maxOwnerSpend, dashBarW)}</Text>
+                </Box>
+              ))
+            )}
+          </Box>
+          <Box marginTop={1}><Text dimColor>Assign owners in [8] accounts → [o]</Text></Box>
         </Box>
       ) : summary ? (
         <>

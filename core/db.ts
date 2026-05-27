@@ -96,6 +96,7 @@ export function initDb() {
   try { db.exec("ALTER TABLE categories ADD COLUMN flexibility TEXT CHECK(flexibility IN ('fixed','flexible','discretionary'))"); } catch {}
   try { db.exec('ALTER TABLE plaid_items ADD COLUMN last_synced_at INTEGER'); } catch {}
   try { db.exec('ALTER TABLE accounts ADD COLUMN nickname TEXT'); } catch {}
+  try { db.exec('ALTER TABLE accounts ADD COLUMN owner TEXT'); } catch {}
   db.exec(`
     CREATE TABLE IF NOT EXISTS balance_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

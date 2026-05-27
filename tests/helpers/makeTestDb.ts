@@ -10,7 +10,9 @@ export function makeTestDb(): DatabaseSync {
       type TEXT NOT NULL,
       subtype TEXT,
       institution_name TEXT,
-      mask TEXT
+      mask TEXT,
+      nickname TEXT,
+      owner TEXT
     );
 
     CREATE TABLE transactions (
