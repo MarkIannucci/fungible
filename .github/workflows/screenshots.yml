@@ -43,15 +43,19 @@ jobs:
         if: steps.version.outputs.new == 'true'
         run: npm ci
 
-      - name: Install ffmpeg
+      - name: Install VHS and dependencies
         if: steps.version.outputs.new == 'true'
-        run: sudo apt-get update -q && sudo apt-get install -y ffmpeg
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y ffmpeg ttyd
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list
+          sudo apt-get update -q && sudo apt-get install -y vhs
 
       - name: Record screenshots with VHS
         if: steps.version.outputs.new == 'true'
-        uses: charmbracelet/vhs-action@v2
-        with:
-          path: scripts/demo.tape
+        run: vhs scripts/demo.tape
 
       - name: Rebuild GIF from screenshots
         if: steps.version.outputs.new == 'true'
