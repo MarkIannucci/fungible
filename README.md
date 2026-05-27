@@ -4,6 +4,20 @@
 
 A terminal UI for personal finance. Syncs transactions from Plaid, imports CSVs, and lets you categorize, search, tag, and analyze spending — all from the keyboard.
 
+<img src="docs/screenshots/demo.gif" alt="fungible demo" width="720" />
+
+<details>
+<summary>Screenshots</summary>
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Transactions](docs/screenshots/transactions.png) |
+| ![Trends](docs/screenshots/trends.png) | ![Net Worth](docs/screenshots/net-worth.png) |
+| ![Tags](docs/screenshots/tags.png) | ![Financial Health](docs/screenshots/financial-health.png) |
+| ![Rules](docs/screenshots/rules.png) | ![Accounts](docs/screenshots/accounts.png) |
+
+</details>
+
 ## Features
 
 - **Plaid sync** — connect bank accounts and pull transactions automatically; 15-min debounce with force-sync option

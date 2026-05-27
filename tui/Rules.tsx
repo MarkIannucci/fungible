@@ -20,7 +20,7 @@ function getUncategorizedCount() {
   return (db.prepare("SELECT COUNT(*) as c FROM transactions WHERE category = 'Uncategorized'").get() as { c: number }).c;
 }
 
-export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean }) {
+export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
   const [rules, setRules] = useState<Rule[]>([]);
   const [nameRules, setNameRules] = useState<NameRule[]>([]);
   const [cursor, setCursor] = useState(0);
@@ -204,7 +204,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
         if (key.upArrow) setCatListCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCatListCursor((c) => Math.min(categories.length - 1, c + 1));
         if (input === 'a') { setNewCategoryName(''); setMode('add-category-name'); return; }
-        if (input === 'h' && categories[catListCursor]) {
+        if (input === 'x' && categories[catListCursor]) {
           const cat = categories[catListCursor];
           toggleHiddenCategory(cat, hiddenSet);
           setStatusMsg(`${cat} is now ${hiddenSet.has(cat) ? 'visible' : 'hidden'}`);
@@ -338,7 +338,7 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
       {/* Header */}
       <Box justifyContent="space-between">
         <Text bold color="cyan">fungible</Text>
-        <NavHints current="rules" />
+        <NavHints current="rules" showHints={showHints} />
       </Box>
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
@@ -348,11 +348,11 @@ export function Rules({ onNavigate, isActive }: { onNavigate: (s: Screen, f?: Tx
             </Text>
           ))}
         </Box>
-        <Text dimColor>
+        {showHints && <Text dimColor>
           {section === 'categories'
-            ? '[a] add  [r] rename  [d] delete  [h] hidden  [f] flexibility  ·  [Tab] switch'
+            ? '[a] add  [r] rename  [d] delete  [x] hidden  [f] flexibility  ·  [Tab] switch'
             : '[/] search  [a] add  [e] edit  [d] delete  ·  [Tab] switch'}
-        </Text>
+        </Text>}
       </Box>
 
       {mode === 'search' ? (
