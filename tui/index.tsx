@@ -1,7 +1,7 @@
 import { config } from 'dotenv';
 import { join } from 'node:path';
 import { DATA_DIR } from '../core/paths.js';
-config({ path: join(DATA_DIR, '.env') });
+config({ path: join(DATA_DIR, '.env'), quiet: true });
 import React from 'react';
 import { render } from 'ink';
 import { initDb } from '../core/db.js';
