@@ -116,9 +116,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;
-  // [sel=2] gap [name] gap [mask=7] gap [type=14] gap [inst] gap [synced~14]
-  // 5 gaps of 2 = 10; fixed: 2+7+14+14+10 = 47
-  const acctFlex = Math.max(20, inner - 47);
+  // [sel=2] gap [name] gap [✎=1] gap [mask=7] gap [type=14] gap [inst] gap [synced~14]
+  // 6 gaps of 2 = 12; fixed: 2+1+7+14+14+12 = 50
+  const acctFlex = Math.max(20, inner - 50);
   const acctNameW = Math.max(14, Math.floor(acctFlex * 0.6));
   const acctInstW = Math.max(8,  acctFlex - acctNameW);
 
@@ -581,7 +581,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1}>
               {linkedAccounts.map((acct, i) => {
                 const isSelected = i === acctCursor;
-                const label = (acct.subtype ?? acct.type).padEnd(14);
+                const SUBTYPE_DISPLAY: Record<string, string> = { 'crypto exchange': 'crypto' };
+                const raw = acct.subtype ?? acct.type;
+                const label = (SUBTYPE_DISPLAY[raw] ?? raw).padEnd(14);
                 const institution = acct.institution_name ? truncate(acct.institution_name, acctInstW) : '';
                 return (
                   <Box key={acct.id} gap={2}>
@@ -591,7 +593,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                     <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
                       {truncate(acct.nickname ?? acct.name, acctNameW).padEnd(acctNameW)}
                     </Text>
-                    {acct.nickname && <Text dimColor={!isSelected} color={isSelected ? 'yellow' : undefined}>✎</Text>}
+                    <Text dimColor={!isSelected} color={isSelected && acct.nickname ? 'yellow' : undefined}>{acct.nickname ? '✎' : ' '}</Text>
                     <Text dimColor>{acct.mask ? `···${acct.mask}` : '      '}</Text>
                     <Text dimColor>{label}</Text>
                     <Text dimColor>{institution.padEnd(acctInstW)}</Text>
