@@ -165,6 +165,22 @@ export function getAccountRows(from: string, to: string): AccountRow[] {
   `).all(from, to, from, to) as AccountRow[];
 }
 
+export type OwnerRow = { owner: string; spending: number };
+
+export function getOwnerRows(from: string, to: string): OwnerRow[] {
+  return db.prepare(`
+    SELECT COALESCE(NULLIF(TRIM(a.owner), ''), 'Unassigned') as owner,
+      COALESCE(SUM(CASE WHEN t.amount > 0 AND t.date >= ? AND t.date <= ?
+                        AND t.pending = 0 AND t.ignored = 0
+                        AND t.category NOT IN (SELECT category FROM hidden_categories)
+                        THEN t.amount ELSE 0 END), 0) as spending
+    FROM accounts a
+    LEFT JOIN transactions t ON t.account_id = a.id
+    GROUP BY owner
+    ORDER BY spending DESC
+  `).all(from, to) as OwnerRow[];
+}
+
 export type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null };
 export type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null };
 export type CategoryDetail = { name: string; flexibility: 'fixed' | 'flexible' | 'discretionary' | null };
@@ -279,6 +295,7 @@ export type LinkedAccount = {
   id: string;
   name: string;
   nickname: string | null;
+  owner: string | null;
   type: string;
   subtype: string | null;
   institution_name: string | null;
@@ -288,7 +305,7 @@ export type LinkedAccount = {
 
 export function getLinkedAccounts(): LinkedAccount[] {
   return db.prepare(`
-    SELECT a.id, a.name, a.nickname, a.type, a.subtype, a.institution_name, a.mask,
+    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask,
       (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
     FROM accounts a
     ORDER BY
