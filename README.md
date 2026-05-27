@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/tomfunk/fungible/actions/workflows/ci.yml/badge.svg)](https://github.com/tomfunk/fungible/actions/workflows/ci.yml)
 
-A terminal UI for personal finance. Syncs transactions from Plaid, imports CSVs, and lets you categorize, search, tag, and analyze spending — all from the keyboard.
+A terminal UI for personal finance. Syncs transactions from [Plaid](https://plaid.com/docs/quickstart/), imports CSVs, and lets you categorize, search, tag, and analyze spending — all from the keyboard.
 
 <img src="docs/screenshots/demo.gif" alt="fungible demo" width="720" />
 
