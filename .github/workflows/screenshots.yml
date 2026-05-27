@@ -43,6 +43,10 @@ jobs:
         if: steps.version.outputs.new == 'true'
         run: npm ci
 
+      - name: Install ffmpeg
+        if: steps.version.outputs.new == 'true'
+        run: sudo apt-get update -q && sudo apt-get install -y ffmpeg
+
       - name: Record screenshots with VHS
         if: steps.version.outputs.new == 'true'
         uses: charmbracelet/vhs-action@v2
