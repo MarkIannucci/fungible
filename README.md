@@ -30,11 +30,13 @@ A terminal UI for personal finance. Syncs transactions from [Plaid](https://plai
 - **Ignore** — soft-hide transactions from totals (transfers, reimbursements, etc.)
 - **Hidden categories** — exclude categories like Transfer from all totals and charts
 - **Tags** — label transactions across accounts (trips, projects, events) and view summaries by tag
-- **Net worth** — balance history with asset/liability breakdown; view by account or by type
+- **Net worth** — balance history with asset/liability breakdown; view by account or by type; scroll by week, month, quarter, or year
 - **Financial health** — cash and liquid runway, FIRE number and progress, years to retirement with adjustable assumptions
 - **Dedup review** — review and remove CSV transactions that duplicate Plaid imports
 - **Time ranges** — view Dashboard by week, month, quarter, year, or all time
-- **Trends** — month-by-month bar charts for expenses, income, net, or any category; per-range aggregation
+- **Trends** — bar charts for expenses, income, net, or any category; per-range aggregation (week / month / quarter / year)
+- **Delta mode** — toggle on Dashboard to see per-category spending deltas vs prior period, same period last year, and 12-month rolling average; heat-map coloring by deviation
+- **Regex search** — `/` on Dashboard or Transactions filters by name using a regular expression; search is shared when navigating between Dashboard, Transactions, and Trends
 - **MCP server** — Claude can read and manage your finances via the Model Context Protocol
 - **HTTP API** — REST-style API server for scripting and automation
 
@@ -102,8 +104,12 @@ Data and config are stored at `~/.fungible/`. Plaid access tokens are encrypted 
 | `Enter` | Drill into transactions for selected category / account |
 | `Space` | Toggle account filter (Account view) |
 | `c` | Clear account filter |
+| `d` | Toggle delta mode (spending vs prior period / same period last year / 12-month avg) |
+| `/` | Search transactions by name (regex); filters category totals live |
 
 In **Categories** view, spending is broken down by category with bar charts. In **Flex** view, spending is grouped by flexibility tier (fixed / flexible / discretionary / untagged). In **Account** view, select an account to filter all dashboard data to that account.
+
+In **delta mode**, the bar chart is replaced by three delta columns — vs prev period, vs same period last year, and vs 12-month rolling average — color-coded green / yellow / red by deviation. Not available for the All Time range. An active search carries through when switching to Transactions (`2`) or Trends (`3`).
 
 ### Transactions `[2]`
 
@@ -111,23 +117,23 @@ In **Categories** view, spending is broken down by category with bar charts. In 
 |-----|--------|
 | `↑ ↓` | Navigate |
 | `← →` | Previous / next month (when date filter active) |
-| `Tab` | Cycle sort: Date ↓↑ → Description ↑↓ → Amount ↓↑ → Category ↑↓ |
-| `/` | Search by name |
+| `s` | Cycle sort: Date ↓↑ → Description ↑↓ → Amount ↓↑ → Category ↑↓ |
+| `/` | Search by name (regex); inherited from Dashboard if navigated with an active search |
 | `a` | Show all transactions |
 | `u` | Show uncategorized only |
 | `e` | Edit: rename display name or change category |
 | `g` | Tag panel: add/remove tags on selected transaction |
 | `G` | Tag all visible transactions at once (use `/` to filter first) |
-| `x` | Undo manual category override |
+| `c` | Undo manual category override |
 | `i` | Ignore / un-ignore selected transaction |
-| `d` | Delete selected transaction (CSV-imported only) |
+| `x` | Delete selected transaction (CSV-imported only) |
 | `Esc` | Clear active filter (peels off one at a time) |
 
 ### Trends `[3]`
 
 | Key | Action |
 |-----|--------|
-| `← →` | Cycle views: Expenses → Income → Net → [each category] |
+| `Tab` | Cycle views: Expenses → Income → Net → [each category] |
 | `↑ ↓` | Navigate periods |
 | `r` | Cycle aggregation range (Week / Month / Quarter / Year) |
 | `Enter` | Drill into transactions for selected period |
@@ -137,8 +143,10 @@ In **Categories** view, spending is broken down by category with bar charts. In 
 | Key | Action |
 |-----|--------|
 | `Tab` | Toggle: by account ↔ by type |
+| `r` | Cycle history range (Week / Month / Quarter / Year) |
+| `↑ ↓` | Scroll history |
 
-Shows assets (depository, investment, manual), liabilities (credit), and net worth. History chart shows net worth trend over time.
+Shows assets (depository, investment, manual), liabilities (credit), and net worth. History shows one snapshot per period (last sync within each bucket), scrollable with up/down.
 
 ### Tags `[5]`
 
@@ -149,8 +157,8 @@ Shows assets (depository, investment, manual), liabilities (credit), and net wor
 | `Enter` | Open tag detail (income / expenses / category breakdown) |
 | `t` | View all transactions for selected tag |
 | `a` | Add new tag |
-| `r` | Rename selected tag |
-| `d` | Delete selected tag |
+| `n` | Rename selected tag |
+| `x` | Delete selected tag |
 
 In tag detail, `↑ ↓` selects a category and `Enter` drills into transactions for that tag + category. `← →` cycles to the previous/next tag.
 
@@ -184,7 +192,7 @@ Three sections, cycle with `Tab`: **Category Rules**, **Name Rules**, **Categori
 | `/` | Search rules |
 | `a` | Add rule |
 | `e` / `Enter` | Edit selected rule |
-| `d` | Delete selected rule |
+| `x` | Delete selected rule |
 
 Category rules support substring and regex matching with optional min/max amount filters. Name rules support the same matching plus optional amount filters.
 
@@ -193,9 +201,9 @@ Category rules support substring and regex matching with optional min/max amount
 | Key | Action |
 |-----|--------|
 | `a` | Add new category |
-| `r` | Rename category (cascades to all transactions, rules, and hidden settings) |
-| `d` | Delete category (resets affected transactions to Uncategorized) |
-| `h` | Toggle hidden (hidden categories are excluded from totals) |
+| `n` | Rename category (cascades to all transactions, rules, and hidden settings) |
+| `x` | Delete category (resets affected transactions to Uncategorized) |
+| `v` | Toggle hidden (hidden categories are excluded from totals) |
 | `f` | Cycle flexibility tier: none → fixed → flexible → discretionary |
 
 ### Accounts `[8]`
@@ -209,11 +217,12 @@ Category rules support substring and regex matching with optional min/max amount
 | `v` | Update value (manual assets only) |
 | `r` | Repair Plaid link for selected account |
 | `s` | Force sync (bypasses 15-min cooldown) |
+| `x` | Delete selected account |
 | `l` | Link a new bank account via Plaid |
 
 **Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
 
-**Dupes** tab shows CSV transactions that match Plaid imports. `[d]` deletes the selected CSV duplicate; `[D]` deletes all.
+**Dupes** tab shows CSV transactions that match Plaid imports. `[x]` deletes the selected CSV duplicate; `[X]` deletes all.
 
 ## Scripts
 
@@ -263,7 +272,34 @@ Exposes your financial data to Claude via the [Model Context Protocol](https://m
 npm run mcp
 ```
 
-Available tools: `spending_summary`, `list_transactions`, `edit_transaction`, `clear_edit`, `ignore_transaction`, `list_rules`, `add_rule`, `delete_rule`, `list_name_rules`, `add_name_rule`, `delete_name_rule`, `list_hidden_categories`, `toggle_hidden_category`, `list_accounts`, `sync`, `uncategorized_summary`, `list_tags`, `tag_summary`, `tag_transaction`.
+Available tools:
+
+| Tool | Description |
+|------|-------------|
+| `spending_summary` | Income, expenses, and breakdown by category for a given month |
+| `list_transactions` | Search and filter transactions |
+| `edit_transaction` | Rename display name or change category |
+| `clear_edit` | Remove a manual category or name override |
+| `ignore_transaction` | Ignore / un-ignore a transaction |
+| `list_rules` | List category rules |
+| `add_rule` | Add a category rule |
+| `delete_rule` | Delete a category rule |
+| `list_name_rules` | List name rules |
+| `add_name_rule` | Add a name rule |
+| `delete_name_rule` | Delete a name rule |
+| `list_hidden_categories` | List hidden categories |
+| `toggle_hidden_category` | Show or hide a category |
+| `list_accounts` | List connected accounts |
+| `sync` | Pull latest transactions from Plaid |
+| `uncategorized_summary` | Most common uncategorized transaction names |
+| `list_tags` | List tags with transaction counts |
+| `tag_summary` | Income / expenses / category breakdown for a tag |
+| `tag_transaction` | Add or remove a tag on a transaction |
+| `get_balances` | Current balances, net worth, total cash and liquid |
+| `get_financial_health` | Runway, FIRE number, years to retirement |
+| `get_drift` | Per-category spending deltas vs prior period, last year, and 12-month avg |
+| `get_trends` | Month-by-month spending trends for the last N months |
+| `get_finance_guide` | Opinionated personal finance guidance by topic |
 
 Add to your Claude config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 

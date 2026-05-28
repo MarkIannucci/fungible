@@ -3,8 +3,22 @@ import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
 import { Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { loadHealthData, yearsToFire, coastYears, savingsRateColor, runwayColor, type HealthData } from '../core/health.js';
-import { fmt, fmtPct, fmtMonths } from '../core/fmt.js';
+import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
+import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
+
+function savingsRateColor(rate: number): string {
+  if (rate < 0)  return C_NEGATIVE;
+  if (rate < 10) return C_WARNING;
+  if (rate < 20) return C_NEUTRAL;
+  return C_POSITIVE;
+}
+
+function runwayColor(months: number, green: number, yellow: number): string {
+  if (months >= green)  return C_POSITIVE;
+  if (months >= yellow) return C_WARNING;
+  return C_NEGATIVE;
+}
+import { fmt, fmtPct, fmtMonths } from './fmt.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -40,7 +54,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const currentDial: Dial = DIALS[dialIdx];
 
   useInput((input, key) => {
-    if (key.escape || input === '6') { onNavigate('health'); return; }
+    if (key.escape) { onNavigate('dashboard'); return; }
     handleNavKey(input, 'health', onNavigate);
 
     if (key.upArrow)   { setDialIdx((i) => (i - 1 + DIALS.length) % DIALS.length); return; }
@@ -98,7 +112,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       {/* Nav */}
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="health" showHints={showHints} />
       </Box>
 
@@ -166,7 +180,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Text bold dimColor>DEBT</Text>
           <Box gap={3} marginTop={1}>
             <Text dimColor>{'Net cash'.padEnd(L)}</Text>
-            <Text bold color={netCash >= 0 ? 'green' : 'red'}>
+            <Text bold color={netCash >= 0 ? C_POSITIVE : C_NEGATIVE}>
               {(netCash < 0 ? '-' : '') + fmt(netCash).padStart(8)}
             </Text>
             <Text dimColor>
@@ -179,9 +193,9 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
             <Box gap={3}>
               <Text dimColor>{'Debt-free in'.padEnd(L)}</Text>
               {debtMonths === null ? (
-                <Text color="red">{'no surplus'.padStart(8)}</Text>
+                <Text color={C_NEGATIVE}>{'no surplus'.padStart(8)}</Text>
               ) : (
-                <Text bold color={debtMonths <= 6 ? 'green' : debtMonths <= 24 ? 'yellow' : 'white'}>
+                <Text bold color={debtMonths <= 6 ? C_POSITIVE : debtMonths <= 24 ? C_WARNING : C_NEUTRAL}>
                   {fmtMonths(debtMonths).padStart(8)}
                 </Text>
               )}
@@ -198,7 +212,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         <Text bold dimColor>RETIREMENT</Text>
         <Box gap={3} marginTop={1}>
           <Text dimColor>{'Net worth'.padEnd(L)}</Text>
-          <Text bold color={data.netWorth >= 0 ? 'green' : 'red'}>
+          <Text bold color={data.netWorth >= 0 ? C_POSITIVE : C_NEGATIVE}>
             {fmt(data.netWorth).padStart(12)}
           </Text>
         </Box>
@@ -206,16 +220,16 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Text dimColor>{'FIRE number'.padEnd(L)}</Text>
           <Text bold>{fmt(fireNumber).padStart(12)}</Text>
           <Text dimColor>  {fmtPct(fireProgress * 100)}</Text>
-          <Text color="cyan" dimColor>{progressBar(fireProgress)}</Text>
+          <Text color={C_ACCENT} dimColor>{progressBar(fireProgress)}</Text>
         </Box>
         <Box gap={3}>
           <Text dimColor>{'Coast FIRE'.padEnd(L)}</Text>
           {coast === null ? (
             <Text dimColor>{'—'.padStart(12)}</Text>
           ) : coast === 0 ? (
-            <Text color="green" bold>{'Achieved!'.padStart(12)}</Text>
+            <Text color={C_POSITIVE} bold>{'Achieved!'.padStart(12)}</Text>
           ) : (
-            <Text bold color="cyan">{`~${Math.ceil(coast)} yr`.padStart(12)}</Text>
+            <Text bold color={C_ACCENT}>{`~${Math.ceil(coast)} yr`.padStart(12)}</Text>
           )}
           <Text dimColor>
             {coast === null
@@ -228,11 +242,11 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         <Box gap={3}>
           <Text dimColor>{'Est. years away'.padEnd(L)}</Text>
           {years === null ? (
-            <Text color="yellow">{'100+ years'.padStart(12)}</Text>
+            <Text color={C_WARNING}>{'100+ years'.padStart(12)}</Text>
           ) : years === 0 ? (
-            <Text color="green" bold>{'Achieved!'.padStart(12)}</Text>
+            <Text color={C_POSITIVE} bold>{'Achieved!'.padStart(12)}</Text>
           ) : (
-            <Text bold color="cyan">{`~${Math.ceil(years)} yr`.padStart(12)}</Text>
+            <Text bold color={C_ACCENT}>{`~${Math.ceil(years)} yr`.padStart(12)}</Text>
           )}
         </Box>
       </Box>
@@ -243,10 +257,10 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
       <Box flexDirection="column" marginTop={1}>
         <Box gap={2}>
-          <Text color={currentDial === 'spend' ? 'cyan' : undefined}>
+          <Text color={currentDial === 'spend' ? C_ACCENT : undefined}>
             {currentDial === 'spend' ? '▶' : ' '} {'Monthly spending'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'spend' ? 'cyan' : 'white'}>
+          <Text color={currentDial === 'spend' ? C_ACCENT : C_NEUTRAL}>
             {'[ '}{fmt(monthlySpend).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>
@@ -257,10 +271,10 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         </Box>
 
         <Box gap={2}>
-          <Text color={currentDial === 'savings' ? 'cyan' : undefined}>
+          <Text color={currentDial === 'savings' ? C_ACCENT : undefined}>
             {currentDial === 'savings' ? '▶' : ' '} {'Monthly savings'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'savings' ? 'cyan' : 'white'}>
+          <Text color={currentDial === 'savings' ? C_ACCENT : C_NEUTRAL}>
             {'[ '}{fmt(monthlySavings).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>
@@ -271,10 +285,10 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         </Box>
 
         <Box gap={2}>
-          <Text color={currentDial === 'withdrawal' ? 'cyan' : undefined}>
+          <Text color={currentDial === 'withdrawal' ? C_ACCENT : undefined}>
             {currentDial === 'withdrawal' ? '▶' : ' '} {'Withdrawal rate'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'withdrawal' ? 'cyan' : 'white'}>
+          <Text color={currentDial === 'withdrawal' ? C_ACCENT : C_NEUTRAL}>
             {'[ '}{fmtPct(withdrawal).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>
@@ -285,10 +299,10 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         </Box>
 
         <Box gap={2}>
-          <Text color={currentDial === 'growth' ? 'cyan' : undefined}>
+          <Text color={currentDial === 'growth' ? C_ACCENT : undefined}>
             {currentDial === 'growth' ? '▶' : ' '} {'Growth rate'.padEnd(16)}
           </Text>
-          <Text color={currentDial === 'growth' ? 'cyan' : 'white'}>
+          <Text color={currentDial === 'growth' ? C_ACCENT : C_NEUTRAL}>
             {'[ '}{fmtPct(growth).padStart(8)}{' ]'}
           </Text>
           <Text dimColor>

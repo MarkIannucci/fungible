@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { db } from '../core/db.js';
 import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
+import { createTag, renameTag, deleteTag } from '../core/tags.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, bar, truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth } from './useTerminalWidth.js';
+import { useTerminalWidth, CURSOR, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
@@ -51,7 +51,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
     if (mode === 'add') {
       if (key.escape) { setMode('list'); setNewName(''); return; }
       if (key.return && newName.trim()) {
-        db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)').run(newName.trim());
+        createTag(newName.trim());
         setNewName('');
         setMode('list');
         load();
@@ -67,7 +67,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
       if (key.return && newName.trim()) {
         const tag = visibleTags[cursor];
         if (tag) {
-          db.prepare('UPDATE tags SET name = ? WHERE id = ?').run(newName.trim(), tag.id);
+          renameTag(tag.id, newName.trim());
           load();
         }
         setNewName('');
@@ -119,11 +119,10 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
     if (key.upArrow) { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(visibleTags.length - 1, c + 1)); return; }
     if (input === 'a') { setNewName(''); setMode('add'); return; }
-    if (input === 'r' && visibleTags[cursor]) { setNewName(visibleTags[cursor].name); setMode('rename'); return; }
-    if (input === 'd' && visibleTags[cursor]) {
+    if (input === 'n' && visibleTags[cursor]) { setNewName(visibleTags[cursor].name); setMode('rename'); return; }
+    if (input === 'x' && visibleTags[cursor]) {
       const tag = visibleTags[cursor];
-      db.prepare('DELETE FROM transaction_tags WHERE tag_id = ?').run(tag.id);
-      db.prepare('DELETE FROM tags WHERE id = ?').run(tag.id);
+      deleteTag(tag.id);
       setStatusMsg(`Deleted "${tag.name}"`);
       setTimeout(() => setStatusMsg(''), 2000);
       setCursor((c) => Math.max(0, c - 1));
@@ -146,7 +145,7 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="tags" showHints={showHints} />
       </Box>
 
@@ -162,15 +161,15 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
           <Box gap={6} marginY={1}>
             <Box flexDirection="column">
               <Text dimColor>Income</Text>
-              <Text color="green" bold>{fmt(tagSummary.income)}</Text>
+              <Text color={C_POSITIVE} bold>{fmt(tagSummary.income)}</Text>
             </Box>
             <Box flexDirection="column">
               <Text dimColor>Expenses</Text>
-              <Text color="red" bold>{fmt(tagSummary.expenses)}</Text>
+              <Text color={C_NEGATIVE} bold>{fmt(tagSummary.expenses)}</Text>
             </Box>
             <Box flexDirection="column">
               <Text dimColor>Net</Text>
-              <Text color={tagSummary.net >= 0 ? 'green' : 'red'} bold>
+              <Text color={tagSummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} bold>
                 {tagSummary.net >= 0 ? '+' : '-'}{fmt(tagSummary.net)}
               </Text>
             </Box>
@@ -192,12 +191,12 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
                   const isSelected = catCursor === i;
                   return (
                     <Box key={row.category} gap={2}>
-                      <Text color={isSelected ? 'cyan' : undefined}>
+                      <Text color={isSelected ? C_ACCENT : undefined}>
                         {isSelected ? '▶ ' : '  '}
                         {truncate(row.category, 20).padEnd(20)}
                       </Text>
-                      <Text color="yellow">{fmt(row.total).padStart(10)}</Text>
-                      <Text color="cyan" dimColor={!isSelected}>{bar(row.total, maxCategorySpend)}</Text>
+                      <Text color={C_WARNING}>{fmt(row.total).padStart(10)}</Text>
+                      <Text color={C_ACCENT} dimColor={!isSelected}>{bar(row.total, maxCategorySpend)}</Text>
                     </Box>
                   );
                 })
@@ -208,14 +207,14 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
       ) : (
         <>
           <Box justifyContent="space-between" marginTop={1}>
-            <Text bold>Tags{search ? <Text color="yellow">  /{search}</Text> : null}</Text>
-            {showHints && <Text dimColor>[/] search  ·  [a] add  [r] rename  [d] delete  ·  Enter detail  ·  [t] transactions</Text>}
+            <Text bold>Tags{search ? <Text color={C_WARNING}>  /{search}</Text> : null}</Text>
+            {showHints && <Text dimColor>[/] search  ·  [a] add  [n] rename  [x] delete  ·  Enter detail  ·  [t] transactions</Text>}
           </Box>
           {mode === 'search' && (
             <Box marginTop={1}>
-              <Text color="cyan">/</Text>
-              <Text color="yellow">{search}</Text>
-              <Text color="cyan">█</Text>
+              <Text color={C_ACCENT}>/</Text>
+              <Text color={C_WARNING}>{search}</Text>
+              <Text color={C_ACCENT}>█</Text>
               <Text dimColor>  Esc cancel</Text>
             </Box>
           )}
@@ -228,8 +227,8 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
               const isSelected = i === cursor;
               return (
                 <Box key={t.id} gap={2} marginTop={i === 0 ? 1 : 0}>
-                  <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶ ' : '  '}</Text>
-                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
+                  <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶ ' : '  '}</Text>
+                  <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
                     {t.name.length > tagNameW ? t.name.slice(0, tagNameW - 1) + '…' : t.name.padEnd(tagNameW)}
                   </Text>
                   <Text dimColor>{t.count} transaction{t.count !== 1 ? 's' : ''}</Text>
@@ -240,27 +239,27 @@ export function Tags({ onNavigate, isActive, showHints }: { onNavigate: (s: Scre
 
           <Box marginTop={1}><Divider /></Box>
           <Text dimColor>{search ? `${visibleTags.length} of ${tags.length}` : `${tags.length}`} tag{tags.length !== 1 ? 's' : ''}</Text>
-          {statusMsg && <Text color="green">{statusMsg}</Text>}
+          {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
 
           {mode === 'add' && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
               <Text bold>New Tag</Text>
               <Text dimColor>Type name · Enter save · Esc cancel</Text>
               <Box marginTop={1}>
                 <Text>Name: </Text>
-                <Text color="yellow">{newName}</Text>
-                <Text color="cyan">▊</Text>
+                <Text color={C_WARNING}>{newName}</Text>
+                <Text color={C_ACCENT}>{CURSOR}</Text>
               </Box>
             </Box>
           )}
           {mode === 'rename' && visibleTags[cursor] && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
               <Text bold>Rename Tag</Text>
               <Text dimColor>Enter save · Esc cancel</Text>
               <Box marginTop={1}>
                 <Text>Name: </Text>
-                <Text color="yellow">{newName}</Text>
-                <Text color="cyan">▊</Text>
+                <Text color={C_WARNING}>{newName}</Text>
+                <Text color={C_ACCENT}>{CURSOR}</Text>
               </Box>
             </Box>
           )}

@@ -1,25 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { db } from '../core/db.js';
-import { categorize } from '../core/categorize.js';
-import { rebuildDisplayNames } from '../core/rename.js';
 import { getAllRules, getAllNameRules, getAllCategories, getCategoryDetails, getHiddenCategorySet, toggleHiddenCategory, type Rule, type NameRule, type CategoryDetail } from '../core/queries.js';
+import {
+  getUncategorizedCount, deleteCategoryRule, deleteNameRule,
+  saveCategoryRule, saveNameRule, setCategoryFlexibility,
+  deleteCategory, renameCategory, createCategory,
+} from '../core/rules.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth } from './useTerminalWidth.js';
+import { useTerminalWidth, CURSOR, FLEX_COLORS, C_ACCENT, C_MANUAL, C_NEUTRAL, C_POSITIVE, C_WARNING } from './ui.js';
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
-const FLEX_COLORS: Record<string, string> = { fixed: 'red', flexible: 'yellow', discretionary: 'cyan' };
 type Mode = 'list' | 'search' | 'add-pattern' | 'add-type' | 'add-min-amount' | 'add-max-amount' | 'add-category' | 'add-name-pattern' | 'add-name-type' | 'add-name-min-amount' | 'add-name-max-amount' | 'add-name-replacement' | 'add-category-name' | 'rename-category';
 type Section = 'rules' | 'names' | 'categories';
 
 const SECTIONS: Section[] = ['rules', 'names', 'categories'];
-
-function getUncategorizedCount() {
-  return (db.prepare("SELECT COUNT(*) as c FROM transactions WHERE category = 'Uncategorized'").get() as { c: number }).c;
-}
 
 export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
   const [rules, setRules] = useState<Rule[]>([]);
@@ -83,16 +80,15 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   useEffect(() => { load(); }, []);
 
-  function deleteRule(id: number) {
-    db.prepare('DELETE FROM category_rules WHERE id = ?').run(id);
+  function handleDeleteRule(id: number) {
+    deleteCategoryRule(id);
     setStatusMsg('Rule deleted');
     setTimeout(() => setStatusMsg(''), 2000);
     load();
   }
 
-  function deleteNameRule(id: number) {
-    db.prepare('DELETE FROM name_rules WHERE id = ?').run(id);
-    rebuildDisplayNames();
+  function handleDeleteNameRule(id: number) {
+    deleteNameRule(id);
     setStatusMsg('Name rule deleted');
     setTimeout(() => setStatusMsg(''), 2000);
     load();
@@ -102,32 +98,12 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     const category = categories[catCursor];
     const minAmt = newMinAmount.trim() ? parseFloat(newMinAmount) : null;
     const maxAmt = newMaxAmount.trim() ? parseFloat(newMaxAmount) : null;
-    if (editingRuleId !== null) {
-      db.prepare('UPDATE category_rules SET match_type = ?, pattern = ?, category = ?, min_amount = ?, max_amount = ? WHERE id = ?')
-        .run(newType, newPattern, category, minAmt, maxAmt, editingRuleId);
-      setEditingRuleId(null);
-    } else {
-      const existing = db.prepare('SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?')
-        .get(newType, newPattern) as { id: number } | undefined;
-      if (existing) {
-        db.prepare('UPDATE category_rules SET category = ?, min_amount = ?, max_amount = ? WHERE id = ?').run(category, minAmt, maxAmt, existing.id);
-      } else {
-        db.prepare('INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (10, ?, ?, ?, ?, ?)')
-          .run(newType, newPattern, category, minAmt, maxAmt);
-      }
-    }
-
-    // Apply to all transactions without a manual override
-    const rows = db.prepare(
-      'SELECT id, name, merchant_name, raw_category, amount, category FROM transactions WHERE manual_category IS NULL'
-    ).all() as { id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number; category: string }[];
-    const update = db.prepare('UPDATE transactions SET category = ? WHERE id = ?');
-    let count = 0;
-    for (const tx of rows) {
-      const cat = categorize(tx.name, tx.merchant_name, tx.raw_category, tx.amount);
-      if (cat !== tx.category) { update.run(cat, tx.id); count++; }
-    }
-
+    const count = saveCategoryRule({
+      pattern: newPattern, matchType: newType, category,
+      minAmount: minAmt, maxAmount: maxAmt,
+      editingId: editingRuleId,
+    });
+    setEditingRuleId(null);
     setStatusMsg(`Rule saved · recategorized ${count} transactions`);
     setTimeout(() => setStatusMsg(''), 3000);
     setNewPattern('');
@@ -135,19 +111,16 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     load();
   }
 
-  function saveNameRule() {
+  function handleSaveNameRule() {
     const minAmt = newNameMinAmount.trim() ? parseFloat(newNameMinAmount) : null;
     const maxAmt = newNameMaxAmount.trim() ? parseFloat(newNameMaxAmount) : null;
-    if (editingNameRuleId !== null) {
-      db.prepare('UPDATE name_rules SET match_type = ?, pattern = ?, replacement = ?, min_amount = ?, max_amount = ? WHERE id = ?')
-        .run(newNameType, newNamePattern, newReplacement, minAmt, maxAmt, editingNameRuleId);
-      setEditingNameRuleId(null);
-    } else {
-      db.prepare('INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES (?, ?, ?, ?, ?)')
-        .run(newNameType, newNamePattern, newReplacement, minAmt, maxAmt);
-    }
-    rebuildDisplayNames();
-    setStatusMsg(`Name rule saved`);
+    saveNameRule({
+      pattern: newNamePattern, matchType: newNameType, replacement: newReplacement,
+      minAmount: minAmt, maxAmount: maxAmt,
+      editingId: editingNameRuleId,
+    });
+    setEditingNameRuleId(null);
+    setStatusMsg('Name rule saved');
     setTimeout(() => setStatusMsg(''), 3000);
     setNewNamePattern('');
     setNewReplacement('');
@@ -189,7 +162,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCursor((c) => Math.min(filteredRules.length - 1, c + 1));
         if (input === 'a') { setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0); setMode('add-pattern'); }
-        if (input === 'd' && filteredRules[cursor]) { deleteRule(filteredRules[cursor].id); }
+        if (input === 'x' && filteredRules[cursor]) { handleDeleteRule(filteredRules[cursor].id); }
         if ((input === 'e' || key.return) && filteredRules[cursor]) {
           const r = filteredRules[cursor];
           setEditingRuleId(r.id);
@@ -204,7 +177,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setNameCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setNameCursor((c) => Math.min(filteredNameRules.length - 1, c + 1));
         if (input === 'a') { setEditingNameRuleId(null); setNewNamePattern(''); setNewNameType('name'); setNewNameMinAmount(''); setNewNameMaxAmount(''); setNewReplacement(''); setMode('add-name-pattern'); }
-        if (input === 'd' && filteredNameRules[nameCursor]) { deleteNameRule(filteredNameRules[nameCursor].id); }
+        if (input === 'x' && filteredNameRules[nameCursor]) { handleDeleteNameRule(filteredNameRules[nameCursor].id); }
         if ((input === 'e' || key.return) && filteredNameRules[nameCursor]) {
           const r = filteredNameRules[nameCursor];
           setEditingNameRuleId(r.id);
@@ -219,7 +192,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setCatListCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCatListCursor((c) => Math.min(categories.length - 1, c + 1));
         if (input === 'a') { setNewCategoryName(''); setMode('add-category-name'); return; }
-        if (input === 'x' && categories[catListCursor]) {
+        if (input === 'v' && categories[catListCursor]) {
           const cat = categories[catListCursor];
           const nowHidden = !hiddenSet.has(cat);
           toggleHiddenCategory(cat, hiddenSet);
@@ -232,20 +205,18 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           const cat = catDetails[catListCursor];
           const idx = FLEX_CYCLE.indexOf(cat.flexibility);
           const next = FLEX_CYCLE[(idx + 1) % FLEX_CYCLE.length];
-          db.prepare('UPDATE categories SET flexibility = ? WHERE name = ?').run(next, cat.name);
+          setCategoryFlexibility(cat.name, next);
           load();
           return;
         }
-        if (input === 'r' && categories[catListCursor]) {
+        if (input === 'n' && categories[catListCursor]) {
           setRenameCatInput(categories[catListCursor]);
           setMode('rename-category');
           return;
         }
-        if (input === 'd' && categories[catListCursor]) {
+        if (input === 'x' && categories[catListCursor]) {
           const name = categories[catListCursor];
-          db.prepare("UPDATE transactions SET category = 'Uncategorized', manual_category = NULL WHERE category = ?").run(name);
-          db.prepare('DELETE FROM hidden_categories WHERE category = ?').run(name);
-          db.prepare('DELETE FROM categories WHERE name = ?').run(name);
+          deleteCategory(name);
           setStatusMsg(`Deleted "${name}"`);
           setTimeout(() => setStatusMsg(''), 2000);
           load();
@@ -296,14 +267,14 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       if (key.backspace || key.delete) { setNewNameMaxAmount((p) => p.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setNewNameMaxAmount((p) => p + input);
     } else if (mode === 'add-name-replacement') {
-      if (key.return) { if (newReplacement) saveNameRule(); return; }
+      if (key.return) { if (newReplacement) handleSaveNameRule(); return; }
       if (key.escape) { setMode('list'); return; }
       if (key.backspace || key.delete) { setNewReplacement((p) => p.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setNewReplacement((p) => p + input);
     } else if (mode === 'add-category-name') {
       if (key.escape) { setMode('list'); return; }
       if (key.return && newCategoryName.trim()) {
-        db.prepare('INSERT OR IGNORE INTO categories (name) VALUES (?)').run(newCategoryName.trim());
+        createCategory(newCategoryName.trim());
         setStatusMsg(`Added "${newCategoryName.trim()}"`);
         setTimeout(() => setStatusMsg(''), 2000);
         setNewCategoryName('');
@@ -319,12 +290,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         const oldName = categories[catListCursor];
         const newName = renameCatInput.trim();
         if (oldName && newName !== oldName) {
-          db.prepare('INSERT OR IGNORE INTO categories (name, flexibility) SELECT ?, flexibility FROM categories WHERE name = ?').run(newName, oldName);
-          db.prepare('UPDATE transactions SET category = ? WHERE category = ?').run(newName, oldName);
-          db.prepare('UPDATE transactions SET manual_category = ? WHERE manual_category = ?').run(newName, oldName);
-          db.prepare('UPDATE category_rules SET category = ? WHERE category = ?').run(newName, oldName);
-          db.prepare('UPDATE hidden_categories SET category = ? WHERE category = ?').run(newName, oldName);
-          db.prepare('DELETE FROM categories WHERE name = ?').run(oldName);
+          renameCategory(oldName, newName);
           setStatusMsg(`Renamed to "${newName}"`);
           setTimeout(() => setStatusMsg(''), 2000);
           load();
@@ -353,34 +319,34 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       {/* Header */}
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="rules" showHints={showHints} />
       </Box>
       <Box justifyContent="space-between" marginTop={1}>
         <Box gap={3}>
           {SECTIONS.map((s) => (
-            <Text key={s} bold color={section === s ? 'white' : undefined} dimColor={section !== s}>
+            <Text key={s} bold color={section === s ? C_NEUTRAL : undefined} dimColor={section !== s}>
               {s === 'rules' ? 'Category Rules' : s === 'names' ? 'Name Rules' : 'Categories'}
             </Text>
           ))}
         </Box>
         {showHints && <Text dimColor>
           {section === 'categories'
-            ? '[a] add  [r] rename  [d] delete  [x] hidden  [f] flexibility  ·  [Tab] switch'
-            : '[/] search  [a] add  [e] edit  [d] delete  ·  [Tab] switch'}
+            ? '[a] add  [n] rename  [x] delete  [v] hidden  [f] flexibility  ·  [Tab] switch'
+            : '[/] search  [a] add  [e] edit  [x] delete  ·  [Tab] switch'}
         </Text>}
       </Box>
 
       {mode === 'search' ? (
         <Box marginTop={1}>
-          <Text color="cyan">/</Text>
+          <Text color={C_ACCENT}>/</Text>
           <Text>{search}</Text>
-          <Text color="cyan">█</Text>
+          <Text color={C_ACCENT}>█</Text>
           <Text dimColor>  Esc clear</Text>
         </Box>
       ) : search ? (
         <Box marginTop={1} gap={1}>
-          <Text color="yellow">"{search}"</Text>
+          <Text color={C_WARNING}>"{search}"</Text>
           <Text dimColor>· Esc to clear</Text>
         </Box>
       ) : null}
@@ -405,13 +371,13 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
               : '';
             return (
               <Box key={rule.id} gap={2}>
-                <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▶ ' : '  '}</Text>
-                <Text color="yellow" dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
+                <Text color={isSelected ? C_ACCENT : C_NEUTRAL}>{isSelected ? '▶ ' : '  '}</Text>
+                <Text color={C_WARNING} dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
                 <Text dimColor={!isSelected}>
                   {rule.pattern.length > rulePatW ? rule.pattern.slice(0, rulePatW - 1) + '…' : rule.pattern.padEnd(rulePatW)}
                 </Text>
-                {amtLabel ? <Text color="magenta" dimColor={!isSelected}>{truncate(amtLabel, 10).padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
-                <Text color="cyan" dimColor={!isSelected}>{rule.category.length > ruleCatW ? rule.category.slice(0, ruleCatW - 1) + '…' : rule.category.padEnd(ruleCatW)}</Text>
+                {amtLabel ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amtLabel, 10).padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
+                <Text color={C_ACCENT} dimColor={!isSelected}>{rule.category.length > ruleCatW ? rule.category.slice(0, ruleCatW - 1) + '…' : rule.category.padEnd(ruleCatW)}</Text>
                 <Text dimColor>{rule.priority}</Text>
               </Box>
             );
@@ -419,7 +385,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           <Divider />
           <Box gap={4}>
             <Text dimColor>{filteredRules.length}{search ? `/${rules.length}` : ''} rules</Text>
-            {uncategorized > 0 && <Text color="yellow">{uncategorized} uncategorized transactions</Text>}
+            {uncategorized > 0 && <Text color={C_WARNING}>{uncategorized} uncategorized transactions</Text>}
           </Box>
         </>
       )}
@@ -445,15 +411,15 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
                   : '';
                 return (
                   <Box key={rule.id} gap={2}>
-                    <Text color={isSelected ? 'cyan' : 'white'}>{isSelected ? '▶ ' : '  '}</Text>
-                    <Text color="yellow" dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
+                    <Text color={isSelected ? C_ACCENT : C_NEUTRAL}>{isSelected ? '▶ ' : '  '}</Text>
+                    <Text color={C_WARNING} dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
                     <Text dimColor={!isSelected}>
                       {rule.pattern.length > namePatW ? rule.pattern.slice(0, namePatW - 1) + '…' : rule.pattern.padEnd(namePatW)}
                     </Text>
                     {amtLabel
-                      ? <Text color="magenta" dimColor={!isSelected}>{truncate(amtLabel, 12).padEnd(12)}</Text>
+                      ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amtLabel, 12).padEnd(12)}</Text>
                       : <Text>{' '.repeat(12)}</Text>}
-                    <Text color="green" dimColor={!isSelected}>{rule.replacement.length > nameReplW ? rule.replacement.slice(0, nameReplW - 1) + '…' : rule.replacement}</Text>
+                    <Text color={C_POSITIVE} dimColor={!isSelected}>{rule.replacement.length > nameReplW ? rule.replacement.slice(0, nameReplW - 1) + '…' : rule.replacement}</Text>
                   </Box>
                 );
               })}
@@ -476,13 +442,13 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
               const flexColor = cat.flexibility ? FLEX_COLORS[cat.flexibility] : undefined;
               return (
                 <Box key={cat.name} gap={2}>
-                  <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶ ' : '  '}</Text>
-                  <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>{cat.name.length > catNameW ? cat.name.slice(0, catNameW - 1) + '…' : cat.name.padEnd(catNameW)}</Text>
+                  <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶ ' : '  '}</Text>
+                  <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>{cat.name.length > catNameW ? cat.name.slice(0, catNameW - 1) + '…' : cat.name.padEnd(catNameW)}</Text>
                   {cat.flexibility
                     ? <Text color={flexColor} dimColor={!isSelected}>{cat.flexibility.padEnd(14)}</Text>
                     : <Text dimColor>{'—'.padEnd(14)}</Text>}
                   {isHidden
-                    ? <Text color="yellow" dimColor={!isSelected}>hidden</Text>
+                    ? <Text color={C_WARNING} dimColor={!isSelected}>hidden</Text>
                     : <Text dimColor>—</Text>}
                 </Box>
               );
@@ -496,49 +462,49 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         </>
       )}
 
-      {statusMsg && <Text color="green" bold>{statusMsg}</Text>}
+      {statusMsg && <Text color={C_POSITIVE} bold>{statusMsg}</Text>}
 
       {mode === 'add-pattern' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Pattern</Text>
           <Text dimColor>Type pattern · Enter · Esc cancel</Text>
-          <Box marginTop={1}><Text>Pattern: </Text><Text color="yellow">{newPattern}<Text color="cyan">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Pattern: </Text><Text color={C_WARNING}>{newPattern}<Text color={C_ACCENT}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-type' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Match Type</Text>
-          <Text>Pattern: <Text color="yellow">"{newPattern}"</Text></Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text></Text>
           <Box gap={4} marginTop={1}>
-            <Text color="cyan">[n] name match</Text>
-            <Text color="cyan">[r] regex match</Text>
+            <Text color={C_ACCENT}>[n] name match</Text>
+            <Text color={C_ACCENT}>[r] regex match</Text>
           </Box>
         </Box>
       )}
       {mode === 'add-min-amount' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Min Amount <Text dimColor>(optional)</Text></Text>
-          <Text>Pattern: <Text color="yellow">"{newPattern}"</Text>  Type: <Text color="yellow">{newType}</Text></Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text>  Type: <Text color={C_WARNING}>{newType}</Text></Text>
           <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1}><Text>Min $: </Text><Text color="yellow">{newMinAmount}<Text color="cyan">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Min $: </Text><Text color={C_WARNING}>{newMinAmount}<Text color={C_ACCENT}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-max-amount' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Max Amount <Text dimColor>(optional)</Text></Text>
-          <Text>Pattern: <Text color="yellow">"{newPattern}"</Text>  {newMinAmount && <Text>Min: <Text color="magenta">${newMinAmount}</Text></Text>}</Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text>  {newMinAmount && <Text>Min: <Text color={C_MANUAL}>${newMinAmount}</Text></Text>}</Text>
           <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1}><Text>Max $: </Text><Text color="yellow">{newMaxAmount}<Text color="cyan">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Max $: </Text><Text color={C_WARNING}>{newMaxAmount}<Text color={C_ACCENT}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-category' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
           <Text bold>{editingRuleId !== null ? 'Edit' : 'New'} Rule — Category</Text>
-          <Text>Pattern: <Text color="yellow">"{newPattern}"</Text>  Type: <Text color="yellow">{newType}</Text></Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newPattern}"</Text>  Type: <Text color={C_WARNING}>{newType}</Text></Text>
           <Text dimColor>↑↓ select · Enter save · Esc cancel</Text>
           <Box flexDirection="column" marginTop={1}>
             {categories.map((cat, i) => (
-              <Text key={cat} color={i === catCursor ? 'cyan' : 'white'} dimColor={i !== catCursor}>
+              <Text key={cat} color={i === catCursor ? C_ACCENT : C_NEUTRAL} dimColor={i !== catCursor}>
                 {i === catCursor ? '▶ ' : '  '}{cat}
               </Text>
             ))}
@@ -547,59 +513,59 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       )}
 
       {mode === 'add-name-pattern' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_POSITIVE} paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Pattern</Text>
           <Text dimColor>Matches against the raw transaction name</Text>
-          <Box marginTop={1}><Text>Pattern: </Text><Text color="yellow">{newNamePattern}<Text color="green">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Pattern: </Text><Text color={C_WARNING}>{newNamePattern}<Text color={C_POSITIVE}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-type' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_POSITIVE} paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Match Type</Text>
-          <Text>Pattern: <Text color="yellow">"{newNamePattern}"</Text></Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text></Text>
           <Box gap={4} marginTop={1}>
-            <Text color="green">[n] name match (replaces whole name)</Text>
-            <Text color="green">[r] regex (can use capture groups)</Text>
+            <Text color={C_POSITIVE}>[n] name match (replaces whole name)</Text>
+            <Text color={C_POSITIVE}>[r] regex (can use capture groups)</Text>
           </Box>
         </Box>
       )}
       {mode === 'add-category-name' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
           <Text bold>New Category</Text>
           <Text dimColor>Type a name · Enter save · Esc cancel</Text>
-          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{newCategoryName}<Text color="cyan">▊</Text></Text></Box>
+          <Box marginTop={1}><Text>Name: </Text><Text color={C_WARNING}>{newCategoryName}<Text color={C_ACCENT}>{CURSOR}</Text></Text></Box>
         </Box>
       )}
       {mode === 'rename-category' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
           <Text bold>Rename Category</Text>
           <Text dimColor>Updates all transactions, rules, and hidden settings · Enter save · Esc cancel</Text>
-          <Box marginTop={1}><Text>Name: </Text><Text color="yellow">{renameCatInput}<Text color="cyan">▊</Text></Text></Box>
+          <Box marginTop={1}><Text>Name: </Text><Text color={C_WARNING}>{renameCatInput}<Text color={C_ACCENT}>{CURSOR}</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-min-amount' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_POSITIVE} paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Min Amount <Text dimColor>(optional)</Text></Text>
-          <Text>Pattern: <Text color="yellow">"{newNamePattern}"</Text>  Type: <Text color="yellow">{newNameType}</Text></Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text>  Type: <Text color={C_WARNING}>{newNameType}</Text></Text>
           <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1}><Text>Min $: </Text><Text color="yellow">{newNameMinAmount}<Text color="green">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Min $: </Text><Text color={C_WARNING}>{newNameMinAmount}<Text color={C_POSITIVE}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-max-amount' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_POSITIVE} paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Max Amount <Text dimColor>(optional)</Text></Text>
-          <Text>Pattern: <Text color="yellow">"{newNamePattern}"</Text>  {newNameMinAmount && <Text>Min: <Text color="magenta">${newNameMinAmount}</Text>  </Text>}</Text>
+          <Text>Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text>  {newNameMinAmount && <Text>Min: <Text color={C_MANUAL}>${newNameMinAmount}</Text>  </Text>}</Text>
           <Text dimColor>Enter to skip · Esc cancel</Text>
-          <Box marginTop={1}><Text>Max $: </Text><Text color="yellow">{newNameMaxAmount}<Text color="green">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Max $: </Text><Text color={C_WARNING}>{newNameMaxAmount}<Text color={C_POSITIVE}>█</Text></Text></Box>
         </Box>
       )}
       {mode === 'add-name-replacement' && (
-        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="green" paddingX={2} paddingY={1}>
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_POSITIVE} paddingX={2} paddingY={1}>
           <Text bold>{editingNameRuleId !== null ? 'Edit' : 'New'} Name Rule — Replacement</Text>
           <Text>
-            Pattern: <Text color="yellow">"{newNamePattern}"</Text>  Type: <Text color="yellow">{newNameType}</Text>
+            Pattern: <Text color={C_WARNING}>"{newNamePattern}"</Text>  Type: <Text color={C_WARNING}>{newNameType}</Text>
             {(newNameMinAmount || newNameMaxAmount) && (
-              <Text>  Amount: <Text color="magenta">
+              <Text>  Amount: <Text color={C_MANUAL}>
                 {newNameMinAmount && newNameMaxAmount && newNameMinAmount === newNameMaxAmount
                   ? `$${newNameMinAmount}`
                   : newNameMinAmount && newNameMaxAmount
@@ -609,7 +575,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
             )}
           </Text>
           <Text dimColor>The display name to show instead</Text>
-          <Box marginTop={1}><Text>Replace with: </Text><Text color="green">{newReplacement}<Text color="green">█</Text></Text></Box>
+          <Box marginTop={1}><Text>Replace with: </Text><Text color={C_POSITIVE}>{newReplacement}<Text color={C_POSITIVE}>█</Text></Text></Box>
         </Box>
       )}
     </Box>

@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { spawn } from 'node:child_process';
-import { db } from '../core/db.js';
-import { categorize } from '../core/categorize.js';
 import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
-import { parseCSV, parseDate, generateTxId } from '../core/csv.js';
+import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
+import {
+  updateAccountTypeSubtype, updateAccountNickname, updateAccountValue,
+  createManualAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
+} from '../core/accounts.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { NavHints, handleNavKey } from './nav.js';
-import { useTerminalWidth } from './useTerminalWidth.js';
+import { useTerminalWidth, CURSOR, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,8 +48,6 @@ const SUBTYPES: Record<string, string[]> = {
   loan:        ['mortgage', 'student', 'auto', 'home equity', 'personal', 'line of credit', 'business', 'other'],
   other:       [],
 };
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -143,8 +143,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function saveEdit() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
-    db.prepare('UPDATE accounts SET type = ?, subtype = ? WHERE id = ?')
-      .run(editType, editSubtype.trim() || null, acct.id);
+    updateAccountTypeSubtype(acct.id, editType, editSubtype.trim() || null);
     setAcctMode('list');
     setAcctMsg(`Updated ${acct.name}`);
     setTimeout(() => setAcctMsg(''), 2500);
@@ -170,21 +169,15 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function saveManualAsset() {
     const value = parseFloat(manualValue.replace(/[$,]/g, ''));
     if (isNaN(value) || value < 0) { setManualValueError('Enter a valid positive number'); return; }
-    const id = `manual-${Date.now()}`;
-    const today = new Date().toISOString().slice(0, 10);
-    db.prepare('INSERT INTO accounts (id, name, type, subtype) VALUES (?, ?, ?, ?)').run(id, manualName.trim(), 'other', 'manual');
-    db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(id, value, today);
+    createManualAccount(manualName, value);
     setAddStep('manual-done');
     loadAccounts();
   }
 
-  function deleteAccount() {
+  function handleDeleteAccount() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
-    db.prepare('DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id = ?)').run(acct.id);
-    db.prepare('DELETE FROM transactions WHERE account_id = ?').run(acct.id);
-    db.prepare('DELETE FROM balance_history WHERE account_id = ?').run(acct.id);
-    db.prepare('DELETE FROM accounts WHERE id = ?').run(acct.id);
+    deleteAccount(acct.id);
     setAcctMode('list');
     setAcctCursor((c) => Math.max(0, c - 1));
     setAcctMsg(`Deleted ${acct.nickname ?? acct.name}`);
@@ -196,7 +189,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
     const nickname = nicknameInput.trim() || null;
-    db.prepare('UPDATE accounts SET nickname = ? WHERE id = ?').run(nickname, acct.id);
+    updateAccountNickname(acct.id, nickname);
     setAcctMode('list');
     setAcctMsg(nickname ? `Nickname set to "${nickname}"` : 'Nickname cleared');
     setTimeout(() => setAcctMsg(''), 2500);
@@ -208,8 +201,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (!acct) return;
     const value = parseFloat(updateValueInput.replace(/[$,]/g, ''));
     if (isNaN(value) || value < 0) { setUpdateValueError('Enter a valid positive number'); return; }
-    const today = new Date().toISOString().slice(0, 10);
-    db.prepare('INSERT OR REPLACE INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)').run(acct.id, value, today);
+    updateAccountValue(acct.id, value);
     setAcctMode('list');
     setAcctMsg(`Updated value for ${acct.name}`);
     setTimeout(() => setAcctMsg(''), 2500);
@@ -267,31 +259,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   function doImport() {
     const acct = csvAccounts[csvAccountCursor];
-    const insert = db.prepare(`
-      INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending)
-      VALUES (?, ?, ?, ?, ?, ?, NULL, 0)
-    `);
-    let imported = 0, skipped = 0;
-    for (const row of csvRows) {
-      const rawDate = row[dateCol!] ?? '';
-      const name = row[nameCol!] ?? '';
-      let amount: number;
-      if (amountMode === 'split') {
-        const debit = parseFloat(row[debitCol!] || '0') || 0;
-        const credit = parseFloat(row[creditCol!] || '0') || 0;
-        amount = debit > 0 ? debit : -credit;
-      } else {
-        const raw = parseFloat(row[amountCol!] || '0') || 0;
-        amount = positiveIsInflow ? -raw : raw;
-      }
-      if (!rawDate || !name || isNaN(amount)) { skipped++; continue; }
-      const date = parseDate(rawDate);
-      const category = categorize(name, null, null);
-      const id = generateTxId(acct.mask ?? acct.id, date, name, amount);
-      const changes = (insert.run(id, acct.id, date, name, amount, category) as any).changes;
-      if (changes > 0) imported++; else skipped++;
-    }
-    setImportResult({ imported, skipped });
+    const result = importCsvTransactions(csvRows, acct, {
+      amountMode, dateCol: dateCol!, nameCol: nameCol!,
+      amountCol, debitCol, creditCol, positiveIsInflow,
+    });
+    setImportResult(result);
     setAddStep('done');
   }
 
@@ -372,7 +344,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
       if (acctMode === 'confirm-delete') {
         if (key.escape || input === 'n') { setAcctMode('list'); return; }
-        if (input === 'y') { deleteAccount(); return; }
+        if (input === 'y') { handleDeleteAccount(); return; }
         return;
       }
 
@@ -396,7 +368,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         setAcctMode('update-value');
         return;
       }
-      if (input === 'd' && linkedAccounts[acctCursor]) { setAcctMode('confirm-delete'); return; }
+      if (input === 'x' && linkedAccounts[acctCursor]) { setAcctMode('confirm-delete'); return; }
+
       if (input === 'r' && linkedAccounts[acctCursor]) {
         setMainView('add-data');
         setAddStep('link-plaid');
@@ -413,17 +386,15 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.tab) { setMainView('accounts'); return; }
       if (key.upArrow)   { setDupeCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setDupeCursor((c) => Math.min(dupes.length - 1, c + 1)); return; }
-      if (input === 'd' && dupes[dupeCursor]) {
-        db.prepare('DELETE FROM transactions WHERE id = ?').run(dupes[dupeCursor].csvId);
+      if (input === 'x' && dupes[dupeCursor]) {
+        deleteDuplicate(dupes[dupeCursor].csvId);
         const next = getCsvPlaidDupeCandidates();
         setDupes(next);
         setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
         return;
       }
-      if (input === 'D') {
-        const ids = dupes.map((p) => p.csvId);
-        const placeholders = ids.map(() => '?').join(',');
-        db.prepare(`DELETE FROM transactions WHERE id IN (${placeholders})`).run(...ids);
+      if (input === 'X') {
+        deleteAllDuplicates(dupes.map((p) => p.csvId));
         setDupes([]);
         setDupeCursor(0);
         return;
@@ -541,15 +512,15 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       {/* Header */}
       <Box justifyContent="space-between">
-        <Text bold color="cyan">fungible</Text>
+        <Text bold color={C_ACCENT}>fungible</Text>
         <NavHints current="accounts" showHints={showHints} />
       </Box>
 
       <Box marginTop={1}>
         <Box gap={3}>
-          <Text bold color={mainView === 'accounts' ? 'white' : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
-          <Text bold color={mainView === 'add-data' ? 'white' : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
-          <Text bold color={mainView === 'dupes' ? 'white' : undefined} dimColor={mainView !== 'dupes'}>
+          <Text bold color={mainView === 'accounts' ? C_NEUTRAL : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
+          <Text bold color={mainView === 'add-data' ? C_NEUTRAL : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
+          <Text bold color={mainView === 'dupes' ? C_NEUTRAL : undefined} dimColor={mainView !== 'dupes'}>
             Dupes{dupes.length > 0 ? ` (${dupes.length})` : ''}
           </Text>
           {showHints && <Text dimColor>[Tab]</Text>}
@@ -558,11 +529,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
-            ? `↑↓ select  ·  [e] edit  ·  [n] nickname${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [d] delete  ·  [s] sync`
+            ? `↑↓ select  ·  [e] edit  ·  [n] nickname${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
             ? 'Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel'
             : mainView === 'dupes'
-            ? '↑↓ select  ·  [d] delete CSV copy  ·  [D] delete all'
+            ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
             : ''}
         </Text>
       </Box>}
@@ -581,26 +552,25 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1}>
               {linkedAccounts.map((acct, i) => {
                 const isSelected = i === acctCursor;
-                const SUBTYPE_DISPLAY: Record<string, string> = { 'crypto exchange': 'crypto' };
                 const raw = acct.subtype ?? acct.type;
                 const label = (SUBTYPE_DISPLAY[raw] ?? raw).padEnd(14);
                 const institution = acct.institution_name ? truncate(acct.institution_name, acctInstW) : '';
                 return (
                   <Box key={acct.id} gap={2}>
-                    <Text color={isSelected ? 'cyan' : undefined}>
+                    <Text color={isSelected ? C_ACCENT : undefined}>
                       {isSelected ? '▶ ' : '  '}
                     </Text>
-                    <Text color={isSelected ? 'cyan' : undefined} dimColor={!isSelected}>
+                    <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
                       {truncate(acct.nickname ?? acct.name, acctNameW).padEnd(acctNameW)}
                     </Text>
-                    <Text dimColor={!isSelected} color={isSelected && acct.nickname ? 'yellow' : undefined}>{acct.nickname ? '✎' : ' '}</Text>
+                    <Text dimColor={!isSelected} color={isSelected && acct.nickname ? C_WARNING : undefined}>{acct.nickname ? '✎' : ' '}</Text>
                     <Text dimColor>{acct.mask ? `···${acct.mask}` : '      '}</Text>
                     <Text dimColor>{label}</Text>
                     <Text dimColor>{institution.padEnd(acctInstW)}</Text>
                     <Text dimColor>
                       {acct.last_synced
-                        ? <Text>synced <Text color={isSelected ? 'green' : undefined}>{fmtDate(acct.last_synced)}</Text></Text>
-                        : <Text color="yellow">not synced</Text>
+                        ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtDate(acct.last_synced)}</Text></Text>
+                        : <Text color={C_WARNING}>not synced</Text>
                       }
                     </Text>
                   </Box>
@@ -611,36 +581,36 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
           <Box marginTop={1}><Divider /></Box>
           <Text dimColor>{linkedAccounts.length} account{linkedAccounts.length !== 1 ? 's' : ''}</Text>
-          {syncMsg && <Text color={syncStatus === 'syncing' ? 'yellow' : 'green'}>{syncMsg}</Text>}
-          {acctMsg && <Text color="green">{acctMsg}</Text>}
+          {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : C_POSITIVE}>{syncMsg}</Text>}
+          {acctMsg && <Text color={C_POSITIVE}>{acctMsg}</Text>}
 
           {/* Confirm-delete panel */}
           {acctMode === 'confirm-delete' && selectedAcct && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="red" paddingX={2} paddingY={1}>
-              <Text bold color="red">Delete account — this cannot be undone</Text>
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_NEGATIVE} paddingX={2} paddingY={1}>
+              <Text bold color={C_NEGATIVE}>Delete account — this cannot be undone</Text>
               <Box marginTop={1} flexDirection="column">
-                <Text><Text color="cyan">{selectedAcct.nickname ?? selectedAcct.name}</Text>  {selectedAcct.mask ? `···${selectedAcct.mask}` : ''}</Text>
+                <Text><Text color={C_ACCENT}>{selectedAcct.nickname ?? selectedAcct.name}</Text>  {selectedAcct.mask ? `···${selectedAcct.mask}` : ''}</Text>
                 {selectedAcct.id.startsWith('manual-')
                   ? <Text dimColor>Removes this asset and its balance history.</Text>
                   : <Text dimColor>Removes this account, all its transactions, and balance history.</Text>
                 }
               </Box>
               <Box marginTop={1} gap={4}>
-                <Text color="red">[y] Yes, delete</Text>
-                <Text color="green">[n] / Esc cancel</Text>
+                <Text color={C_NEGATIVE}>[y] Yes, delete</Text>
+                <Text color={C_POSITIVE}>[n] / Esc cancel</Text>
               </Box>
             </Box>
           )}
 
           {/* Nickname panel */}
           {acctMode === 'nickname' && selectedAcct && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
               <Text bold>Nickname: {selectedAcct.name}</Text>
               <Text dimColor>Leave empty to clear nickname</Text>
               <Box marginTop={1}>
                 <Text>Nickname: </Text>
-                <Text color="yellow">{nicknameInput}</Text>
-                <Text color="cyan">▊</Text>
+                <Text color={C_WARNING}>{nicknameInput}</Text>
+                <Text color={C_ACCENT}>{CURSOR}</Text>
               </Box>
               <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
             </Box>
@@ -648,36 +618,36 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
           {/* Update-value panel */}
           {acctMode === 'update-value' && selectedAcct && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_WARNING} paddingX={2} paddingY={1}>
               <Text bold>Update value: {selectedAcct.name}</Text>
               <Box marginTop={1}>
                 <Text>New value: $</Text>
-                <Text color="yellow">{updateValueInput}</Text>
-                <Text color="cyan">█</Text>
+                <Text color={C_WARNING}>{updateValueInput}</Text>
+                <Text color={C_ACCENT}>█</Text>
               </Box>
-              {updateValueError && <Text color="red">{updateValueError}</Text>}
+              {updateValueError && <Text color={C_NEGATIVE}>{updateValueError}</Text>}
               <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
             </Box>
           )}
 
           {/* Edit panel */}
           {acctMode === 'edit' && selectedAcct && (
-            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_ACCENT} paddingX={2} paddingY={1}>
               <Text bold>Edit: {selectedAcct.name}{selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}</Text>
               <Box marginTop={1} flexDirection="column" gap={1}>
                 <Box gap={2}>
-                  <Text color={editField === 'type' ? 'cyan' : 'white'}>
+                  <Text color={editField === 'type' ? C_ACCENT : C_NEUTRAL}>
                     {editField === 'type' ? '▶ ' : '  '}Type
                   </Text>
-                  <Text color={editField === 'type' ? 'cyan' : undefined}>
+                  <Text color={editField === 'type' ? C_ACCENT : undefined}>
                     {'← '}{editType}{'  →'}
                   </Text>
                 </Box>
                 <Box gap={2}>
-                  <Text color={editField === 'subtype' ? 'cyan' : 'white'}>
+                  <Text color={editField === 'subtype' ? C_ACCENT : C_NEUTRAL}>
                     {editField === 'subtype' ? '▶ ' : '  '}Subtype
                   </Text>
-                  <Text color={editField === 'subtype' ? 'cyan' : 'yellow'}>
+                  <Text color={editField === 'subtype' ? C_ACCENT : C_WARNING}>
                     {'← '}{editSubtype || '—'}{'  →'}
                   </Text>
                 </Box>
@@ -691,24 +661,24 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {mainView === 'dupes' && (
         <Box flexDirection="column" marginTop={1}>
           {dupes.length === 0 ? (
-            <Text color="green">No duplicate candidates found.</Text>
+            <Text color={C_POSITIVE}>No duplicate candidates found.</Text>
           ) : (
             dupes.map((pair, i) => {
               const isSelected = i === dupeCursor;
               return (
                 <Box key={pair.csvId} flexDirection="column" marginBottom={1}>
                   <Box gap={2}>
-                    <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▶' : ' '}</Text>
+                    <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶' : ' '}</Text>
                     <Text dimColor>{truncate(pair.accountName, 20).padEnd(20)}</Text>
-                    <Text color="yellow">CSV</Text>
+                    <Text color={C_WARNING}>CSV</Text>
                     <Text dimColor>{pair.csvDate}</Text>
-                    <Text color={isSelected ? 'cyan' : undefined}>{truncate(pair.csvName, 30).padEnd(30)}</Text>
-                    <Text color="red">${Math.abs(pair.csvAmount).toFixed(2)}</Text>
+                    <Text color={isSelected ? C_ACCENT : undefined}>{truncate(pair.csvName, 30).padEnd(30)}</Text>
+                    <Text color={C_NEGATIVE}>${Math.abs(pair.csvAmount).toFixed(2)}</Text>
                   </Box>
                   <Box gap={2}>
                     <Text> </Text>
                     <Text dimColor>{''.padEnd(20)}</Text>
-                    <Text color="green">PLI</Text>
+                    <Text color={C_POSITIVE}>PLI</Text>
                     <Text dimColor>{pair.plaidDate}</Text>
                     <Text dimColor>{truncate(pair.plaidName, 30)}</Text>
                   </Box>
@@ -725,14 +695,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'landing' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Box flexDirection="column" gap={1} marginTop={1}>
-                <Text color="cyan">[l] Link a bank account  <Text dimColor>Opens Plaid in your browser</Text></Text>
-                <Text color="cyan">[c] Import CSV file      <Text dimColor>Upload a statement export</Text></Text>
-                <Text color="cyan">[m] Manual asset         <Text dimColor>House, car, or other asset</Text></Text>
-                <Text color={syncStatus === 'syncing' ? 'yellow' : 'cyan'}>
+                <Text color={C_ACCENT}>[l] Link a bank account  <Text dimColor>Opens Plaid in your browser</Text></Text>
+                <Text color={C_ACCENT}>[c] Import CSV file      <Text dimColor>Upload a statement export</Text></Text>
+                <Text color={C_ACCENT}>[m] Manual asset         <Text dimColor>House, car, or other asset</Text></Text>
+                <Text color={syncStatus === 'syncing' ? C_WARNING : C_ACCENT}>
                   [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
                 </Text>
               </Box>
-              {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? 'yellow' : 'green'}>{syncMsg}</Text></Box>}
+              {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : C_POSITIVE}>{syncMsg}</Text></Box>}
               <Box marginTop={1}><Text dimColor>Tab or Esc to go back</Text></Box>
             </Box>
           )}
@@ -740,7 +710,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'link-plaid' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Link Bank Account</Text>
-              <Text color={linkStatus === 'done' ? 'green' : linkStatus === 'error' ? 'red' : 'yellow'}>
+              <Text color={linkStatus === 'done' ? C_POSITIVE : linkStatus === 'error' ? C_NEGATIVE : C_WARNING}>
                 {linkStatus === 'running' ? '⟳ ' : ''}{linkMsg}
               </Text>
               {linkStatus === 'running' && (
@@ -757,9 +727,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text dimColor>Enter the path to your CSV file:</Text>
               <Box>
                 <Text>Path: </Text>
-                <Text color="yellow">{filePath}<Text color="cyan">█</Text></Text>
+                <Text color={C_WARNING}>{filePath}<Text color={C_ACCENT}>█</Text></Text>
               </Box>
-              {fileError && <Text color="red">{fileError}</Text>}
+              {fileError && <Text color={C_NEGATIVE}>{fileError}</Text>}
               <Text dimColor>Press Enter to load · Esc back</Text>
             </Box>
           )}
@@ -779,7 +749,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   const sample = csvRows.slice(0, 3).map((r) => r[i] ?? '').filter(Boolean).join(', ');
                   return (
                     <Box key={i} gap={2}>
-                      <Text color={i === colCursor ? 'cyan' : 'white'} dimColor={i !== colCursor}>
+                      <Text color={i === colCursor ? C_ACCENT : C_NEUTRAL} dimColor={i !== colCursor}>
                         {i === colCursor ? '▶ ' : '  '}
                         {h.padEnd(24)}
                         <Text dimColor>  {truncate(sample, 36)}</Text>
@@ -789,11 +759,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 })}
               </Box>
               <Box marginTop={1} gap={3}>
-                {dateCol !== null   && <Text dimColor>date: <Text color="green">{headers[dateCol]}</Text></Text>}
-                {nameCol !== null   && <Text dimColor>name: <Text color="green">{headers[nameCol]}</Text></Text>}
-                {amountCol !== null && <Text dimColor>amount: <Text color="green">{headers[amountCol]}</Text></Text>}
-                {debitCol !== null  && <Text dimColor>debit: <Text color="green">{headers[debitCol]}</Text></Text>}
-                {creditCol !== null && <Text dimColor>credit: <Text color="green">{headers[creditCol]}</Text></Text>}
+                {dateCol !== null   && <Text dimColor>date: <Text color={C_POSITIVE}>{headers[dateCol]}</Text></Text>}
+                {nameCol !== null   && <Text dimColor>name: <Text color={C_POSITIVE}>{headers[nameCol]}</Text></Text>}
+                {amountCol !== null && <Text dimColor>amount: <Text color={C_POSITIVE}>{headers[amountCol]}</Text></Text>}
+                {debitCol !== null  && <Text dimColor>debit: <Text color={C_POSITIVE}>{headers[debitCol]}</Text></Text>}
+                {creditCol !== null && <Text dimColor>credit: <Text color={C_POSITIVE}>{headers[creditCol]}</Text></Text>}
               </Box>
             </Box>
           )}
@@ -801,16 +771,16 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'map-amount-mode' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>How is the amount structured?</Text>
-              <Text color="cyan">[s] Single column  <Text dimColor>(one column, positive or negative)</Text></Text>
-              <Text color="cyan">[d] Debit / Credit  <Text dimColor>(two separate columns)</Text></Text>
+              <Text color={C_ACCENT}>[s] Single column  <Text dimColor>(one column, positive or negative)</Text></Text>
+              <Text color={C_ACCENT}>[d] Debit / Credit  <Text dimColor>(two separate columns)</Text></Text>
             </Box>
           )}
 
           {addStep === 'direction' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
-              <Text bold>In column <Text color="yellow">"{headers[amountCol!]}"</Text>, does a positive number mean...</Text>
-              <Text color="cyan">[i] Inflow  <Text dimColor>(money coming in)</Text></Text>
-              <Text color="cyan">[o] Outflow <Text dimColor>(money going out)</Text></Text>
+              <Text bold>In column <Text color={C_WARNING}>"{headers[amountCol!]}"</Text>, does a positive number mean...</Text>
+              <Text color={C_ACCENT}>[i] Inflow  <Text dimColor>(money coming in)</Text></Text>
+              <Text color={C_ACCENT}>[o] Outflow <Text dimColor>(money going out)</Text></Text>
             </Box>
           )}
 
@@ -821,7 +791,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Box flexDirection="column" marginTop={1}>
                 {csvAccounts.map((acct, i) => (
                   <Box key={acct.id} gap={2}>
-                    <Text color={i === csvAccountCursor ? 'cyan' : 'white'} dimColor={i !== csvAccountCursor}>
+                    <Text color={i === csvAccountCursor ? C_ACCENT : C_NEUTRAL} dimColor={i !== csvAccountCursor}>
                       {i === csvAccountCursor ? '▶ ' : '  '}{acct.name}
                       <Text dimColor>  {acct.mask ? `···${acct.mask}` : ''}</Text>
                     </Text>
@@ -834,8 +804,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'confirm' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Ready to import</Text>
-              <Text>File: <Text color="yellow">{filePath}</Text></Text>
-              <Text>Account: <Text color="cyan">{csvAccounts[csvAccountCursor]?.name}</Text></Text>
+              <Text>File: <Text color={C_WARNING}>{filePath}</Text></Text>
+              <Text>Account: <Text color={C_ACCENT}>{csvAccounts[csvAccountCursor]?.name}</Text></Text>
               <Text>{csvRows.length} rows · sample preview:</Text>
               <Box flexDirection="column" marginTop={1}>
                 <Box gap={2}>
@@ -849,22 +819,22 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                     <Box key={i} gap={2}>
                       <Text>{date.padEnd(12)}</Text>
                       <Text>{name.padEnd(30)}</Text>
-                      <Text color="yellow">{amount}</Text>
+                      <Text color={C_WARNING}>{amount}</Text>
                     </Box>
                   );
                 })}
               </Box>
               <Box marginTop={1} gap={4}>
-                <Text color="cyan">[y] Import</Text>
-                <Text color="red">[n] Cancel</Text>
+                <Text color={C_ACCENT}>[y] Import</Text>
+                <Text color={C_NEGATIVE}>[n] Cancel</Text>
               </Box>
             </Box>
           )}
 
           {addStep === 'done' && importResult && (
             <Box flexDirection="column" marginTop={1} gap={1}>
-              <Text bold color="green">Import complete</Text>
-              <Text>Imported: <Text color="green">{importResult.imported}</Text></Text>
+              <Text bold color={C_POSITIVE}>Import complete</Text>
+              <Text>Imported: <Text color={C_POSITIVE}>{importResult.imported}</Text></Text>
               <Text dimColor>Skipped (duplicates/invalid): {importResult.skipped}</Text>
               <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
             </Box>
@@ -876,8 +846,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text dimColor>Type a name for this asset (e.g. "House", "Car")</Text>
               <Box marginTop={1}>
                 <Text>Name: </Text>
-                <Text color="yellow">{manualName}</Text>
-                <Text color="cyan">█</Text>
+                <Text color={C_WARNING}>{manualName}</Text>
+                <Text color={C_ACCENT}>█</Text>
               </Box>
               <Text dimColor>Enter to continue · Esc cancel</Text>
             </Box>
@@ -886,21 +856,21 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'manual-value' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Manual Asset — Current Value</Text>
-              <Text dimColor>Asset: <Text color="cyan">{manualName}</Text></Text>
+              <Text dimColor>Asset: <Text color={C_ACCENT}>{manualName}</Text></Text>
               <Box marginTop={1}>
                 <Text>Value: $</Text>
-                <Text color="yellow">{manualValue}</Text>
-                <Text color="cyan">█</Text>
+                <Text color={C_WARNING}>{manualValue}</Text>
+                <Text color={C_ACCENT}>█</Text>
               </Box>
-              {manualValueError && <Text color="red">{manualValueError}</Text>}
+              {manualValueError && <Text color={C_NEGATIVE}>{manualValueError}</Text>}
               <Text dimColor>Enter to save · Esc back</Text>
             </Box>
           )}
 
           {addStep === 'manual-done' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
-              <Text bold color="green">Asset added</Text>
-              <Text><Text color="cyan">{manualName}</Text> added to your accounts.</Text>
+              <Text bold color={C_POSITIVE}>Asset added</Text>
+              <Text><Text color={C_ACCENT}>{manualName}</Text> added to your accounts.</Text>
               <Text dimColor>Update its value anytime from the Accounts tab with [v].</Text>
               <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
             </Box>
