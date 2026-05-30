@@ -23,13 +23,14 @@ export function getPlaidClient(): PlaidApi {
   return new PlaidApi(config);
 }
 
-export async function createLinkToken(userId: string) {
+export async function createLinkToken(userId: string, daysRequested = 180) {
   const response = await getPlaidClient().linkTokenCreate({
     user: { client_user_id: userId },
     client_name: 'Fungible',
     products: [Products.Transactions],
     country_codes: [CountryCode.Us],
     language: 'en',
+    transactions: { days_requested: daysRequested },
   });
   return response.data.link_token;
 }

@@ -102,9 +102,16 @@ function successPage() {
 </html>`;
 }
 
+function resolveDaysRequested(): number {
+  const n = parseInt(process.env.PLAID_DAYS_REQUESTED ?? '', 10);
+  if (isNaN(n)) return 180;
+  return Math.max(30, Math.min(730, n));
+}
+
 async function main() {
   console.log('Creating Plaid link token...');
-  const linkToken = await createLinkToken('local-user');
+  const daysRequested = resolveDaysRequested();
+  const linkToken = await createLinkToken('local-user', daysRequested);
 
   const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/') {
@@ -124,14 +131,15 @@ async function main() {
           const institutionName = institution?.name ?? null;
 
           db.prepare(`
-            INSERT INTO plaid_items (item_id, access_token, institution_name)
-            VALUES (?, ?, ?)
-            ON CONFLICT(item_id) DO UPDATE SET access_token=excluded.access_token, institution_name=excluded.institution_name
-          `).run(itemId, encryptToken(accessToken), institutionName);
+            INSERT INTO plaid_items (item_id, access_token, institution_name, days_requested)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(item_id) DO UPDATE SET access_token=excluded.access_token, institution_name=excluded.institution_name, days_requested=excluded.days_requested
+          `).run(itemId, encryptToken(accessToken), institutionName, daysRequested);
 
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end(successPage());
 
+          console.log('ITEM_ID:' + itemId);
           console.log(`\n✓ Connected: ${institutionName ?? itemId}`);
           console.log('  Run `npm run dev` to open the dashboard.\n');
 
