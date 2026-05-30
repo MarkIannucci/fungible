@@ -21,6 +21,7 @@ type EditField = 'type' | 'subtype';
 
 type AddStep =
   | 'landing'
+  | 'link-days'
   | 'link-plaid'
   | 'file'
   | 'map-date'
@@ -55,6 +56,13 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+function parseDaysRequested(raw: string): { days: number } | { error: string } {
+  const n = parseInt(raw.trim(), 10);
+  if (isNaN(n) || String(n) !== raw.trim()) return { error: 'Enter a whole number' };
+  if (n < 30 || n > 730) return { error: 'Must be between 30 and 730 days' };
+  return { days: n };
+}
+
 function fmtDate(d: string | null): string {
   if (!d) return 'never';
   const dt = new Date(d + 'T12:00:00');
@@ -84,6 +92,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [addStep, setAddStep] = useState<AddStep>('landing');
   const [linkStatus, setLinkStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [linkMsg, setLinkMsg] = useState('');
+  const [daysInput, setDaysInput] = useState('180');
+  const [daysError, setDaysError] = useState('');
 
   // CSV import state
   const [filePath, setFilePath] = useState('');
@@ -134,7 +144,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Links view state
   const [links, setLinks] = useState<PlaidLink[]>([]);
   const [linkCursor, setLinkCursor] = useState(0);
-  const [linkMode, setLinkMode] = useState<'list' | 'confirm-remove'>('list');
+  const [linkMode, setLinkMode] = useState<'list' | 'confirm-remove' | 'change-history'>('list');
   const [removeMsg, setRemoveMsg] = useState('');
 
   const termW = useTerminalWidth();
@@ -307,26 +317,42 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     loadAccounts();
   }
 
-  function startPlaidLink() {
+  function startPlaidLink(days = 180, removeOldItemId?: string) {
     setLinkStatus('running');
     setLinkMsg('Opening browser…');
+    let newItemId: string | null = null;
     const node = process.execPath;
     const script = new URL('../scripts/link.ts', import.meta.url).pathname;
     const child = spawn(node, [
       '--experimental-sqlite', '--no-warnings',
       '--import', 'tsx/esm',
       script,
-    ], { cwd: new URL('..', import.meta.url).pathname });
+    ], {
+      cwd: new URL('..', import.meta.url).pathname,
+      env: { ...process.env, PLAID_DAYS_REQUESTED: String(days) },
+    });
     child.stdout.on('data', (data: Buffer) => {
-      const line = data.toString().trim().split('\n').pop() ?? '';
-      if (line) setLinkMsg(line);
+      for (const line of data.toString().split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith('ITEM_ID:')) {
+          newItemId = trimmed.slice('ITEM_ID:'.length);
+        } else {
+          setLinkMsg(trimmed);
+        }
+      }
     });
     child.stderr.on('data', (data: Buffer) => {
       setLinkStatus('error');
       setLinkMsg(data.toString().trim());
     });
-    child.on('close', (code: number) => {
+    child.on('close', async (code: number) => {
       if (code === 0) {
+        // Backfill: only wipe the old Item after the new one is in place, and never
+        // if Plaid handed back the same Item.
+        if (removeOldItemId && newItemId && newItemId !== removeOldItemId) {
+          try { await removeLink(removeOldItemId); } catch {}
+        }
         setLinkStatus('done');
         setLinkMsg('Bank connected! Press Enter to continue.');
         loadAccounts();
@@ -539,11 +565,30 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         if (input === 'y') { doRemoveLink(); return; }
         return;
       }
+      if (linkMode === 'change-history') {
+        if (key.escape) { setLinkMode('list'); setDaysError(''); return; }
+        if (key.return) {
+          const r = parseDaysRequested(daysInput);
+          if ('error' in r) { setDaysError(r.error); return; }
+          const link = links[linkCursor];
+          if (!link) { setLinkMode('list'); return; }
+          setDaysError('');
+          setLinkMode('list');
+          setMainView('add-data');
+          setAddStep('link-plaid');
+          startPlaidLink(r.days, link.item_id);
+          return;
+        }
+        if (key.backspace || key.delete) { setDaysInput((v) => v.slice(0, -1)); setDaysError(''); return; }
+        if (input && /[0-9]/.test(input) && !key.ctrl && !key.meta) { setDaysInput((v) => v + input); setDaysError(''); return; }
+        return;
+      }
       if (key.escape) { setMainView('accounts'); return; }
       if (key.tab) { setMainView('accounts'); return; }
       if (key.upArrow)   { setLinkCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setLinkCursor((c) => Math.min(links.length - 1, c + 1)); return; }
       if (input === 'd' && links[linkCursor]) { setLinkMode('confirm-remove'); return; }
+      if (input === 'h' && links[linkCursor]) { setDaysInput('180'); setDaysError(''); setLinkMode('change-history'); return; }
       if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
       return;
     }
@@ -576,11 +621,26 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (addStep === 'landing') {
       if (key.escape) { setMainView('accounts'); return; }
       if (key.tab) { setMainView('dupes'); return; }
-      if (input === 'l') { setAddStep('link-plaid'); startPlaidLink(); return; }
+      if (input === 'l') { setDaysInput('180'); setDaysError(''); setAddStep('link-days'); return; }
       if (input === 'c') { setAddStep('file'); return; }
       if (input === 'a') { setCreateName(''); setCreateType('credit'); setCreateSubtype('credit card'); setCreateField('type'); setAddStep('create-acct-name'); return; }
       if (input === 'm') { setManualName(''); setAddStep('manual-name'); return; }
       if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
+      return;
+    }
+
+    if (addStep === 'link-days') {
+      if (key.escape) { setAddStep('landing'); setDaysError(''); return; }
+      if (key.return) {
+        const r = parseDaysRequested(daysInput);
+        if ('error' in r) { setDaysError(r.error); return; }
+        setDaysError('');
+        setAddStep('link-plaid');
+        startPlaidLink(r.days);
+        return;
+      }
+      if (key.backspace || key.delete) { setDaysInput((v) => v.slice(0, -1)); setDaysError(''); return; }
+      if (input && /[0-9]/.test(input) && !key.ctrl && !key.meta) { setDaysInput((v) => v + input); setDaysError(''); return; }
       return;
     }
 
@@ -745,7 +805,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             : mainView === 'dupes'
             ? '↑↓ select  ·  [d] delete CSV copy  ·  [D] delete all'
             : mainView === 'plaid-links'
-            ? '↑↓ select  ·  [d] remove link  ·  [s] sync'
+            ? '↑↓ select  ·  [h] change history  ·  [d] remove link  ·  [s] sync'
             : ''}
         </Text>
       </Box>}
@@ -967,6 +1027,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                       ? <Text>synced <Text color={isSelected ? 'green' : undefined}>{synced}</Text></Text>
                       : <Text color="yellow">never synced</Text>}
                   </Text>
+                  <Text dimColor>{link.days_requested ? `${link.days_requested}d` : '—'}</Text>
                   <Text dimColor>···{link.item_id.slice(-6)}</Text>
                 </Box>
               );
@@ -977,6 +1038,21 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           <Text dimColor>{links.length} link{links.length !== 1 ? 's' : ''}</Text>
           {syncMsg && <Text color={syncStatus === 'syncing' ? 'yellow' : 'green'}>{syncMsg}</Text>}
           {removeMsg && <Text color="green">{removeMsg}</Text>}
+
+          {linkMode === 'change-history' && links[linkCursor] && (
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+              <Text bold color="yellow">Change history window — {links[linkCursor].institution_name ?? 'Unknown institution'}</Text>
+              <Text dimColor>Plaid can't change history on an existing link, so this re-links the bank.</Text>
+              <Text dimColor>After the new link succeeds, the current accounts, transactions, balances, and any manual edits are replaced.</Text>
+              <Box marginTop={1}>
+                <Text>Days (30–730): </Text>
+                <Text color="yellow">{daysInput}</Text>
+                <Text color="cyan">▊</Text>
+              </Box>
+              {daysError && <Text color="red">{daysError}</Text>}
+              <Box marginTop={1}><Text dimColor>Enter re-link · Esc cancel</Text></Box>
+            </Box>
+          )}
 
           {linkMode === 'confirm-remove' && links[linkCursor] && (
             <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="red" paddingX={2} paddingY={1}>
@@ -1010,6 +1086,20 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               </Box>
               {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? 'yellow' : 'green'}>{syncMsg}</Text></Box>}
               <Box marginTop={1}><Text dimColor>Tab or Esc to go back</Text></Box>
+            </Box>
+          )}
+
+          {addStep === 'link-days' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>How much history should Plaid fetch?</Text>
+              <Text dimColor>30–730 days (default 180). Can't be changed later without re-linking and loss of any manual edits to transactions.</Text>
+              <Box marginTop={1}>
+                <Text>Days: </Text>
+                <Text color="yellow">{daysInput}</Text>
+                <Text color="cyan">▊</Text>
+              </Box>
+              {daysError && <Text color="red">{daysError}</Text>}
+              <Box marginTop={1}><Text dimColor>Enter continue · Esc cancel</Text></Box>
             </Box>
           )}
 

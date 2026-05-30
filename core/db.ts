@@ -95,6 +95,7 @@ export function initDb() {
   try { db.exec('ALTER TABLE name_rules ADD COLUMN max_amount REAL'); } catch {}
   try { db.exec("ALTER TABLE categories ADD COLUMN flexibility TEXT CHECK(flexibility IN ('fixed','flexible','discretionary'))"); } catch {}
   try { db.exec('ALTER TABLE plaid_items ADD COLUMN last_synced_at INTEGER'); } catch {}
+  try { db.exec('ALTER TABLE plaid_items ADD COLUMN days_requested INTEGER'); } catch {}
   try { db.exec('ALTER TABLE accounts ADD COLUMN nickname TEXT'); } catch {}
   try { db.exec('ALTER TABLE accounts ADD COLUMN owner TEXT'); } catch {}
   try { db.exec('ALTER TABLE accounts ADD COLUMN default_tag TEXT'); } catch {}

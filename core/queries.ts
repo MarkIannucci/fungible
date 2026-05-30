@@ -320,12 +320,13 @@ export type PlaidLink = {
   item_id: string;
   institution_name: string | null;
   last_synced_at: number | null;
+  days_requested: number | null;
   account_count: number;
 };
 
 export function getPlaidLinks(): PlaidLink[] {
   return db.prepare(`
-    SELECT p.item_id, p.institution_name, p.last_synced_at,
+    SELECT p.item_id, p.institution_name, p.last_synced_at, p.days_requested,
       (SELECT COUNT(*) FROM accounts a WHERE a.item_id = p.item_id) as account_count
     FROM plaid_items p
     ORDER BY p.institution_name, p.item_id
