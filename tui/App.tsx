@@ -10,6 +10,7 @@ import { Rules } from './Rules.js';
 import { Accounts } from './Accounts.js';
 import { Health } from './Health.js';
 import { Chat } from './Chat.js';
+import { RefreshProvider } from './RefreshContext.js';
 
 export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health';
 
@@ -58,18 +59,20 @@ export function App() {
   })();
 
   return (
-    <TypingContext.Provider value={setScreenTyping}>
-    <Box flexDirection="column" height="100%">
-      <Box flexGrow={1}>
-        {currentScreen}
-      </Box>
-      <Chat
-        isActive={chatFocused}
-        onActivate={() => setChatFocused(true)}
-        onDeactivate={() => setChatFocused(false)}
-        onNavigate={navigate}
-      />
-    </Box>
-    </TypingContext.Provider>
+    <RefreshProvider>
+      <TypingContext.Provider value={setScreenTyping}>
+        <Box flexDirection="column" height="100%">
+          <Box flexGrow={1}>
+            {currentScreen}
+          </Box>
+          <Chat
+            isActive={chatFocused}
+            onActivate={() => setChatFocused(true)}
+            onDeactivate={() => setChatFocused(false)}
+            onNavigate={navigate}
+          />
+        </Box>
+      </TypingContext.Provider>
+    </RefreshProvider>
   );
 }

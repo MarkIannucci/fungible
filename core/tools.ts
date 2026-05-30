@@ -7,6 +7,7 @@
  * embedded agent handles those before calling executeTool.
  */
 
+import { notifyChange } from './refresh.js';
 import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getNetWorthHistory, type NetWorthGranularity } from './queries.js';
 import { solveTVM } from './calculator.js';
 import { getDriftWindows } from './dateUtils.js';
@@ -24,6 +25,8 @@ import type { ToolDef } from './llm-provider.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+// Keep in sync with executeTool — any tool that mutates data must be listed here
+// or TUI refresh and afterWrite callbacks will be silently skipped for that tool.
 export const WRITE_TOOLS = new Set([
   'edit_transaction', 'clear_edit', 'ignore_transaction',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',
@@ -341,7 +344,7 @@ export function describeToolCall(name: string, input: Record<string, unknown>): 
  * Execute a tool by name and return a plain-text result string.
  * Does not handle `show` (agent-only), confirmation, or MCP wrapping.
  */
-export async function executeTool(
+async function executeToolImpl(
   name: string,
   input: Record<string, unknown>,
 ): Promise<string> {
@@ -742,4 +745,10 @@ export async function executeTool(
     default:
       return `Unknown tool: ${name}`;
   }
+}
+
+export async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+  const result = await executeToolImpl(name, input);
+  if (WRITE_TOOLS.has(name)) notifyChange();
+  return result;
 }
