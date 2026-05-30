@@ -100,10 +100,21 @@ function successPage() {
 </html>`;
 }
 
+// History window (days of transactions Plaid backfills) is set by the TUI via
+// PLAID_DAYS_REQUESTED. It's locked at Item creation and can't be changed later.
+function resolveDaysRequested(): number | undefined {
+  const raw = process.env.PLAID_DAYS_REQUESTED;
+  if (!raw) return undefined;
+  const n = parseInt(raw, 10);
+  if (isNaN(n)) return undefined;
+  return Math.max(30, Math.min(730, n));
+}
+
 async function main() {
   await initDb();
   console.log('Creating Plaid link token...');
-  const linkToken = await createLinkToken('local-user');
+  const daysRequested = resolveDaysRequested();
+  const linkToken = await createLinkToken('local-user', daysRequested);
 
   const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/') {
@@ -123,10 +134,10 @@ async function main() {
           const institutionName = institution?.name ?? null;
 
           await db.execute({
-            sql: `INSERT INTO plaid_items (item_id, access_token, institution_name)
-                  VALUES (?, ?, ?)
-                  ON CONFLICT(item_id) DO UPDATE SET access_token=excluded.access_token, institution_name=excluded.institution_name`,
-            args: [itemId, encryptToken(accessToken), institutionName],
+            sql: `INSERT INTO plaid_items (item_id, access_token, institution_name, days_requested)
+                  VALUES (?, ?, ?, ?)
+                  ON CONFLICT(item_id) DO UPDATE SET access_token=excluded.access_token, institution_name=excluded.institution_name, days_requested=excluded.days_requested`,
+            args: [itemId, encryptToken(accessToken), institutionName, daysRequested ?? null],
           });
 
           res.writeHead(200, { 'Content-Type': 'text/html' });
