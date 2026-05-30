@@ -40,16 +40,24 @@ export function Trends({
     { mode: 'flex',          category: null, flex: 'flexible',      label: 'Flexible'      },
     { mode: 'flex',          category: null, flex: 'discretionary', label: 'Discretionary' },
   ]);
-  const [viewIdx, setViewIdx] = useState(() => {
-    const cat = initialFilter?.category ?? null;
-    if (!cat) return 0;
-    return 0; // will be updated once views load
+  const [viewIdx, setViewIdx] = useState(0);
+  const [range, setRange] = useState<TrendsRange>(() => {
+    const r = initialFilter?.range;
+    return (r && (TRENDS_RANGES as string[]).includes(r)) ? r as TrendsRange : 'month';
   });
-  const [range, setRange] = useState<TrendsRange>('month');
   const [rows, setRows] = useState<PeriodRow[]>([]);
   const [cursor, setCursor] = useState(0);
 
-  useEffect(() => { void buildTrendViews().then(setViews); }, []);
+  useEffect(() => {
+    void buildTrendViews().then((loaded) => {
+      setViews(loaded);
+      const cat = initialFilter?.category;
+      if (cat) {
+        const idx = loaded.findIndex((v) => v.category === cat);
+        if (idx >= 0) setViewIdx(idx);
+      }
+    });
+  }, []);
 
   const view = views[viewIdx] ?? views[0];
   const isNet = view?.mode === 'net';
