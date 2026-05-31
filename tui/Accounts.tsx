@@ -3,10 +3,10 @@ import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { spawn } from 'node:child_process';
-import { syncAll } from '../core/sync.js';
+import { syncAll, removeLink } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
-import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
+import { getLinkedAccounts, getCsvAccounts, getPlaidLinks, type LinkedAccount, type CsvAccount, type PlaidLink } from '../core/queries.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
 import {
   updateAccountTypeSubtype, updateAccountNickname, updateAccountValue,
@@ -19,7 +19,7 @@ import { useTerminalWidth, CURSOR, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATI
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type MainView = 'accounts' | 'add-data' | 'dupes';
+type MainView = 'accounts' | 'add-data' | 'dupes' | 'plaid-links';
 type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname' | 'confirm-delete';
 type EditField = 'type' | 'subtype';
 
@@ -134,6 +134,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
 
+  // Plaid Links view state
+  const [links, setLinks] = useState<PlaidLink[]>([]);
+  const [linkCursor, setLinkCursor] = useState(0);
+  const [linkMode, setLinkMode] = useState<'list' | 'confirm-remove'>('list');
+  const [removeMsg, setRemoveMsg] = useState('');
+
   const setTyping = useSetTyping();
   const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'manual-name', 'manual-value', 'new-acct-name']);
   const TEXT_INPUT_MODES = new Set<AcctMode>(['nickname', 'update-value']);
@@ -152,6 +158,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function loadAccounts() {
     void getLinkedAccounts().then(setLinkedAccounts);
     void getCsvPlaidDupeCandidates().then(setDupes);
+    void getPlaidLinks().then(setLinks);
   }
   useEffect(() => { loadAccounts(); }, [refreshKey]);
 
@@ -222,6 +229,23 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       setAcctMsg(`Deleted ${acct.nickname ?? acct.name}`);
       setTimeout(() => setAcctMsg(''), 2500);
       loadAccounts();
+    });
+  }
+
+  function doRemoveLink() {
+    const link = links[linkCursor];
+    if (!link) return;
+    setLinkMode('list');
+    setRemoveMsg('Removing…');
+    removeLink(link.item_id).then((res) => {
+      const inst = link.institution_name ?? 'link';
+      setRemoveMsg(res.plaidRemoved ? `Removed ${inst}` : `Removed ${inst} locally (Plaid removal failed)`);
+      setLinkCursor((c) => Math.max(0, c - 1));
+      loadAccounts();
+      setTimeout(() => setRemoveMsg(''), 4000);
+    }).catch(() => {
+      setRemoveMsg('Failed to remove link');
+      setTimeout(() => setRemoveMsg(''), 3000);
     });
   }
 
@@ -430,7 +454,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     // ── Dupes view ────────────────────────────────────────────────────────────
     if (mainView === 'dupes') {
       if (key.escape) { setMainView('accounts'); return; }
-      if (key.tab) { setMainView('accounts'); return; }
+      if (key.tab) { setMainView('plaid-links'); return; }
       if (key.upArrow)   { setDupeCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setDupeCursor((c) => Math.min(dupes.length - 1, c + 1)); return; }
       if (input === 'x' && dupes[dupeCursor]) {
@@ -448,6 +472,22 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         setDupeCursor(0);
         return;
       }
+      return;
+    }
+
+    // ── Plaid Links view ───────────────────────────────────────────────────────
+    if (mainView === 'plaid-links') {
+      if (linkMode === 'confirm-remove') {
+        if (key.escape || input === 'n') { setLinkMode('list'); return; }
+        if (input === 'y') { doRemoveLink(); return; }
+        return;
+      }
+      if (key.escape) { setMainView('accounts'); return; }
+      if (key.tab) { setMainView('accounts'); return; }
+      if (key.upArrow)   { setLinkCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setLinkCursor((c) => Math.min(links.length - 1, c + 1)); return; }
+      if (input === 'x' && links[linkCursor]) { setLinkMode('confirm-remove'); return; }
+      if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
       return;
     }
 
@@ -618,6 +658,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           <Text bold color={mainView === 'dupes' ? C_ACCENT : undefined} dimColor={mainView !== 'dupes'}>
             Dupes{dupes.length > 0 ? ` (${dupes.length})` : ''}
           </Text>
+          <Text bold color={mainView === 'plaid-links' ? C_ACCENT : undefined} dimColor={mainView !== 'plaid-links'}>Plaid Links</Text>
           {showHints && <Text dimColor>[Tab]</Text>}
         </Box>
       </Box>
@@ -629,6 +670,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             ? 'Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel'
             : mainView === 'dupes'
             ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
+            : mainView === 'plaid-links'
+            ? '↑↓ select  ·  [x] remove link  ·  [s] sync'
             : ''}
         </Text>
       </Box>}
@@ -780,6 +823,54 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                 </Box>
               );
             })
+          )}
+        </Box>
+      )}
+
+      {/* ── Plaid Links view ──────────────────────────────────────────── */}
+      {mainView === 'plaid-links' && (
+        <Box flexDirection="column" marginTop={1}>
+          {links.length === 0 ? (
+            <Text dimColor>No bank links yet. Tab → Add Data → [l] link a bank.</Text>
+          ) : (
+            links.map((link, i) => {
+              const isSelected = i === linkCursor;
+              const count = Number(link.account_count);
+              return (
+                <Box key={link.item_id} gap={2}>
+                  <Text color={isSelected ? C_ACCENT : undefined}>{isSelected ? '▶ ' : '  '}</Text>
+                  <Text color={isSelected ? C_ACCENT : undefined} dimColor={!isSelected}>
+                    {truncate(link.institution_name ?? 'Unknown institution', 28).padEnd(28)}
+                  </Text>
+                  <Text dimColor>{`${count} acct${count !== 1 ? 's' : ''}`.padEnd(8)}</Text>
+                  <Text dimColor>
+                    {link.last_synced_at
+                      ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtDate(new Date(Number(link.last_synced_at)).toISOString().slice(0, 10))}</Text></Text>
+                      : <Text color={C_WARNING}>never synced</Text>}
+                  </Text>
+                  <Text dimColor>···{link.item_id.slice(-6)}</Text>
+                </Box>
+              );
+            })
+          )}
+
+          <Box marginTop={1}><Divider /></Box>
+          <Text dimColor>{links.length} link{links.length !== 1 ? 's' : ''}</Text>
+          {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : C_POSITIVE}>{syncMsg}</Text>}
+          {removeMsg && <Text color={C_POSITIVE}>{removeMsg}</Text>}
+
+          {linkMode === 'confirm-remove' && links[linkCursor] && (
+            <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={C_NEGATIVE} paddingX={2} paddingY={1}>
+              <Text bold color={C_NEGATIVE}>Remove bank link — this cannot be undone</Text>
+              <Box marginTop={1} flexDirection="column">
+                <Text><Text color={C_ACCENT}>{links[linkCursor].institution_name ?? 'Unknown institution'}</Text>  <Text dimColor>···{links[linkCursor].item_id.slice(-6)}</Text></Text>
+                <Text dimColor>Removes this Plaid connection and all {Number(links[linkCursor].account_count)} of its account{Number(links[linkCursor].account_count) !== 1 ? 's' : ''}, with their transactions and balance history.</Text>
+              </Box>
+              <Box marginTop={1} gap={4}>
+                <Text color={C_NEGATIVE}>[y] Yes, remove</Text>
+                <Text color={C_POSITIVE}>[n] / Esc cancel</Text>
+              </Box>
+            </Box>
           )}
         </Box>
       )}

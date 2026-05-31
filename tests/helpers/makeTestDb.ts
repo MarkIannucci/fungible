@@ -8,7 +8,8 @@ const SCHEMA = `
     subtype TEXT,
     institution_name TEXT,
     mask TEXT,
-    nickname TEXT
+    nickname TEXT,
+    item_id TEXT
   );
 
   CREATE TABLE transactions (
@@ -81,6 +82,8 @@ const SCHEMA = `
     date TEXT NOT NULL,
     PRIMARY KEY (account_id, date)
   );
+
+  CREATE TABLE excluded_plaid_accounts (account_id TEXT PRIMARY KEY);
 `;
 
 export async function makeTestDb() {

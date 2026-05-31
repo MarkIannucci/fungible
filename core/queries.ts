@@ -464,6 +464,18 @@ export async function getCsvAccounts(): Promise<CsvAccount[]> {
   return result.rows as unknown as CsvAccount[];
 }
 
+export type PlaidLink = { item_id: string; institution_name: string | null; last_synced_at: number | null; account_count: number };
+
+export async function getPlaidLinks(): Promise<PlaidLink[]> {
+  const result = await db.execute(`
+    SELECT p.item_id, p.institution_name, p.last_synced_at,
+      (SELECT COUNT(*) FROM accounts a WHERE a.item_id = p.item_id) as account_count
+    FROM plaid_items p
+    ORDER BY p.institution_name, p.item_id
+  `);
+  return result.rows as unknown as PlaidLink[];
+}
+
 export type AccountBalance    = { name: string; nickname: string | null; type: string; subtype: string | null; balance: number };
 export type HistoryRow        = { date: string; assets: number; liabilities: number; net: number };
 export type NetWorthPeriod    = { period: string; assets: number; liabilities: number; net_worth: number };
