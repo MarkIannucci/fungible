@@ -69,7 +69,8 @@ const SCHEMA = `
     item_id TEXT PRIMARY KEY,
     access_token TEXT NOT NULL,
     institution_name TEXT,
-    last_synced_at INTEGER
+    last_synced_at INTEGER,
+    days_requested INTEGER
   );
 
   CREATE TABLE balance_history (
