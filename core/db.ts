@@ -93,6 +93,9 @@ export async function initDb() {
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_balance_history_acct_date
       ON balance_history(account_id, date)`,
+    `CREATE TABLE IF NOT EXISTS excluded_plaid_accounts (
+      account_id TEXT PRIMARY KEY
+    )`,
   ], 'write');
 
   // Idempotent column migrations (each may fail if column exists — that's fine)
@@ -108,6 +111,7 @@ export async function initDb() {
     'ALTER TABLE plaid_items ADD COLUMN last_synced_at INTEGER',
     'ALTER TABLE plaid_items ADD COLUMN days_requested INTEGER',
     'ALTER TABLE accounts ADD COLUMN nickname TEXT',
+    'ALTER TABLE accounts ADD COLUMN item_id TEXT',
   ];
   for (const sql of migrations) {
     try {
