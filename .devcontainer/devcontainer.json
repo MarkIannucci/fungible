@@ -28,23 +28,13 @@
       ],
       "settings": {
         "typescript.tsdk": "node_modules/typescript/lib",
-        "typescript.enablePromptUseWorkspaceTsdk": true,
-        "editor.defaultFormatter": "esbenp.prettier-vscode",
-        "editor.formatOnSave": true,
-        "[typescript]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
-        },
-        "[json]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode"
-        }
+        "typescript.enablePromptUseWorkspaceTsdk": true
       }
     }
   },
-  "postCreateCommand": "npm install",
+  "postCreateCommand": "sudo chown -R node:node /home/node/.claude && npm install",
   "remoteUser": "node",
   "mounts": [
-    "source=${localEnv:HOME}/.ssh,target=/home/node/.ssh,readonly",
-    "source=${localEnv:HOME}/.gitconfig,target=/home/node/.gitconfig,readonly",
     "source=claude-code-config,target=/home/node/.claude,type=volume"
   ]
 }
