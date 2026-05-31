@@ -795,7 +795,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Transaction History Window</Text>
               <Text dimColor>How many days of history should Plaid fetch? (30–730, default 90)</Text>
-              <Text dimColor>This is locked when the bank is linked and can only be change if you recreate the link later.</Text>
+              <Text dimColor>This is set when the bank is linked and can only be changed if you recreate the link later.</Text>
               <Box>
                 <Text>Days: </Text>
                 <Text>{daysInput}<Text color={C_ACCENT}>{CURSOR}</Text></Text>
