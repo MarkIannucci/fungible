@@ -462,7 +462,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         return;
       }
       if (key.backspace || key.delete) { setDaysInput((v) => v.slice(0, -1)); setDaysError(''); return; }
-      if (input && /^[0-9]+$/.test(input) && !key.ctrl && !key.meta) { setDaysInput((v) => v + input); setDaysError(''); return; }
+      if (input && /^[0-9]+$/.test(input) && !key.ctrl && !key.meta && daysInput.length <= 3) { setDaysInput((v) => v + input); setDaysError(''); return; }
       return;
     }
 
