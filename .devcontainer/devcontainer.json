@@ -1,0 +1,40 @@
+{
+  "name": "Fungible - Personal Finance TUI",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+  },
+  "forwardPorts": [3456, 3741],
+  "portsAttributes": {
+    "3456": {
+      "label": "REST API",
+      "onAutoForward": "notify"
+    },
+    "3741": {
+      "label": "MCP Server (HTTP)",
+      "onAutoForward": "notify"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss",
+        "anthropic.claude-code",
+        "ms-vscode.makefile-tools"
+      ],
+      "settings": {
+        "typescript.tsdk": "node_modules/typescript/lib",
+        "typescript.enablePromptUseWorkspaceTsdk": true
+      }
+    }
+  },
+  "postCreateCommand": "sudo chown -R node:node /home/node/.claude && npm install",
+  "remoteUser": "node",
+  "mounts": [
+    "source=claude-code-config,target=/home/node/.claude,type=volume"
+  ]
+}
