@@ -86,7 +86,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [addStep, setAddStep] = useState<AddStep>('landing');
   const [linkStatus, setLinkStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [linkMsg, setLinkMsg] = useState('');
-  const [daysInput, setDaysInput] = useState('90');
+  const [daysInput, setDaysInput] = useState('730');
   const [daysError, setDaysError] = useState('');
 
   // CSV import state
@@ -239,7 +239,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     loadAccounts();
   }
 
-  function startPlaidLink(days = 90) {
+  function startPlaidLink(days = 730) {
     setLinkStatus('running');
     setLinkMsg('Opening browser…');
     const node = process.execPath;
@@ -407,7 +407,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
       if (input === 'r' && linkedAccounts[acctCursor]) {
         setMainView('add-data');
-        setDaysInput('90');
+        setDaysInput('730');
         setDaysError('');
         setAddStep('link-days');
         return;
@@ -444,7 +444,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (addStep === 'landing') {
       if (key.escape) { setMainView('accounts'); return; }
       if (key.tab) { setMainView('dupes'); return; }
-      if (input === 'l') { setDaysInput('90'); setDaysError(''); setAddStep('link-days'); return; }
+      if (input === 'l') { setDaysInput('730'); setDaysError(''); setAddStep('link-days'); return; }
       if (input === 'c') { setAddStep('file'); return; }
       if (input === 'm') { setManualName(''); setAddStep('manual-name'); return; }
       if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
@@ -794,7 +794,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {addStep === 'link-days' && (
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Transaction History Window</Text>
-              <Text dimColor>How many days of history should Plaid fetch? (30–730, default 90)</Text>
+              <Text dimColor>How many days of history should Plaid fetch? (30–730, default 730)</Text>
               <Text dimColor>This is set when the bank is linked and can only be changed if you recreate the link later.</Text>
               <Box>
                 <Text>Days: </Text>
