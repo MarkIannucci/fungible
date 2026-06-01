@@ -4,6 +4,13 @@ export type CategorySummary = { category: string; total: number };
 export type MonthlySummary  = { income: number; expenses: number; net: number; byCategory: CategorySummary[] };
 export type RecentTransaction = { id: string; date: string; name: string; merchant_name: string | null; amount: number; category: string };
 
+export type MerchantSummaryRow = {
+  merchant: string;
+  total: number;
+  count: number;
+  pct: number;
+};
+
 export async function getHiddenCategories(): Promise<Set<string>> {
   const result = await db.execute('SELECT category FROM hidden_categories');
   return new Set((result.rows as unknown as { category: string }[]).map((r) => r.category));
@@ -49,6 +56,42 @@ export async function getTagSummary(tagName: string): Promise<MonthlySummary> {
   const expenses   = rows.filter((r) => r.total > 0).reduce((s, r) => s + r.total, 0);
   const byCategory = rows.filter((r) => r.total > 0).map((r) => ({ category: r.category, total: Number(r.total) }));
   return { income, expenses, net: income - expenses, byCategory };
+}
+
+export async function getMerchantSummary(
+  category: string,
+  from: string,
+  to: string,
+  accountId?: string,
+): Promise<MerchantSummaryRow[]> {
+  const acctClause = accountId ? 'AND account_id = ?' : '';
+  const args: (string | number | null)[] = accountId ? [from, to, category, accountId] : [from, to, category];
+
+  const result = await db.execute({
+    sql: `SELECT COALESCE(display_name, name) as merchant, SUM(amount) as total, COUNT(*) as count
+          FROM transactions
+          WHERE date >= ? AND date <= ? AND category = ?
+            AND pending = 0 AND ignored = 0
+            AND category NOT IN (SELECT category FROM hidden_categories)
+            ${acctClause}
+          GROUP BY merchant
+          HAVING SUM(amount) > 0
+          ORDER BY total DESC, count DESC, merchant ASC`,
+    args,
+  });
+  const rows = result.rows as unknown as { merchant: string; total: number; count: number }[];
+
+  // Denominator uses only net-positive merchants — same set as the list. Merchants with more
+  // refunds than charges are excluded from both, so pct = share of the positive-net spend shown.
+  const categoryTotal = rows.reduce((sum, r) => sum + Number(r.total), 0);
+  if (!categoryTotal) return [];
+
+  return rows.map((r) => ({
+    merchant: r.merchant,
+    total: Number(r.total),
+    count: Number(r.count),
+    pct: Number(r.total) / categoryTotal,
+  }));
 }
 
 export type FlexSummary = { fixed: number; flexible: number; discretionary: number; untagged: number };
