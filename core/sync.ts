@@ -139,6 +139,17 @@ export async function removeLink(itemId: string): Promise<{ plaidRemoved: boolea
 
 const DEBOUNCE_MS = 15 * 60 * 1000;
 
+export async function syncItem(itemId: string) {
+  const res = await db.execute({
+    sql: 'SELECT access_token FROM plaid_items WHERE item_id = ?',
+    args: [itemId],
+  });
+  if (res.rows.length === 0) throw new Error(`No Plaid link found for item ${itemId}`);
+  const accessToken = (res.rows[0] as unknown as { access_token: string }).access_token;
+  const result = await syncTransactions(decryptToken(accessToken), itemId);
+  return { itemId, ...result };
+}
+
 export async function syncAll(force = false) {
   const itemsRes = await db.execute('SELECT item_id, access_token, last_synced_at FROM plaid_items');
   const items = itemsRes.rows as unknown as {

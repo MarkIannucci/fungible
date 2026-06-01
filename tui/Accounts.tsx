@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { spawn } from 'node:child_process';
-import { syncAll, removeLink } from '../core/sync.js';
+import { syncAll, syncItem, removeLink } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, getPlaidLinks, type LinkedAccount, type CsvAccount, type PlaidLink } from '../core/queries.js';
@@ -190,6 +190,23 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     syncAll(true).then((results) => {
       const added = results.reduce((s, r) => s + r.added, 0);
       setSyncMsg(`Done — ${added} new transaction${added !== 1 ? 's' : ''}`);
+      setSyncStatus('done');
+      loadAccounts();
+      setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
+    }).catch(() => {
+      setSyncMsg('Sync failed');
+      setSyncStatus('done');
+      setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 3000);
+    });
+  }
+
+  function syncLink() {
+    const link = links[linkCursor];
+    if (!link) return;
+    setSyncStatus('syncing');
+    setSyncMsg(`Syncing ${link.institution_name ?? 'link'}…`);
+    syncItem(link.item_id).then((result) => {
+      setSyncMsg(`Done — ${result.added} new transaction${result.added !== 1 ? 's' : ''}`);
       setSyncStatus('done');
       loadAccounts();
       setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
@@ -482,7 +499,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.upArrow)   { setLinkCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setLinkCursor((c) => Math.min(links.length - 1, c + 1)); return; }
       if (input === 'x' && links[linkCursor]) { setLinkMode('confirm-remove'); return; }
-      if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
+      if (input === 's' && syncStatus === 'idle') { syncLink(); return; }
       return;
     }
 
@@ -666,7 +683,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             : mainView === 'dupes'
             ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
             : mainView === 'plaid-links'
-            ? '↑↓ select  ·  [x] remove link  ·  [s] sync'
+            ? '↑↓ select  ·  [x] remove link  ·  [s] sync this link'
             : ''}
         </Text>
       </Box>}

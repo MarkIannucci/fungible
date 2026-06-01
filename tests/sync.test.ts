@@ -19,7 +19,7 @@ vi.mock('../core/crypto.js', () => ({
 vi.mock('../core/dedup.js', () => ({ deduplicateCsvVsPlaid: () => Promise.resolve(0) }));
 
 import { db } from '../core/db.js';
-import { removeLink, syncTransactions } from '../core/sync.js';
+import { removeLink, syncTransactions, syncItem } from '../core/sync.js';
 
 async function count(table: string, where = '', args: string[] = []): Promise<number> {
   const res = await db.execute({ sql: `SELECT COUNT(*) c FROM ${table} ${where}`, args });
@@ -129,5 +129,31 @@ describe('syncTransactions — excluded accounts', () => {
     await syncTransactions('tok', 'itemX');
 
     expect(await count('accounts', "WHERE id = 'a1' AND item_id = 'itemX'")).toBe(1);
+  });
+});
+
+describe('syncItem', () => {
+  it('syncs only the requested item, using that item\'s access token', async () => {
+    await db.execute("INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES ('itemA', 'tokA', 'Fidelity')");
+    await db.execute("INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES ('itemB', 'tokB', 'Chase')");
+    accountsGet.mockResolvedValue({ data: { accounts: [plaidAccount('b1')] } });
+
+    const res = await syncItem('itemB');
+
+    expect(res.itemId).toBe('itemB');
+    // Only itemB's token was used to talk to Plaid — itemA was left alone.
+    expect(transactionsSync).toHaveBeenCalledTimes(1);
+    expect(transactionsSync).toHaveBeenCalledWith(expect.objectContaining({ access_token: 'tokB' }));
+
+    // Only itemB records a sync; itemA stays untouched.
+    expect(await count('plaid_items', 'WHERE item_id = ? AND last_synced_at IS NOT NULL', ['itemB'])).toBe(1);
+    expect(await count('plaid_items', 'WHERE item_id = ? AND last_synced_at IS NULL', ['itemA'])).toBe(1);
+    expect(await count('accounts', "WHERE item_id = 'itemB'")).toBe(1);
+    expect(await count('accounts', "WHERE item_id = 'itemA'")).toBe(0);
+  });
+
+  it('throws when the item does not exist', async () => {
+    await expect(syncItem('missing')).rejects.toThrow('missing');
+    expect(transactionsSync).not.toHaveBeenCalled();
   });
 });
