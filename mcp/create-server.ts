@@ -24,6 +24,22 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
     (input) => run('spending_summary', input),
   );
 
+  // ── merchant_summary ────────────────────────────────────────────────────────
+
+  server.tool(
+    'merchant_summary',
+    'Get top merchants for a category in a date range, with total amount, transaction count, and share of category spend.',
+    {
+      category:   z.string().describe('Category name, e.g. "Food & Drink"'),
+      year:       z.number().int().optional().describe('4-digit year (use with month)'),
+      month:      z.number().int().min(1).max(12).optional().describe('Month 1–12 (use with year)'),
+      from:       z.string().optional().describe('Start date YYYY-MM-DD (use with to)'),
+      to:         z.string().optional().describe('End date YYYY-MM-DD (use with from)'),
+      account_id: z.string().optional().describe('Filter to a specific account ID'),
+    },
+    (input) => run('merchant_summary', input),
+  );
+
   // ── list_transactions ───────────────────────────────────────────────────────
 
   server.tool(

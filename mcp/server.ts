@@ -15,5 +15,7 @@ const server = createMcpServer({
     fetch(`http://localhost:${apiPort}/notify`, { method: 'POST' }).catch(() => {});
   },
 });
+
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
