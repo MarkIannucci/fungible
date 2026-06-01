@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { seedRules } from '../core/seed-rules.js';
 import { DATA_DIR } from '../core/paths.js';
+import { getSetting, setSetting, daysFromStartDate, DEFAULT_START_DATE_KEY, MAX_DAYS_REQUESTED, START_DATE_BUFFER_DAYS } from '../core/settings.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 
 type Step =
@@ -13,6 +14,7 @@ type Step =
   | 'plaid-client-id'
   | 'plaid-secret'
   | 'plaid-env'
+  | 'start-date'
   | 'link-choice'
   | 'linking'
   | 'seed-choice'
@@ -54,6 +56,15 @@ export function Setup() {
   const [plaidEnvIdx, setPlaidEnvIdx] = useState<number>(
     Math.max(0, PLAID_ENVS.indexOf((existing['PLAID_ENV'] as PlaidEnv) ?? 'development'))
   );
+
+  // Default history start date (persisted in DB settings)
+  const [startDateInput, setStartDateInput] = useState('');
+  const [startDateError, setStartDateError] = useState('');
+  useEffect(() => {
+    void getSetting(DEFAULT_START_DATE_KEY).then((v) => {
+      if (v) setStartDateInput(v);
+    });
+  }, []);
 
   // Link flow
   const [linkStatus, setLinkStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
@@ -106,10 +117,27 @@ export function Setup() {
     });
   }
 
+  function validateStartDate(raw: string): string | null {
+    const value = raw.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'Enter a date as YYYY-MM-DD';
+    const d = new Date(value + 'T12:00:00');
+    if (isNaN(d.getTime()) || value !== d.toISOString().slice(0, 10)) return 'Not a valid calendar date';
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    if (d.getTime() > today.getTime()) return 'Start date cannot be in the future';
+    return null;
+  }
+
+  function saveStartDate() {
+    const value = startDateInput.trim();
+    void setSetting(DEFAULT_START_DATE_KEY, value);
+    setStep('link-choice');
+  }
+
   useInput((input, key) => {
     if (step === 'welcome') {
       if (key.return) {
-        setStep(alreadyConfigured ? 'link-choice' : 'plaid-choice');
+        setStep(alreadyConfigured ? 'start-date' : 'plaid-choice');
       }
       return;
     }
@@ -140,7 +168,23 @@ export function Setup() {
       if (key.escape) { setStep('plaid-secret'); return; }
       if (key.leftArrow)  { setPlaidEnvIdx((i) => (i - 1 + PLAID_ENVS.length) % PLAID_ENVS.length); return; }
       if (key.rightArrow) { setPlaidEnvIdx((i) => (i + 1) % PLAID_ENVS.length); return; }
-      if (key.return) { savePlaidCreds(); setStep('link-choice'); return; }
+      if (key.return) { savePlaidCreds(); setStep('start-date'); return; }
+      return;
+    }
+
+    if (step === 'start-date') {
+      if (key.escape) { setStep(alreadyConfigured ? 'welcome' : 'plaid-env'); setStartDateError(''); return; }
+      if (key.return) {
+        const err = validateStartDate(startDateInput);
+        if (err) { setStartDateError(err); return; }
+        setStartDateError('');
+        saveStartDate();
+        return;
+      }
+      if (key.backspace || key.delete) { setStartDateInput((v) => v.slice(0, -1)); setStartDateError(''); return; }
+      if (input && /^[0-9-]+$/.test(input) && !key.ctrl && !key.meta && startDateInput.length < 10) {
+        setStartDateInput((v) => v + input); setStartDateError(''); return;
+      }
       return;
     }
 
@@ -185,6 +229,7 @@ export function Setup() {
           <Box flexDirection="column" marginTop={1}>
             <Text dimColor>This wizard will help you:</Text>
             <Text dimColor>  · Configure Plaid credentials (to sync bank accounts)</Text>
+            <Text dimColor>  · Choose how far back to pull transactions</Text>
             <Text dimColor>  · Link your first bank account</Text>
             <Text dimColor>  · Seed starter category rules</Text>
           </Box>
@@ -251,6 +296,43 @@ export function Setup() {
           <Text dimColor>← → to change · Enter to save</Text>
         </Box>
       )}
+
+      {step === 'start-date' && (() => {
+        const valid = validateStartDate(startDateInput) === null;
+        // Final days_requested for this start date (calendar days + buffer, clamped).
+        const requestedDays = valid ? daysFromStartDate(startDateInput.trim()) : null;
+        const calendarDays = valid
+          ? Math.round((Date.now() - new Date(startDateInput.trim() + 'T12:00:00').getTime()) / 86_400_000)
+          : 0;
+        const capped = calendarDays + START_DATE_BUFFER_DAYS > MAX_DAYS_REQUESTED;
+        return (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Default history start date</Text>
+            <Text dimColor>
+              How far back should fungible pull transactions when you link a bank?
+              We&apos;ll use this to pre-fill the number of days requested, so you don&apos;t
+              have to do the math.
+            </Text>
+            <Text dimColor>
+              Plaid doesn&apos;t document the timezone it uses for the history window, so we add a
+              {' '}{START_DATE_BUFFER_DAYS}-day buffer to make sure your start date isn&apos;t missed.
+            </Text>
+            <Box marginTop={1}>
+              <Text>Start date (YYYY-MM-DD): </Text>
+              <Text color={C_WARNING}>{startDateInput}</Text>
+              <Text color={C_ACCENT}>█</Text>
+            </Box>
+            {requestedDays != null && (
+              <Text dimColor>= {requestedDays} days of history requested (incl. {START_DATE_BUFFER_DAYS}-day buffer)</Text>
+            )}
+            {capped && (
+              <Text color={C_WARNING}>Plaid limits history to {MAX_DAYS_REQUESTED} days, so it&apos;ll be capped there.</Text>
+            )}
+            {startDateError && <Text color={C_NEGATIVE}>{startDateError}</Text>}
+            <Text dimColor>Enter to save · Esc back</Text>
+          </Box>
+        );
+      })()}
 
       {step === 'link-choice' && (
         <Box flexDirection="column" gap={1}>
