@@ -369,7 +369,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   useInput((input, key) => {
     // Global nav (only when not deep in a multi-step flow)
-    const atTop = (mainView === 'accounts' && acctMode === 'list') || (mainView === 'add-data' && addStep === 'landing');
+    const atTop = (mainView === 'accounts' && acctMode === 'list') || (mainView === 'add-data' && addStep === 'landing') || (mainView === 'plaid-links' && linkMode === 'list') || mainView === 'dupes';
 
     if (atTop) {
       if (handleNavKey(input, 'accounts', onNavigate)) return;
