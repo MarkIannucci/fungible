@@ -170,11 +170,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function saveEdit() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
-    updateAccountTypeSubtype(acct.id, editType, editSubtype.trim() || null);
-    setAcctMode('list');
-    setAcctMsg(`Updated ${acct.name}`);
-    setTimeout(() => setAcctMsg(''), 2500);
-    loadAccounts();
+    void updateAccountTypeSubtype(acct.id, editType, editSubtype.trim() || null).then(() => {
+      setAcctMode('list');
+      setAcctMsg(`Updated ${acct.name}`);
+      setTimeout(() => setAcctMsg(''), 2500);
+      loadAccounts();
+    });
   }
 
   function forceSync() {
@@ -206,31 +207,34 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function saveManualAsset() {
     const value = parseFloat(manualValue.replace(/[$,]/g, ''));
     if (isNaN(value) || value < 0) { setManualValueError('Enter a valid positive number'); return; }
-    createManualAccount(manualName, value);
-    setAddStep('manual-done');
-    loadAccounts();
+    void createManualAccount(manualName, value).then(() => {
+      setAddStep('manual-done');
+      loadAccounts();
+    });
   }
 
   function handleDeleteAccount() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
-    deleteAccount(acct.id);
-    setAcctMode('list');
-    setAcctCursor((c) => Math.max(0, c - 1));
-    setAcctMsg(`Deleted ${acct.nickname ?? acct.name}`);
-    setTimeout(() => setAcctMsg(''), 2500);
-    loadAccounts();
+    void deleteAccount(acct.id).then(() => {
+      setAcctMode('list');
+      setAcctCursor((c) => Math.max(0, c - 1));
+      setAcctMsg(`Deleted ${acct.nickname ?? acct.name}`);
+      setTimeout(() => setAcctMsg(''), 2500);
+      loadAccounts();
+    });
   }
 
   function saveNickname() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
     const nickname = nicknameInput.trim() || null;
-    updateAccountNickname(acct.id, nickname);
-    setAcctMode('list');
-    setAcctMsg(nickname ? `Nickname set to "${nickname}"` : 'Nickname cleared');
-    setTimeout(() => setAcctMsg(''), 2500);
-    loadAccounts();
+    void updateAccountNickname(acct.id, nickname).then(() => {
+      setAcctMode('list');
+      setAcctMsg(nickname ? `Nickname set to "${nickname}"` : 'Nickname cleared');
+      setTimeout(() => setAcctMsg(''), 2500);
+      loadAccounts();
+    });
   }
 
   function saveUpdatedValue() {
@@ -238,11 +242,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (!acct) return;
     const value = parseFloat(updateValueInput.replace(/[$,]/g, ''));
     if (isNaN(value) || value < 0) { setUpdateValueError('Enter a valid positive number'); return; }
-    updateAccountValue(acct.id, value);
-    setAcctMode('list');
-    setAcctMsg(`Updated value for ${acct.name}`);
-    setTimeout(() => setAcctMsg(''), 2500);
-    loadAccounts();
+    void updateAccountValue(acct.id, value).then(() => {
+      setAcctMode('list');
+      setAcctMsg(`Updated value for ${acct.name}`);
+      setTimeout(() => setAcctMsg(''), 2500);
+      loadAccounts();
+    });
   }
 
   function startPlaidLink(days = 730) {
