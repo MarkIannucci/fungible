@@ -33,26 +33,30 @@ export async function syncTransactions(accessToken: string, itemId: string) {
   // Upsert accounts and snapshot balances
   const accountsResponse = await getPlaidClient().accountsGet({ access_token: accessToken });
   const today = new Date().toISOString().slice(0, 10);
+  const excludedRes = await db.execute('SELECT account_id FROM excluded_plaid_accounts');
+  const excluded = new Set((excludedRes.rows as unknown as { account_id: string }[]).map((r) => r.account_id));
   await db.batch(
-    accountsResponse.data.accounts.flatMap((acct) => {
-      const rows: { sql: string; args: (string | number | null)[] }[] = [
-        {
-          sql: `INSERT INTO accounts (id, name, type, subtype, mask)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET name=excluded.name`,
-          args: [acct.account_id, acct.name, acct.type, acct.subtype ?? null, acct.mask ?? null],
-        },
-      ];
-      const balance = acct.balances.current;
-      if (balance !== null && balance !== undefined) {
-        rows.push({
-          sql: `INSERT INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)
-                ON CONFLICT(account_id, date) DO UPDATE SET balance=excluded.balance`,
-          args: [acct.account_id, balance, today],
-        });
-      }
-      return rows;
-    }),
+    accountsResponse.data.accounts
+      .filter((acct) => !excluded.has(acct.account_id))
+      .flatMap((acct) => {
+        const rows: { sql: string; args: (string | number | null)[] }[] = [
+          {
+            sql: `INSERT INTO accounts (id, name, type, subtype, mask, item_id)
+                  VALUES (?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(id) DO UPDATE SET name=excluded.name, item_id=excluded.item_id`,
+            args: [acct.account_id, acct.name, acct.type, acct.subtype ?? null, acct.mask ?? null, itemId],
+          },
+        ];
+        const balance = acct.balances.current;
+        if (balance !== null && balance !== undefined) {
+          rows.push({
+            sql: `INSERT INTO balance_history (account_id, balance, date) VALUES (?, ?, ?)
+                  ON CONFLICT(account_id, date) DO UPDATE SET balance=excluded.balance`,
+            args: [acct.account_id, balance, today],
+          });
+        }
+        return rows;
+      }),
     'write',
   );
 
@@ -111,7 +115,40 @@ export async function syncTransactions(accessToken: string, itemId: string) {
   return { added: added.length, modified: modified.length, removed: removedIds.length, dupes };
 }
 
+export async function removeLink(itemId: string): Promise<{ plaidRemoved: boolean }> {
+  const res = await db.execute({ sql: 'SELECT access_token FROM plaid_items WHERE item_id = ?', args: [itemId] });
+  let plaidRemoved = false;
+  if (res.rows.length > 0) {
+    const accessToken = (res.rows[0] as unknown as { access_token: string }).access_token;
+    // Best-effort: an expired/invalid token or network error must not block local cleanup.
+    try {
+      await getPlaidClient().itemRemove({ access_token: decryptToken(accessToken) });
+      plaidRemoved = true;
+    } catch {}
+  }
+  await db.batch([
+    { sql: 'DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id IN (SELECT id FROM accounts WHERE item_id = ?))', args: [itemId] },
+    { sql: 'DELETE FROM transactions WHERE account_id IN (SELECT id FROM accounts WHERE item_id = ?)', args: [itemId] },
+    { sql: 'DELETE FROM balance_history WHERE account_id IN (SELECT id FROM accounts WHERE item_id = ?)', args: [itemId] },
+    { sql: 'DELETE FROM accounts WHERE item_id = ?', args: [itemId] },
+    { sql: 'DELETE FROM sync_state WHERE account_id = ?', args: [itemId] },
+    { sql: 'DELETE FROM plaid_items WHERE item_id = ?', args: [itemId] },
+  ], 'write');
+  return { plaidRemoved };
+}
+
 const DEBOUNCE_MS = 15 * 60 * 1000;
+
+export async function syncItem(itemId: string) {
+  const res = await db.execute({
+    sql: 'SELECT access_token FROM plaid_items WHERE item_id = ?',
+    args: [itemId],
+  });
+  if (res.rows.length === 0) throw new Error(`No Plaid link found for item ${itemId}`);
+  const accessToken = (res.rows[0] as unknown as { access_token: string }).access_token;
+  const result = await syncTransactions(decryptToken(accessToken), itemId);
+  return { itemId, ...result };
+}
 
 export async function syncAll(force = false) {
   const itemsRes = await db.execute('SELECT item_id, access_token, last_synced_at FROM plaid_items');

@@ -36,12 +36,20 @@ export async function createManualAccount(name: string, value: number): Promise<
 }
 
 export async function deleteAccount(id: string): Promise<void> {
-  await db.batch([
+  // Plaid-backed accounts (those with an item_id) would be recreated on the next
+  // sync, so tombstone them in excluded_plaid_accounts to keep them gone.
+  const res = await db.execute({ sql: 'SELECT item_id FROM accounts WHERE id = ?', args: [id] });
+  const itemId = res.rows.length > 0 ? (res.rows[0] as unknown as { item_id: string | null }).item_id : null;
+  const stmts = [
     { sql: 'DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id = ?)', args: [id] },
     { sql: 'DELETE FROM transactions WHERE account_id = ?', args: [id] },
     { sql: 'DELETE FROM balance_history WHERE account_id = ?', args: [id] },
     { sql: 'DELETE FROM accounts WHERE id = ?', args: [id] },
-  ], 'write');
+  ];
+  if (itemId) {
+    stmts.unshift({ sql: 'INSERT OR IGNORE INTO excluded_plaid_accounts (account_id) VALUES (?)', args: [id] });
+  }
+  await db.batch(stmts, 'write');
 }
 
 export type ImportConfig = {
