@@ -248,7 +248,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       setTimeout(() => setRemoveMsg(''), 3000);
     });
   }
-
+  
   function saveNickname() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
