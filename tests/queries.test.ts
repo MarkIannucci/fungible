@@ -11,6 +11,7 @@ import {
   getFlexSummary,
   getHiddenCategories,
   getRecentTransactions,
+  getMerchantSummary,
   hasAccounts,
 } from '../core/queries.js';
 
@@ -18,6 +19,8 @@ let txId = 0;
 async function insertTx(opts: {
   date?: string;
   name?: string;
+  merchantName?: string | null;
+  displayName?: string | null;
   amount: number;
   category?: string;
   pending?: number;
@@ -26,13 +29,15 @@ async function insertTx(opts: {
 }) {
   txId++;
   await db.execute({
-    sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO transactions (id, account_id, date, name, merchant_name, display_name, amount, category, pending, ignored)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       `tx${txId}`,
       opts.accountId ?? 'acct1',
       opts.date ?? '2025-01-15',
       opts.name ?? 'Test Transaction',
+      opts.merchantName ?? null,
+      opts.displayName ?? null,
       opts.amount,
       opts.category ?? 'Shopping',
       opts.pending ?? 0,
@@ -263,6 +268,53 @@ describe('getRangeSummary with accountId', () => {
     const s = await getRangeSummary('2025-01-01', '2025-01-31', 'acct1');
     expect(s.expenses).toBe(0);
     expect(s.income).toBe(0);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getMerchantSummary', () => {
+  it('returns merchants ranked by net spend with counts and percentages', async () => {
+    await insertTx({ amount: 120, category: 'Food & Drink', name: 'Blue Bottle' });
+    await insertTx({ amount: 30, category: 'Food & Drink', name: 'Blue Bottle' });
+    await insertTx({ amount: 50, category: 'Food & Drink', name: 'Chipotle' });
+
+    const rows = await getMerchantSummary('Food & Drink', '2025-01-01', '2025-01-31');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].merchant).toBe('Blue Bottle');
+    expect(rows[0].total).toBeCloseTo(150);
+    expect(rows[0].count).toBe(2);
+    expect(rows[0].pct).toBeCloseTo(0.75);
+    expect(rows[1].merchant).toBe('Chipotle');
+    expect(rows[1].total).toBeCloseTo(50);
+    expect(rows[1].count).toBe(1);
+    expect(rows[1].pct).toBeCloseTo(0.25);
+  });
+
+  it('uses display_name when available and excludes non-positive net merchants', async () => {
+    await insertTx({ amount: 100, category: 'Travel', name: 'LYFT *TRIP', displayName: 'Lyft' });
+    await insertTx({ amount: -40, category: 'Travel', name: 'LYFT *REFUND', displayName: 'Lyft' });
+    await insertTx({ amount: 20, category: 'Travel', name: 'Refund-only merchant' });
+    await insertTx({ amount: -30, category: 'Travel', name: 'Refund-only merchant' });
+
+    const rows = await getMerchantSummary('Travel', '2025-01-01', '2025-01-31');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].merchant).toBe('Lyft');
+    expect(rows[0].total).toBeCloseTo(60);
+    expect(rows[0].pct).toBeCloseTo(1);
+  });
+
+  it('respects account filter and excludes hidden/pending/ignored rows', async () => {
+    await db.execute({ sql: "INSERT INTO hidden_categories VALUES (?)", args: ['Transfer'] });
+    await insertTx({ amount: 90, category: 'Food', name: 'A', accountId: 'acct1' });
+    await insertTx({ amount: 110, category: 'Food', name: 'B', accountId: 'acct2' });
+    await insertTx({ amount: 200, category: 'Food', name: 'C', accountId: 'acct1', pending: 1 });
+    await insertTx({ amount: 200, category: 'Food', name: 'D', accountId: 'acct1', ignored: 1 });
+    await insertTx({ amount: 500, category: 'Transfer', name: 'E', accountId: 'acct1' });
+
+    const rows = await getMerchantSummary('Food', '2025-01-01', '2025-01-31', 'acct1');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].merchant).toBe('A');
+    expect(rows[0].total).toBeCloseTo(90);
   });
 });
 

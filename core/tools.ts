@@ -8,7 +8,7 @@
  */
 
 import { notifyChange } from './refresh.js';
-import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getNetWorthHistory, type NetWorthGranularity } from './queries.js';
+import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, type NetWorthGranularity } from './queries.js';
 import { solveTVM } from './calculator.js';
 import { getDriftWindows } from './dateUtils.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
@@ -49,6 +49,21 @@ export const TOOL_DEFS: ToolDef[] = [
         from:  { type: 'string',  description: 'Start date YYYY-MM-DD' },
         to:    { type: 'string',  description: 'End date YYYY-MM-DD' },
       },
+    },
+  },
+  {
+    name: 'merchant_summary',
+    description: 'Get top merchants for a category in a date range, with total amount, transaction count, and share of category spend.',
+    parameters: {
+      type: 'object',
+      properties: {
+        category: { type: 'string', description: 'Category name, e.g. "Food & Drink"' },
+        year:     { type: 'integer', description: '4-digit year' },
+        month:    { type: 'integer', description: 'Month 1–12', minimum: 1, maximum: 12 },
+        from:     { type: 'string',  description: 'Start date YYYY-MM-DD' },
+        to:       { type: 'string',  description: 'End date YYYY-MM-DD' },
+      },
+      required: ['category'],
     },
   },
   {
@@ -379,6 +394,30 @@ async function executeToolImpl(
         'By category:',
         ...summary.byCategory.map((c) => `  ${c.category}: $${c.total.toFixed(2)}`),
       ].join('\n');
+    }
+
+    case 'merchant_summary': {
+      const category = str('category');
+      if (!category) return "Provide 'category'.";
+
+      const from = str('from'); const to = str('to');
+      const year = num('year'); const month = num('month');
+      const accountId = str('account_id') || undefined;
+
+      const fmtRows = (rows: Awaited<ReturnType<typeof getMerchantSummary>>, label: string) => {
+        if (!rows.length) return `No merchant spend found for "${category}" in ${label}.`;
+        return [`## ${category} · ${label}`, ...rows.map((r) => `${r.merchant}  $${r.total.toFixed(2)}  ${r.count} txn${r.count === 1 ? '' : 's'}  ${(r.pct * 100).toFixed(1)}%`)].join('\n');
+      };
+
+      if (from && to) {
+        return fmtRows(await getMerchantSummary(category, from, to, accountId), `${from} – ${to}`);
+      }
+      if (year && month) {
+        const start = `${year}-${String(month).padStart(2, '0')}-01`;
+        const end   = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+        return fmtRows(await getMerchantSummary(category, start, end, accountId), `${new Date(year, month - 1).toLocaleString('en-US', { month: 'long' })} ${year}`);
+      }
+      return "Provide either (year + month) or (from + to).";
     }
 
     case 'list_transactions': {

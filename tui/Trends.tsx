@@ -138,7 +138,7 @@ export function Trends({
 
       <Box justifyContent="space-between" marginTop={1}>
         <Text bold>Trends</Text>
-        {showHints && <Text dimColor>[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter drill in</Text>}
+        {showHints && <Text dimColor>[Tab] view  ·  ↑↓ navigate  ·  [r] range  ·  Enter txns</Text>}
       </Box>
 
       <Box justifyContent="space-between" marginTop={1}>
