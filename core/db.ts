@@ -65,6 +65,10 @@ export async function initDb() {
     `CREATE TABLE IF NOT EXISTS hidden_categories (
       category TEXT PRIMARY KEY
     )`,
+    `CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )`,
     `CREATE TABLE IF NOT EXISTS name_rules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       match_type TEXT NOT NULL CHECK(match_type IN ('name', 'regex')),
@@ -106,6 +110,7 @@ export async function initDb() {
     'ALTER TABLE name_rules ADD COLUMN max_amount REAL',
     "ALTER TABLE categories ADD COLUMN flexibility TEXT CHECK(flexibility IN ('fixed','flexible','discretionary'))",
     'ALTER TABLE plaid_items ADD COLUMN last_synced_at INTEGER',
+    'ALTER TABLE plaid_items ADD COLUMN days_requested INTEGER',
     'ALTER TABLE accounts ADD COLUMN nickname TEXT',
   ];
   for (const sql of migrations) {

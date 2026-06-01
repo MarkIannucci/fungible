@@ -23,13 +23,15 @@ export function getPlaidClient(): PlaidApi {
   return new PlaidApi(config);
 }
 
-export async function createLinkToken(userId: string) {
+export async function createLinkToken(userId: string, daysRequested?: number) {
   const response = await getPlaidClient().linkTokenCreate({
     user: { client_user_id: userId },
     client_name: 'Fungible',
     products: [Products.Transactions],
     country_codes: [CountryCode.Us],
     language: 'en',
+    // Omitting transactions lets Plaid apply its 90-day default
+    ...(daysRequested ? { transactions: { days_requested: daysRequested } } : {}),
   });
   return response.data.link_token;
 }
