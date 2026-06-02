@@ -100,6 +100,9 @@ export async function initDb() {
     `CREATE TABLE IF NOT EXISTS excluded_plaid_accounts (
       account_id TEXT PRIMARY KEY
     )`,
+    `CREATE TABLE IF NOT EXISTS students (
+      student_id TEXT PRIMARY KEY
+    )`
   ], 'write');
 
   // Idempotent column migrations (each may fail if column exists — that's fine)
