@@ -68,7 +68,7 @@ chore/short-description
 
 ### Version bump
 
-Every PR that changes behavior (features, fixes, tool additions) must bump the version in `package.json`. Follow [semver](https://semver.org/): patch for fixes, minor for new features. The CI version bump check will fail if this is missing.
+Manual version bumps are not necessary.  We loosely follow [semver](https://semver.org/): we use patches for fixes and features which don't require changes to the database schema, minor versions are required for things that change the database.  Our release workflow computes this so you don't need to change the version in `package.json`.
 
 ## Opening an issue
 

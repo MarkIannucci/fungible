@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
 
+# Serialize releases so two merges landing close together can't race on the
+# version: the second job reads the tag the first one just pushed.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -15,36 +21,75 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Detect version bump
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm ci
+
+      - name: Compute next version
         id: version
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="v$VERSION"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "new=false" >> $GITHUB_OUTPUT
-            echo "No new version — skipping release."
-          else
-            echo "new=true" >> $GITHUB_OUTPUT
-            echo "New version detected: $TAG"
+          git fetch --tags --force origin
+
+          # The released version lives only in git tags (package.json's version
+          # is cosmetic and unused at runtime). Derive the next one from the
+          # latest tag — never from a file a PR could have touched.
+          LAST=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          LAST=${LAST:-v0.0.0}
+          echo "Last release: $LAST"
+
+          # If this exact commit is already tagged (e.g. a workflow re-run),
+          # don't mint a duplicate version.
+          if git tag --points-at HEAD --list 'v*' | grep -q .; then
+            echo "HEAD already released — skipping."
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
-      - name: Create tag
-        if: steps.version.outputs.new == 'true'
+          # Fingerprint the live schema and compare with the hash recorded in
+          # the last release's tag message. Differ -> schema changed -> minor;
+          # otherwise patch. No prior hash (first adoption) defaults to patch.
+          NEW_HASH=$(node --import tsx/esm scripts/schema-hash.ts)
+          OLD_HASH=$(git for-each-ref "refs/tags/$LAST" --format='%(contents)' \
+            | grep -oE '^schema=[0-9a-f]{64}' | head -n1 | cut -d= -f2)
+          echo "schema old=${OLD_HASH:-none} new=$NEW_HASH"
+
+          if [ -n "$OLD_HASH" ] && [ "$OLD_HASH" != "$NEW_HASH" ]; then
+            LEVEL=minor
+          else
+            LEVEL=patch
+          fi
+          echo "Bump level: $LEVEL"
+
+          NEW=$(node -e "const [maj,min,pat]=process.argv[1].replace(/^v/,'').split('.').map(Number);const l=process.argv[2];console.log(l==='minor'?\`\${maj}.\${min+1}.0\`:\`\${maj}.\${min}.\${pat+1}\`)" "$LAST" "$LEVEL")
+          echo "Next release: v$NEW"
+
+          echo "skip=false"        >> $GITHUB_OUTPUT
+          echo "version=$NEW"      >> $GITHUB_OUTPUT
+          echo "tag=v$NEW"         >> $GITHUB_OUTPUT
+          echo "hash=$NEW_HASH"    >> $GITHUB_OUTPUT
+
+      - name: Tag release
+        if: steps.version.outputs.skip != 'true'
         run: |
-          git config user.name "github-actions[bot]"
+          TAG=${{ steps.version.outputs.tag }}
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ steps.version.outputs.tag }}
-          git push origin ${{ steps.version.outputs.tag }}
+
+          # Annotated tag on the merge commit itself — no extra commit, no
+          # history rewrite. The schema fingerprint travels in the tag message
+          # so the next release can decide patch vs minor.
+          git tag -a "$TAG" -m "schema=${{ steps.version.outputs.hash }}" HEAD
+          git push origin "$TAG"
 
       - name: Update Homebrew formula
-        if: steps.version.outputs.new == 'true'
+        if: steps.version.outputs.skip != 'true'
         env:
           TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
           TAG=${{ steps.version.outputs.tag }}
-          TARBALL_URL="https://github.com/tomfunk/fungible/archive/refs/tags/${TAG}.tar.gz"
+          TARBALL_URL="https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz"
 
           # Give GitHub a moment to serve the tarball after tagging
           sleep 5
@@ -52,7 +97,7 @@ jobs:
           SHA=$(curl -sL "$TARBALL_URL" | sha256sum | awk '{print $1}')
           echo "sha256: $SHA"
 
-          git clone https://x-access-token:${TAP_TOKEN}@github.com/tomfunk/homebrew-fungible.git
+          git clone https://x-access-token:${TAP_TOKEN}@github.com/${{ github.repository_owner }}/homebrew-fungible.git
           cd homebrew-fungible
 
           sed -i "s|/refs/tags/v[^/]*.tar.gz|/refs/tags/${TAG}.tar.gz|" Formula/fungible.rb
