@@ -106,6 +106,7 @@ export async function initDb() {
     'ALTER TABLE name_rules ADD COLUMN max_amount REAL',
     "ALTER TABLE categories ADD COLUMN flexibility TEXT CHECK(flexibility IN ('fixed','flexible','discretionary'))",
     'ALTER TABLE plaid_items ADD COLUMN last_synced_at INTEGER',
+    'ALTER TABLE plaid_items ADD COLUMN days_requested INTEGER',
     'ALTER TABLE accounts ADD COLUMN nickname TEXT',
   ];
   for (const sql of migrations) {
