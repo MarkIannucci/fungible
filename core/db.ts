@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { encryptToken } from './crypto.js';
 import { DATA_DIR } from './paths.js';
+import { M } from 'vitest/dist/chunks/reporters.d.BFLkQcL6.js';
 
 const DB_PATH = path.join(DATA_DIR, 'fungible.db');
 
@@ -102,7 +103,7 @@ export async function initDb() {
     )`,
     `CREATE TABLE IF NOT EXISTS students (
       student_id TEXT PRIMARY KEY
-    )`
+    )`,
   ], 'write');
 
   // Idempotent column migrations (each may fail if column exists — that's fine)
