@@ -65,6 +65,10 @@ export async function initDb() {
     `CREATE TABLE IF NOT EXISTS hidden_categories (
       category TEXT PRIMARY KEY
     )`,
+    `CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )`,
     `CREATE TABLE IF NOT EXISTS name_rules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       match_type TEXT NOT NULL CHECK(match_type IN ('name', 'regex')),
