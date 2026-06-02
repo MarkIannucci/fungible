@@ -17,6 +17,7 @@ import { NetWorth } from '../../tui/NetWorth.js';
 import { Tags } from '../../tui/Tags.js';
 import { Rules } from '../../tui/Rules.js';
 import { Accounts } from '../../tui/Accounts.js';
+import * as accountsApi from '../../core/accounts.js';
 import { Health } from '../../tui/Health.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';
@@ -600,6 +601,85 @@ describe('Accounts', () => {
     await waitFor(() => expect(frame(r)).toContain('Accounts'));
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
+  });
+
+  // Regression guards for the stale-list bug: the mutation DB calls are async, so
+  // the list must reload only AFTER the write commits. The handlers must await the
+  // write before calling loadAccounts(); otherwise the reload reads pre-mutation
+  // data and the list never reflects the change.
+  //
+  // In-memory libsql applies an un-awaited write before the next read, so the race
+  // can't be observed at face value. We reproduce the real-world DB latency by
+  // delaying the write ~60ms: with the bug, loadAccounts() reads stale data while
+  // the write is still in flight and the list never updates; with the fix, the
+  // reload is chained off the write and shows fresh data.
+  const WRITE_DELAY = 60;
+  function delayWrite<A extends unknown[], R>(fn: (...a: A) => Promise<R>) {
+    return (...args: A): Promise<R> =>
+      new Promise((res) => setTimeout(res, WRITE_DELAY)).then(() => fn(...args));
+  }
+  afterEach(() => vi.restoreAllMocks());
+
+  it('setting a nickname refreshes the list to show the new nickname', async () => {
+    const real = accountsApi.updateAccountNickname;
+    vi.spyOn(accountsApi, 'updateAccountNickname').mockImplementation(delayWrite(real));
+
+    const r = accounts();
+    // Cursor starts on the first account (depository sorts first = Test Checking).
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('n');                 // open nickname editor
+    await waitFor(() => expect(frame(r)).toContain('Leave empty to clear nickname'));
+    r.stdin.write('Vacation Fund');     // type the nickname
+    await waitFor(() => expect(frame(r)).toContain('Vacation Fund'));
+    r.stdin.write('\r');                // save (separate chunk so it isn't merged with the text)
+    // The list row now shows the nickname in place of the account name. Asserting
+    // the original name is gone proves the list reloaded with post-write data (the
+    // status toast that mentions the nickname never contains the original name).
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Vacation Fund');
+      expect(f).not.toContain('Test Checking');
+    });
+  });
+
+  it('deleting an account refreshes the list to drop it', async () => {
+    const real = accountsApi.deleteAccount;
+    vi.spyOn(accountsApi, 'deleteAccount').mockImplementation(delayWrite(real));
+
+    const r = accounts();
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Test Checking');
+      expect(f).toContain('2 accounts');
+    });
+    r.stdin.write('x');                 // confirm-delete panel
+    await waitFor(() => expect(frame(r)).toContain('this cannot be undone'));
+    r.stdin.write('y');                 // confirm
+    // The account-count line reflects the reloaded list independently of the
+    // "Deleted …" status toast (which still mentions the deleted account name).
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('1 account');
+      expect(f).toContain('Test Visa');
+    });
+  });
+
+  it('surfaces an error and leaves the list unchanged when a write fails', async () => {
+    vi.spyOn(accountsApi, 'updateAccountNickname').mockRejectedValue(new Error('db down'));
+
+    const r = accounts();
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).toContain('Leave empty to clear nickname'));
+    r.stdin.write('Vacation Fund');
+    await waitFor(() => expect(frame(r)).toContain('Vacation Fund'));
+    r.stdin.write('\r');                 // save → write rejects
+    // A failed write must show an error rather than a (false) success, and the
+    // account must keep its original name.
+    await waitFor(() => expect(frame(r)).toContain('Failed to save nickname'));
+    const f = frame(r);
+    expect(f).toContain('Test Checking');
+    expect(f).not.toContain('Nickname set to');
   });
 });
 

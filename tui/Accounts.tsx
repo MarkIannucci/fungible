@@ -78,6 +78,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [editType, setEditType] = useState('');
   const [editSubtype, setEditSubtype] = useState('');
   const [acctMsg, setAcctMsg] = useState('');
+  const [acctErr, setAcctErr] = useState('');
 
   // Sync state (shared)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done'>('idle');
@@ -167,15 +168,25 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     setAcctMode('edit');
   }
 
-  function saveEdit() {
+  // Surface a write failure in red; clears itself after a few seconds (mirrors syncMsg).
+  function showAcctErr(msg: string) {
+    setAcctErr(msg);
+    setTimeout(() => setAcctErr(''), 3000);
+  }
+
+  async function saveEdit() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
-    void updateAccountTypeSubtype(acct.id, editType, editSubtype.trim() || null).then(() => {
+    try {
+      await updateAccountTypeSubtype(acct.id, editType, editSubtype.trim() || null);
       setAcctMode('list');
+      setAcctErr('');
       setAcctMsg(`Updated ${acct.name}`);
       setTimeout(() => setAcctMsg(''), 2500);
       loadAccounts();
-    });
+    } catch {
+      showAcctErr(`Failed to update ${acct.name}`);
+    }
   }
 
   function forceSync() {
@@ -204,50 +215,66 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     });
   }
 
-  function saveManualAsset() {
+  async function saveManualAsset() {
     const value = parseFloat(manualValue.replace(/[$,]/g, ''));
     if (isNaN(value) || value < 0) { setManualValueError('Enter a valid positive number'); return; }
-    void createManualAccount(manualName, value).then(() => {
+    try {
+      await createManualAccount(manualName, value);
       setAddStep('manual-done');
       loadAccounts();
-    });
+    } catch {
+      setManualValueError('Failed to save asset — please try again');
+    }
   }
 
-  function handleDeleteAccount() {
+  async function handleDeleteAccount() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
-    void deleteAccount(acct.id).then(() => {
+    try {
+      await deleteAccount(acct.id);
       setAcctMode('list');
       setAcctCursor((c) => Math.max(0, c - 1));
+      setAcctErr('');
       setAcctMsg(`Deleted ${acct.nickname ?? acct.name}`);
       setTimeout(() => setAcctMsg(''), 2500);
       loadAccounts();
-    });
+    } catch {
+      setAcctMode('list');
+      showAcctErr(`Failed to delete ${acct.nickname ?? acct.name}`);
+    }
   }
 
-  function saveNickname() {
+  async function saveNickname() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
     const nickname = nicknameInput.trim() || null;
-    void updateAccountNickname(acct.id, nickname).then(() => {
+    try {
+      await updateAccountNickname(acct.id, nickname);
       setAcctMode('list');
+      setAcctErr('');
       setAcctMsg(nickname ? `Nickname set to "${nickname}"` : 'Nickname cleared');
       setTimeout(() => setAcctMsg(''), 2500);
       loadAccounts();
-    });
+    } catch {
+      showAcctErr('Failed to save nickname');
+    }
   }
 
-  function saveUpdatedValue() {
+  async function saveUpdatedValue() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
     const value = parseFloat(updateValueInput.replace(/[$,]/g, ''));
     if (isNaN(value) || value < 0) { setUpdateValueError('Enter a valid positive number'); return; }
-    void updateAccountValue(acct.id, value).then(() => {
+    try {
+      await updateAccountValue(acct.id, value);
       setAcctMode('list');
+      setAcctErr('');
       setAcctMsg(`Updated value for ${acct.name}`);
       setTimeout(() => setAcctMsg(''), 2500);
       loadAccounts();
-    });
+    } catch {
+      setUpdateValueError('Failed to update value — please try again');
+    }
   }
 
   function startPlaidLink(days = 730) {
@@ -343,7 +370,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (mainView === 'accounts') {
       if (acctMode === 'edit') {
         if (key.escape) { setAcctMode('list'); return; }
-        if (key.return) { saveEdit(); return; }
+        if (key.return) { void saveEdit(); return; }
         if (key.tab) {
           setEditField((f) => f === 'type' ? 'subtype' : 'type');
           return;
@@ -374,7 +401,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
       if (acctMode === 'update-value') {
         if (key.escape) { setAcctMode('list'); setUpdateValueInput(''); setUpdateValueError(''); return; }
-        if (key.return) { saveUpdatedValue(); return; }
+        if (key.return) { void saveUpdatedValue(); return; }
         if (key.backspace || key.delete) { setUpdateValueInput((v) => v.slice(0, -1)); setUpdateValueError(''); return; }
         if (input && !key.ctrl && !key.meta) { setUpdateValueInput((v) => v + input); setUpdateValueError(''); return; }
         return;
@@ -382,7 +409,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
       if (acctMode === 'nickname') {
         if (key.escape) { setAcctMode('list'); setNicknameInput(''); return; }
-        if (key.return) { saveNickname(); return; }
+        if (key.return) { void saveNickname(); return; }
         if (key.backspace || key.delete) { setNicknameInput((v) => v.slice(0, -1)); return; }
         if (input && !key.ctrl && !key.meta) { setNicknameInput((v) => v + input); return; }
         return;
@@ -390,7 +417,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
       if (acctMode === 'confirm-delete') {
         if (key.escape || input === 'n') { setAcctMode('list'); return; }
-        if (input === 'y') { handleDeleteAccount(); return; }
+        if (input === 'y') { void handleDeleteAccount(); return; }
         return;
       }
 
@@ -587,7 +614,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
     if (addStep === 'manual-value') {
       if (key.escape) { setAddStep('manual-name'); return; }
-      if (key.return) { saveManualAsset(); return; }
+      if (key.return) { void saveManualAsset(); return; }
       if (key.backspace || key.delete) { setManualValue((v) => v.slice(0, -1)); setManualValueError(''); return; }
       if (input && !key.ctrl && !key.meta) { setManualValue((v) => v + input); setManualValueError(''); return; }
       return;
@@ -678,6 +705,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           <Text dimColor>{linkedAccounts.length} account{linkedAccounts.length !== 1 ? 's' : ''}</Text>
           {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : C_POSITIVE}>{syncMsg}</Text>}
           {acctMsg && <Text color={C_POSITIVE}>{acctMsg}</Text>}
+          {acctErr && <Text color={C_NEGATIVE}>{acctErr}</Text>}
 
           {/* Confirm-delete panel */}
           {acctMode === 'confirm-delete' && selectedAcct && (
