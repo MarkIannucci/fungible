@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { seedRules } from '../core/seed-rules.js';
 import { DATA_DIR } from '../core/paths.js';
+import { getSetting, setSetting, daysFromStartDate, DEFAULT_START_DATE_KEY, MAX_DAYS_REQUESTED, START_DATE_BUFFER_DAYS } from '../core/settings.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 
 type Step =
@@ -13,6 +14,7 @@ type Step =
   | 'plaid-client-id'
   | 'plaid-secret'
   | 'plaid-env'
+  | 'start-date'
   | 'link-choice'
   | 'linking'
   | 'seed-choice'
@@ -54,6 +56,15 @@ export function Setup() {
   const [plaidEnvIdx, setPlaidEnvIdx] = useState<number>(
     Math.max(0, PLAID_ENVS.indexOf((existing['PLAID_ENV'] as PlaidEnv) ?? 'development'))
   );
+
+  // Default history start date (persisted in DB settings)
+  const [startDateInput, setStartDateInput] = useState('');
+  const [startDateError, setStartDateError] = useState('');
+  useEffect(() => {
+    void getSetting(DEFAULT_START_DATE_KEY).then((v) => {
+      if (v) setStartDateInput(v);
+    });
+  }, []);
 
   // Link flow
   const [linkStatus, setLinkStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
@@ -106,10 +117,31 @@ export function Setup() {
     });
   }
 
+  function validateStartDate(raw: string): string | null {
+    const value = raw.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'Enter a date as YYYY-MM-DD';
+    const d = new Date(value + 'T12:00:00');
+    if (isNaN(d.getTime()) || value !== d.toISOString().slice(0, 10)) return 'Not a valid calendar date';
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    if (d.getTime() > today.getTime()) return 'Start date cannot be in the future';
+    return null;
+  }
+
+  async function saveStartDate() {
+    const value = startDateInput.trim();
+    try {
+      await setSetting(DEFAULT_START_DATE_KEY, value);
+      setStep('link-choice');
+    } catch {
+      setStartDateError('Failed to save — please try again');
+    }
+  }
+
   useInput((input, key) => {
     if (step === 'welcome') {
       if (key.return) {
-        setStep(alreadyConfigured ? 'link-choice' : 'plaid-choice');
+        setStep(alreadyConfigured ? 'start-date' : 'plaid-choice');
       }
       return;
     }
@@ -140,7 +172,24 @@ export function Setup() {
       if (key.escape) { setStep('plaid-secret'); return; }
       if (key.leftArrow)  { setPlaidEnvIdx((i) => (i - 1 + PLAID_ENVS.length) % PLAID_ENVS.length); return; }
       if (key.rightArrow) { setPlaidEnvIdx((i) => (i + 1) % PLAID_ENVS.length); return; }
-      if (key.return) { savePlaidCreds(); setStep('link-choice'); return; }
+      if (key.return) { savePlaidCreds(); setStep('start-date'); return; }
+      return;
+    }
+
+    if (step === 'start-date') {
+      if (key.escape) { setStep(alreadyConfigured ? 'welcome' : 'plaid-env'); setStartDateError(''); return; }
+      if (key.return) {
+        if (!startDateInput.trim()) { setStep('link-choice'); return; }
+        const err = validateStartDate(startDateInput);
+        if (err) { setStartDateError(err); return; }
+        setStartDateError('');
+        void saveStartDate();
+        return;
+      }
+      if (key.backspace || key.delete) { setStartDateInput((v) => v.slice(0, -1)); setStartDateError(''); return; }
+      if (input && /^[0-9-]+$/.test(input) && !key.ctrl && !key.meta && startDateInput.length < 10) {
+        setStartDateInput((v) => v + input); setStartDateError(''); return;
+      }
       return;
     }
 
@@ -172,6 +221,10 @@ export function Setup() {
     }
   });
 
+  const startDateIsValid = step === 'start-date' && validateStartDate(startDateInput) === null;
+  const startDateRequestedDays = startDateIsValid ? daysFromStartDate(startDateInput.trim()) : null;
+  const startDateCapped = startDateRequestedDays === MAX_DAYS_REQUESTED;
+
   return (
     <Box flexDirection="column" paddingX={3} paddingY={2}>
       <Box marginBottom={1}>
@@ -185,6 +238,7 @@ export function Setup() {
           <Box flexDirection="column" marginTop={1}>
             <Text dimColor>This wizard will help you:</Text>
             <Text dimColor>  · Configure Plaid credentials (to sync bank accounts)</Text>
+            <Text dimColor>  · Choose how far back to pull transactions</Text>
             <Text dimColor>  · Link your first bank account</Text>
             <Text dimColor>  · Seed starter category rules</Text>
           </Box>
@@ -249,6 +303,34 @@ export function Setup() {
             <Text dimColor> →</Text>
           </Box>
           <Text dimColor>← → to change · Enter to save</Text>
+        </Box>
+      )}
+
+      {step === 'start-date' && (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>Default history start date</Text>
+          <Text dimColor>
+            How far back should fungible pull transactions when you link a bank?
+            We&apos;ll use this to pre-fill the number of days requested, so you don&apos;t
+            have to do the math.
+          </Text>
+          <Text dimColor>
+            Plaid doesn&apos;t document the timezone it uses for the history window, so we add a
+            {' '}{START_DATE_BUFFER_DAYS}-day buffer to make sure your start date isn&apos;t missed.
+          </Text>
+          <Box marginTop={1}>
+            <Text>Start date (YYYY-MM-DD): </Text>
+            <Text color={C_WARNING}>{startDateInput}</Text>
+            <Text color={C_ACCENT}>█</Text>
+          </Box>
+          {startDateRequestedDays != null && (
+            <Text dimColor>= {startDateRequestedDays} days of history requested (incl. {START_DATE_BUFFER_DAYS}-day buffer)</Text>
+          )}
+          {startDateCapped && (
+            <Text color={C_WARNING}>Plaid limits history to {MAX_DAYS_REQUESTED} days, so it&apos;ll be capped there.</Text>
+          )}
+          {startDateError && <Text color={C_NEGATIVE}>{startDateError}</Text>}
+          <Text dimColor>Enter to save · Leave blank to skip · Esc back</Text>
         </Box>
       )}
 

@@ -7,6 +7,7 @@ import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
+import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
 import {
   updateAccountTypeSubtype, updateAccountNickname, updateAccountValue,
   createManualAccount, createCsvAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
@@ -24,6 +25,7 @@ type EditField = 'type' | 'subtype';
 
 type AddStep =
   | 'landing'
+  | 'link-days'
   | 'link-plaid'
   | 'file'
   | 'map-date'
@@ -85,6 +87,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [addStep, setAddStep] = useState<AddStep>('landing');
   const [linkStatus, setLinkStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [linkMsg, setLinkMsg] = useState('');
+  const [daysInput, setDaysInput] = useState(String(MAX_DAYS_REQUESTED));
+  const [daysError, setDaysError] = useState('');
+  // Default history window derived from the start date set during setup.
+  const [defaultDays, setDefaultDays] = useState(MAX_DAYS_REQUESTED);
+  useEffect(() => {
+    void getDefaultDaysRequested().then(setDefaultDays);
+  }, []);
 
   // CSV import state
   const [filePath, setFilePath] = useState('');
@@ -126,7 +135,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [dupeCursor, setDupeCursor] = useState(0);
 
   const setTyping = useSetTyping();
-  const TEXT_INPUT_STEPS = new Set<AddStep>(['file', 'manual-name', 'manual-value', 'new-acct-name']);
+  const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'manual-name', 'manual-value', 'new-acct-name']);
   const TEXT_INPUT_MODES = new Set<AcctMode>(['nickname', 'update-value']);
   useEffect(() => {
     setTyping(TEXT_INPUT_STEPS.has(addStep) || TEXT_INPUT_MODES.has(acctMode));
@@ -241,7 +250,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     });
   }
 
-  function startPlaidLink() {
+  function startPlaidLink(days = 730) {
     setLinkStatus('running');
     setLinkMsg('Opening browser…');
     const node = process.execPath;
@@ -250,7 +259,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       '--no-warnings',
       '--import', 'tsx/esm',
       script,
-    ], { cwd: new URL('..', import.meta.url).pathname });
+    ], {
+      cwd: new URL('..', import.meta.url).pathname,
+      env: { ...process.env, PLAID_DAYS_REQUESTED: String(days) },
+    });
     child.stdout.on('data', (data: Buffer) => {
       const line = data.toString().trim().split('\n').pop() ?? '';
       if (line) setLinkMsg(line);
@@ -406,8 +418,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
       if (input === 'r' && linkedAccounts[acctCursor]) {
         setMainView('add-data');
-        setAddStep('link-plaid');
-        startPlaidLink();
+        setDaysInput(String(defaultDays));
+        setDaysError('');
+        setAddStep('link-days');
         return;
       }
       if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
@@ -442,10 +455,25 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     if (addStep === 'landing') {
       if (key.escape) { setMainView('accounts'); return; }
       if (key.tab) { setMainView('dupes'); return; }
-      if (input === 'l') { setAddStep('link-plaid'); startPlaidLink(); return; }
+      if (input === 'l') { setDaysInput(String(defaultDays)); setDaysError(''); setAddStep('link-days'); return; }
       if (input === 'c') { setAddStep('file'); return; }
       if (input === 'm') { setManualName(''); setAddStep('manual-name'); return; }
       if (input === 's' && syncStatus === 'idle') { forceSync(); return; }
+      return;
+    }
+
+    if (addStep === 'link-days') {
+      if (key.escape) { setAddStep('landing'); setDaysError(''); return; }
+      if (key.return) {
+        const n = parseInt(daysInput, 10);
+        if (isNaN(n) || n < MIN_DAYS_REQUESTED || n > MAX_DAYS_REQUESTED) { setDaysError(`Enter a whole number from ${MIN_DAYS_REQUESTED} to ${MAX_DAYS_REQUESTED}`); return; }
+        setDaysError('');
+        setAddStep('link-plaid');
+        startPlaidLink(n);
+        return;
+      }
+      if (key.backspace || key.delete) { setDaysInput((v) => v.slice(0, -1)); setDaysError(''); return; }
+      if (input && /^[0-9]+$/.test(input) && !key.ctrl && !key.meta && daysInput.length <= 3) { setDaysInput((v) => v + input); setDaysError(''); return; }
       return;
     }
 
@@ -771,6 +799,20 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               </Box>
               {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : C_POSITIVE}>{syncMsg}</Text></Box>}
               <Box marginTop={1}><Text dimColor>Tab or Esc to go back</Text></Box>
+            </Box>
+          )}
+
+          {addStep === 'link-days' && (
+            <Box flexDirection="column" marginTop={1} gap={1}>
+              <Text bold>Transaction History Window</Text>
+              <Text dimColor>How many days of history should Plaid fetch? (30–{MAX_DAYS_REQUESTED}, default {defaultDays})</Text>
+              <Text dimColor>Default comes from the start date set during setup (plus a small buffer for timezone safety). This is locked in when the bank is linked and can only be changed if you recreate the link later.</Text>
+              <Box>
+                <Text>Days: </Text>
+                <Text>{daysInput}<Text color={C_ACCENT}>{CURSOR}</Text></Text>
+              </Box>
+              {daysError && <Text color={C_NEGATIVE}>{daysError}</Text>}
+              <Text dimColor>Enter to continue · Esc back</Text>
             </Box>
           )}
 
