@@ -104,6 +104,7 @@ export async function initDb() {
     `CREATE TABLE IF NOT EXISTS students (
       student_id TEXT PRIMARY KEY
     )`,
+    `DROP TABLE IF EXISTS students`,
   ], 'write');
 
   // Idempotent column migrations (each may fail if column exists — that's fine)
