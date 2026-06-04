@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
-  getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows,
+  getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, getOwnerRows,
   getCategoryDriftData, getFlexDriftData, getAccountDriftData, countSearchMatches, getSearchFilteredData, getMerchantSummary,
-  type MonthlySummary, type FlexSummary, type AccountRow,
+  type MonthlySummary, type FlexSummary, type AccountRow, type OwnerRow,
   type CategoryDrift, type FlexDriftData, type AccountDrift, type MerchantSummaryRow,
 } from '../core/queries.js';
 import {
@@ -21,7 +21,7 @@ import { useRefreshKey } from './RefreshContext.js';
 
 const BAR_WIDTH = 20;
 
-type DashView = 'categories' | 'flex' | 'account';
+type DashView = 'categories' | 'flex' | 'account' | 'owner';
 
 function pct(part: number, total: number) {
   if (total === 0) return '0%';
@@ -95,9 +95,13 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const [acctCursor, setAcctCursor] = useState(0);
   const [selectedAccount, setSelectedAccount] = useState<AccountRow | null>(null);
 
+  // Owner split
+  const [ownerRows, setOwnerRows] = useState<OwnerRow[]>([]);
+
   function load(r: Range, a: Date, acct: AccountRow | null) {
     const { from, to } = getPeriodDates(r, a);
     void getAccountRows(from, to).then(setAccountRows);
+    void getOwnerRows(from, to).then(setOwnerRows);
     setAcctCursor(0);
     if (acct) {
       void getRangeSummary(from, to, acct.id).then(setSummary);
@@ -171,6 +175,13 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anchor.toISOString().slice(0, 10), range]);
 
+  // Don't strand the user on the owner view if the last owner gets unassigned elsewhere.
+  useEffect(() => {
+    if (view === 'owner' && ownerRows.length > 0 && !ownerRows.some((r) => r.owner !== 'Unassigned')) {
+      setView('categories');
+    }
+  }, [view, ownerRows]);
+
   const categories = summary?.byCategory ?? [];
 
   const termW = useTerminalWidth();
@@ -179,6 +190,12 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const catFlex      = Math.max(20, inner - 16);
   const dashCatNameW = Math.max(12, Math.floor(catFlex * 0.38));
   const dashBarW     = Math.max(8,  catFlex - dashCatNameW);
+
+  // Owner split view is only offered once at least one account has an owner assigned.
+  // Every owned account yields an OwnerRow (LEFT JOIN), so a non-'Unassigned' row here
+  // means an owner exists regardless of whether they spent anything this period.
+  const hasOwners = ownerRows.some((r) => r.owner !== 'Unassigned');
+  const maxOwnerSpend = ownerRows[0]?.spending || 1;
   // Drift categories: 3 delta cols × 9 chars + 4 gaps of 2 = 27+8=35 for cols; plus amount(10)+gaps
   // total fixed = 2(cursor) + 10(amt) + 4(gaps to amt) + 27(3×9) + 4(gaps between deltas) = 47
   const driftCatNameW = Math.max(12, inner - 47);
@@ -240,7 +257,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     }
 
     if (key.tab) {
-      setView((v) => v === 'categories' ? 'flex' : v === 'flex' ? 'account' : 'categories');
+      setView((v) => v === 'categories' ? 'flex' : v === 'flex' ? 'account' : v === 'account' && hasOwners ? 'owner' : 'categories');
       return;
     }
 
@@ -365,7 +382,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                   ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [d] delta`
                   : view === 'categories'
                     ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns${driftMode ? '' : '  ·  [m] merchants'}  ·  [Tab] view  ·  [d] delta`
-                    : '[/] search  ·  ← → period  ·  Enter txns  ·  [Tab] view  ·  [d] delta')
+                    : view === 'owner'
+                      ? '← → period  ·  [r] range  ·  [Tab] view'
+                      : '[/] search  ·  ← → period  ·  Enter txns  ·  [Tab] view  ·  [d] delta')
               : '[/] search'}
           </Text>
       }
@@ -387,7 +406,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           {selectedAccount && <Text color={C_WARNING}>{selectedAccount.name}</Text>}
           {driftMode && <Text color={C_MANUAL} bold>delta</Text>}
           <Text dimColor>
-            {merchantDrill ? `merchants · ${merchantDrill.category}` : view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : 'account'}
+            {merchantDrill ? `merchants · ${merchantDrill.category}` : view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : view === 'account' ? 'account' : 'owner'}
           </Text>
         </Box>
       </Box>
@@ -463,6 +482,24 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           {selectedAccount && (
             <Box marginTop={1}><Text dimColor>[c] clear filter</Text></Box>
           )}
+        </Box>
+      ) : view === 'owner' ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold dimColor>SPENDING BY OWNER</Text>
+          <Box flexDirection="column" marginTop={1}>
+            {ownerRows.map((row) => (
+              <Box key={row.owner} gap={2}>
+                <Text dimColor={row.owner === 'Unassigned'}>
+                  {(row.owner.length > dashCatNameW ? row.owner.slice(0, dashCatNameW - 1) + '…' : row.owner).padEnd(dashCatNameW)}
+                </Text>
+                <Text color={C_NEGATIVE} dimColor={row.spending === 0}>
+                  {(row.spending > 0 ? fmt(row.spending) : '—').padStart(10)}
+                </Text>
+                <Text color={C_MANUAL}>{bar(row.spending, maxOwnerSpend, dashBarW)}</Text>
+              </Box>
+            ))}
+          </Box>
+          <Box marginTop={1}><Text dimColor>Assign owners in [8] accounts → [o]</Text></Box>
         </Box>
       ) : displaySummary ? (
         <>

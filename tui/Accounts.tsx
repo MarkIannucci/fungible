@@ -9,7 +9,7 @@ import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
 import {
-  updateAccountTypeSubtype, updateAccountNickname, updateAccountValue,
+  updateAccountTypeSubtype, updateAccountNickname, updateAccountOwner, updateAccountValue,
   createManualAccount, createCsvAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
 } from '../core/accounts.js';
 import type { Screen, TxFilter } from './App.js';
@@ -21,7 +21,7 @@ import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader } fr
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MainView = 'accounts' | 'add-data' | 'dupes';
-type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname' | 'confirm-delete';
+type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname' | 'owner' | 'confirm-delete';
 type EditField = 'type' | 'subtype';
 
 type AddStep =
@@ -132,13 +132,16 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Nickname mode state
   const [nicknameInput, setNicknameInput] = useState('');
 
+  // Owner mode state
+  const [ownerInput, setOwnerInput] = useState('');
+
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
 
   const setTyping = useSetTyping();
   const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'manual-name', 'manual-value', 'new-acct-name']);
-  const TEXT_INPUT_MODES = new Set<AcctMode>(['nickname', 'update-value']);
+  const TEXT_INPUT_MODES = new Set<AcctMode>(['nickname', 'owner', 'update-value']);
   useEffect(() => {
     setTyping(TEXT_INPUT_STEPS.has(addStep) || TEXT_INPUT_MODES.has(acctMode));
   }, [addStep, acctMode]);
@@ -246,6 +249,20 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       loadAccounts();
     } catch {
       showAcctErr('Failed to save nickname');
+    }
+  }
+
+  async function saveOwner() {
+    const acct = linkedAccounts[acctCursor];
+    if (!acct) return;
+    const owner = ownerInput.trim() || null;
+    try {
+      await updateAccountOwner(acct.id, owner);
+      setAcctMode('list');
+      showAcctMsg(owner ? `Owner set to "${owner}"` : 'Owner cleared');
+      loadAccounts();
+    } catch {
+      showAcctErr('Failed to save owner');
     }
   }
 
@@ -402,6 +419,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         return;
       }
 
+      if (acctMode === 'owner') {
+        if (key.escape) { setAcctMode('list'); setOwnerInput(''); return; }
+        if (key.return) { void saveOwner(); return; }
+        if (key.backspace || key.delete) { setOwnerInput((v) => v.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setOwnerInput((v) => v + input); return; }
+        return;
+      }
+
       if (acctMode === 'confirm-delete') {
         if (key.escape || input === 'n') { setAcctMode('list'); return; }
         if (input === 'y') { void handleDeleteAccount(); return; }
@@ -420,6 +445,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (input === 'n' && linkedAccounts[acctCursor]) {
         setNicknameInput(linkedAccounts[acctCursor].nickname ?? '');
         setAcctMode('nickname');
+        return;
+      }
+      if (input === 'o' && linkedAccounts[acctCursor]) {
+        setOwnerInput(linkedAccounts[acctCursor].owner ?? '');
+        setAcctMode('owner');
         return;
       }
       if (input === 'v' && linkedAccounts[acctCursor]?.id.startsWith('manual-')) {
@@ -634,7 +664,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
-            ? `↑↓ select  ·  [e] edit  ·  [n] nickname${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
+            ? `↑↓ select  ·  [e] edit  ·  [n] nickname  ·  [o] owner${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
             ? 'Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel'
             : mainView === 'dupes'
@@ -675,6 +705,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                         : <Text color={C_WARNING}>not synced</Text>
                       }
                     </Text>
+                    {acct.owner && <Text color={isSelected ? C_MANUAL : undefined} dimColor={!isSelected}>{acct.owner}</Text>}
                   </SelectableRow>
                 );
               })}
@@ -710,6 +741,15 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <ModalPanel title={`Nickname: ${selectedAcct.name}`} borderColor={C_WARNING}>
               <Text dimColor>Leave empty to clear nickname</Text>
               <Box marginTop={1} gap={1}><Text>Nickname: </Text><TextInput value={nicknameInput} color={C_WARNING} /></Box>
+              <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
+            </ModalPanel>
+          )}
+
+          {/* Owner panel */}
+          {acctMode === 'owner' && selectedAcct && (
+            <ModalPanel title={`Owner: ${selectedAcct.nickname ?? selectedAcct.name}`} borderColor={C_MANUAL}>
+              <Text dimColor>Who owns this account? Leave empty to clear owner</Text>
+              <Box marginTop={1} gap={1}><Text>Owner: </Text><TextInput value={ownerInput} color={C_MANUAL} /></Box>
               <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
             </ModalPanel>
           )}

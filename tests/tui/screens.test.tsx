@@ -133,6 +133,34 @@ describe('Dashboard', () => {
     });
   });
 
+  it('owner view is skipped in the Tab cycle when no account has an owner', async () => {
+    // Seeded accounts have no owner, so account → Tab should wrap back to categories.
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    r.stdin.write('\t'); // flex
+    r.stdin.write('\t'); // account
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('\t'); // would be owner, but skipped → categories
+    await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
+    expect(frame(r)).not.toContain('SPENDING BY OWNER');
+  });
+
+  it('owner view appears after the account view once an owner is assigned', async () => {
+    await db.execute({ sql: "UPDATE accounts SET owner = 'Alex' WHERE id = 'test-checking'", args: [] });
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Income'));
+    r.stdin.write('\t'); // flex
+    r.stdin.write('\t'); // account
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('\t'); // owner
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('SPENDING BY OWNER');
+      expect(f).toContain('Alex');         // the assigned owner
+      expect(f).toContain('Unassigned');   // test-credit has no owner
+    });
+  });
+
   it('r key cycles the range label', async () => {
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('Month'));
@@ -738,6 +766,42 @@ describe('Accounts', () => {
     const f = frame(r);
     expect(f).toContain('Test Checking');
     expect(f).not.toContain('Nickname set to');
+  });
+
+  it('setting an owner refreshes the list to show the owner on the account row', async () => {
+    const real = accountsApi.updateAccountOwner;
+    vi.spyOn(accountsApi, 'updateAccountOwner').mockImplementation(delayWrite(real));
+
+    const r = accounts();
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('o');                 // open owner editor
+    await waitFor(() => expect(frame(r)).toContain('Who owns this account?'));
+    r.stdin.write('Alex Stark');        // type the owner
+    await waitFor(() => expect(frame(r)).toContain('Alex Stark'));
+    r.stdin.write('\r');                // save (separate chunk so it isn't merged)
+    // Owner is appended to the row (it doesn't replace the name), so presence alone
+    // can't tell the row apart from the status toast. Under the stale-list bug the
+    // owner shows only in the toast; with the await fix it appears in BOTH the toast
+    // and the reloaded row — so we require at least two occurrences. Whitespace is
+    // collapsed first because the owner can wrap across lines in the account row.
+    await waitFor(() => {
+      const flat = frame(r).replace(/\s+/g, ' ');
+      expect((flat.match(/Alex Stark/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  it('surfaces an error and does not apply the owner when the write fails', async () => {
+    vi.spyOn(accountsApi, 'updateAccountOwner').mockRejectedValue(new Error('db down'));
+
+    const r = accounts();
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('o');
+    await waitFor(() => expect(frame(r)).toContain('Who owns this account?'));
+    r.stdin.write('Alex Stark');
+    await waitFor(() => expect(frame(r)).toContain('Alex Stark'));
+    r.stdin.write('\r');                 // save → write rejects
+    await waitFor(() => expect(frame(r)).toContain('Failed to save owner'));
+    expect(frame(r)).not.toContain('Owner set to');
   });
 });
 
