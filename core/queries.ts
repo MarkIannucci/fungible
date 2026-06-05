@@ -403,8 +403,10 @@ export function buildSearchRe(search: string): RegExp {
 export async function getTransactions(filters: {
   category?: string | null; from?: string | null; to?: string | null;
   search?: string; tag?: string | null; account?: string | null; sort?: SortMode;
+  txType?: 'income' | 'expenses' | null;
+  flex?: 'fixed' | 'flexible' | 'discretionary' | null;
 }): Promise<TxRow[]> {
-  const { category, from, to, search, tag, account, sort = 'date-desc' } = filters;
+  const { category, from, to, search, tag, account, sort = 'date-desc', txType, flex } = filters;
   const conditions: string[] = [];
   const args: (string | number | null)[] = [];
 
@@ -415,6 +417,9 @@ export async function getTransactions(filters: {
     args.push(tag);
   }
   if (account) { conditions.push('t.account_id = ?'); args.push(account); }
+  if (txType === 'income') { conditions.push('t.amount < 0'); conditions.push('t.category NOT IN (SELECT category FROM hidden_categories)'); }
+  if (txType === 'expenses') { conditions.push('t.amount > 0'); conditions.push('t.category NOT IN (SELECT category FROM hidden_categories)'); }
+  if (flex) { conditions.push('EXISTS (SELECT 1 FROM categories c WHERE c.name = t.category AND c.flexibility = ?)'); args.push(flex); }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   const result = await db.execute({

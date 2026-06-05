@@ -30,6 +30,8 @@ export type TxFilter = {
   range?: string;   // 'week' | 'month' | 'quarter' | 'year' | 'alltime'
   anchor?: string;  // YYYY-MM-DD — which specific period to land on
   canvasSpec?: string; // JSON-encoded CanvasSpec, used when navigating to 'canvas'
+  txType?: 'income' | 'expenses';
+  flex?: 'fixed' | 'flexible' | 'discretionary';
 };
 
 function AppInner() {

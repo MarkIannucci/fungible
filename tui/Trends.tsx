@@ -118,6 +118,9 @@ export function Trends({
       onNavigate('transactions', {
         ...(row ? { from: row.from, to: row.to } : {}),
         ...(!search && view.category ? { category: view.category } : {}),
+        ...(!search && view.mode === 'income' ? { txType: 'income' as const } : {}),
+        ...(!search && view.mode === 'expenses' ? { txType: 'expenses' as const } : {}),
+        ...(!search && view.mode === 'flex' && view.flex ? { flex: view.flex } : {}),
         ...(search ? { search } : {}),
       });
       return;
@@ -137,6 +140,9 @@ export function Trends({
       const row = activeRows[clampedCursor];
       if (row) onNavigate('transactions', {
         ...(!search && view.category ? { category: view.category } : {}),
+        ...(!search && view.mode === 'income' ? { txType: 'income' as const } : {}),
+        ...(!search && view.mode === 'expenses' ? { txType: 'expenses' as const } : {}),
+        ...(!search && view.mode === 'flex' && view.flex ? { flex: view.flex } : {}),
         from: row.from, to: row.to,
         ...(search ? { search } : {}),
       });
