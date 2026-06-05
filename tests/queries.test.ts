@@ -27,13 +27,14 @@ async function insertTx(opts: {
   pending?: number;
   ignored?: number;
   accountId?: string;
-}) {
+}): Promise<string> {
   txId++;
+  const id = `tx${txId}`;
   await db.execute({
     sql: `INSERT INTO transactions (id, account_id, date, name, merchant_name, display_name, amount, category, pending, ignored)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
-      `tx${txId}`,
+      id,
       opts.accountId ?? 'acct1',
       opts.date ?? '2025-01-15',
       opts.name ?? 'Test Transaction',
@@ -45,11 +46,24 @@ async function insertTx(opts: {
       opts.ignored ?? 0,
     ],
   });
+  return id;
+}
+
+// Creates a tag (if needed) and attaches it to the given transactions.
+async function tagTxs(name: string, txIds: string[]) {
+  await db.execute({ sql: 'INSERT OR IGNORE INTO tags (name) VALUES (?)', args: [name] });
+  const r = await db.execute({ sql: 'SELECT id FROM tags WHERE name = ?', args: [name] });
+  const tagId = Number((r.rows[0] as unknown as { id: number }).id);
+  for (const id of txIds) {
+    await db.execute({ sql: 'INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)', args: [id, tagId] });
+  }
 }
 
 beforeEach(async () => {
   txId = 0;
   await db.execute('DELETE FROM transactions');
+  await db.execute('DELETE FROM transaction_tags');
+  await db.execute('DELETE FROM tags');
   await db.execute('DELETE FROM hidden_categories');
   await db.execute('DELETE FROM categories');
   await db.execute('DELETE FROM accounts');
@@ -442,6 +456,84 @@ describe('getOwnerRows', () => {
     await insertTx({ accountId: 'a1', amount: 40, category: 'Transfer' }); // hidden, excluded
     await insertTx({ accountId: 'a1', amount: 999, date: '2024-12-31' });  // out of range, excluded
     const rows = await getOwnerRows(...RANGE);
+    expect(rows).toEqual([{ owner: 'Mark', spending: 100 }]);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('tag filter (has / lacks)', () => {
+  const RANGE = ['2025-01-01', '2025-01-31'] as const;
+
+  it('getRangeSummary "has" keeps only tagged transactions', async () => {
+    const a = await insertTx({ amount: 100, category: 'Shopping' });
+    await insertTx({ amount: 250, category: 'Dining' });
+    await tagTxs('reimbursable', [a]);
+    const s = await getRangeSummary(...RANGE, undefined, { name: 'reimbursable', mode: 'has' });
+    expect(s.expenses).toBeCloseTo(100);
+    expect(s.byCategory).toEqual([{ category: 'Shopping', total: 100 }]);
+  });
+
+  it('getRangeSummary "lacks" keeps only untagged transactions', async () => {
+    const a = await insertTx({ amount: 100, category: 'Shopping' });
+    await insertTx({ amount: 250, category: 'Dining' });
+    await tagTxs('reimbursable', [a]);
+    const s = await getRangeSummary(...RANGE, undefined, { name: 'reimbursable', mode: 'lacks' });
+    expect(s.expenses).toBeCloseTo(250);
+    expect(s.byCategory).toEqual([{ category: 'Dining', total: 250 }]);
+  });
+
+  it('has + lacks partition the unfiltered total', async () => {
+    const a = await insertTx({ amount: 100, category: 'Shopping' });
+    await insertTx({ amount: 250, category: 'Dining' });
+    await tagTxs('reimbursable', [a]);
+    const all   = await getRangeSummary(...RANGE);
+    const has   = await getRangeSummary(...RANGE, undefined, { name: 'reimbursable', mode: 'has' });
+    const lacks = await getRangeSummary(...RANGE, undefined, { name: 'reimbursable', mode: 'lacks' });
+    expect(has.expenses + lacks.expenses).toBeCloseTo(all.expenses);
+  });
+
+  it('an unknown tag name matches nothing for "has" and everything for "lacks"', async () => {
+    await insertTx({ amount: 100, category: 'Shopping' });
+    const has   = await getRangeSummary(...RANGE, undefined, { name: 'nope', mode: 'has' });
+    const lacks = await getRangeSummary(...RANGE, undefined, { name: 'nope', mode: 'lacks' });
+    expect(has.expenses).toBe(0);
+    expect(lacks.expenses).toBeCloseTo(100);
+  });
+
+  it('composes with the account filter', async () => {
+    const a = await insertTx({ amount: 100, category: 'Shopping', accountId: 'acct1' });
+    await insertTx({ amount: 70, category: 'Shopping', accountId: 'acct1' });   // tagged but wrong account excluded by account filter
+    const b = await insertTx({ amount: 200, category: 'Dining', accountId: 'acct2' });
+    await tagTxs('reimbursable', [a, b]);
+    const s = await getRangeSummary(...RANGE, 'acct1', { name: 'reimbursable', mode: 'has' });
+    expect(s.expenses).toBeCloseTo(100);
+  });
+
+  it('getFlexSummary respects the tag filter', async () => {
+    await db.execute({ sql: 'INSERT INTO categories (name, flexibility) VALUES (?, ?)', args: ['Rent', 'fixed'] });
+    const a = await insertTx({ amount: 1500, category: 'Rent' });
+    await insertTx({ amount: 900, category: 'Rent' });
+    await tagTxs('shared', [a]);
+    expect((await getFlexSummary(...RANGE, undefined, { name: 'shared', mode: 'has' })).fixed).toBeCloseTo(1500);
+    expect((await getFlexSummary(...RANGE, undefined, { name: 'shared', mode: 'lacks' })).fixed).toBeCloseTo(900);
+  });
+
+  it('getMerchantSummary respects the tag filter', async () => {
+    const a = await insertTx({ amount: 120, category: 'Food', name: 'Blue Bottle' });
+    await insertTx({ amount: 80, category: 'Food', name: 'Chipotle' });
+    await tagTxs('work', [a]);
+    const rows = await getMerchantSummary('Food', ...RANGE, undefined, { name: 'work', mode: 'has' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].merchant).toBe('Blue Bottle');
+    expect(rows[0].total).toBeCloseTo(120);
+  });
+
+  it('getOwnerRows respects the tag filter', async () => {
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, owner) VALUES ('a1', 'a1', 'depository', 'Mark')", args: [] });
+    const a = await insertTx({ accountId: 'a1', amount: 100 });
+    await insertTx({ accountId: 'a1', amount: 30 });
+    await tagTxs('shared', [a]);
+    const rows = await getOwnerRows(...RANGE, { name: 'shared', mode: 'has' });
     expect(rows).toEqual([{ owner: 'Mark', spending: 100 }]);
   });
 });

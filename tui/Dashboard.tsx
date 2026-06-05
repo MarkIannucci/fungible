@@ -4,8 +4,9 @@ import {
   getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, getOwnerRows,
   getCategoryDriftData, getFlexDriftData, getAccountDriftData, countSearchMatches, getSearchFilteredData, getMerchantSummary,
   type MonthlySummary, type FlexSummary, type AccountRow, type OwnerRow,
-  type CategoryDrift, type FlexDriftData, type AccountDrift, type MerchantSummaryRow,
+  type CategoryDrift, type FlexDriftData, type AccountDrift, type MerchantSummaryRow, type TagFilter,
 } from '../core/queries.js';
+import { getTagOptions, type TagOption } from '../core/tags.js';
 import {
   getPeriodStart, getPeriodDates, navigatePeriod, formatPeriodLabel,
   getDriftWindows,
@@ -15,7 +16,7 @@ import type { Screen, TxFilter } from './App.js';
 import { fmt, fmtSigned, bar, Divider, truncate } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT } from './ui.js';
-import { StatCard, SectionHeader, SelectableRow, TextInput, PageHeader } from './components/index.js';
+import { StatCard, SectionHeader, SelectableRow, TextInput, PageHeader, ModalPanel } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 
@@ -98,32 +99,37 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   // Owner split
   const [ownerRows, setOwnerRows] = useState<OwnerRow[]>([]);
 
-  function load(r: Range, a: Date, acct: AccountRow | null) {
+  // Tag filter — recalculate every view over only transactions that have (or lack) a tag.
+  const [tagFilter, setTagFilter] = useState<TagFilter | null>(null);
+  const [tagOptions, setTagOptions] = useState<TagOption[]>([]);
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [tagPickerCursor, setTagPickerCursor] = useState(0);
+  const [tagPickerMode, setTagPickerMode] = useState<'has' | 'lacks'>('has');
+  useEffect(() => { void getTagOptions().then(setTagOptions); }, [refreshKey]);
+  // Serialized key so effects re-run when the active tag filter changes.
+  const tagKey = tagFilter ? `${tagFilter.mode}:${tagFilter.name}` : null;
+
+  function load(r: Range, a: Date, acct: AccountRow | null, tf: TagFilter | null) {
     const { from, to } = getPeriodDates(r, a);
-    void getAccountRows(from, to).then(setAccountRows);
-    void getOwnerRows(from, to).then(setOwnerRows);
+    const tag = tf ?? undefined;
+    void getAccountRows(from, to, tag).then(setAccountRows);
+    void getOwnerRows(from, to, tag).then(setOwnerRows);
     setAcctCursor(0);
-    if (acct) {
-      void getRangeSummary(from, to, acct.id).then(setSummary);
-      void getFlexSummary(from, to, acct.id).then(setFlexData);
-      void getUncategorizedCount(from, to, acct.id).then(setUncategorized);
-    } else {
-      void getRangeSummary(from, to).then(setSummary);
-      void getFlexSummary(from, to).then(setFlexData);
-      void getUncategorizedCount(from, to).then(setUncategorized);
-    }
+    void getRangeSummary(from, to, acct?.id, tag).then(setSummary);
+    void getFlexSummary(from, to, acct?.id, tag).then(setFlexData);
+    void getUncategorizedCount(from, to, acct?.id, tag).then(setUncategorized);
   }
 
   function openMerchantDrill(category: string, from: string, to: string) {
     setMerchantDrill({ category, from, to });
     setMerchantCursor(0);
-    void getMerchantSummary(category, from, to, selectedAccount?.id ?? undefined).then(setMerchantRows);
+    void getMerchantSummary(category, from, to, selectedAccount?.id ?? undefined, tagFilter ?? undefined).then(setMerchantRows);
   }
 
   useEffect(() => {
-    load(range, anchor, selectedAccount);
+    load(range, anchor, selectedAccount, tagFilter);
     setCatCursor(0);
-  }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null, refreshKey]);
+  }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null, tagKey, refreshKey]);
 
   useEffect(() => {
     if (!driftMode) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
@@ -131,30 +137,31 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     if (!windows) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
     const { current, lastPeriod, lastYear, rolling12 } = windows;
     const acctId = selectedAccount?.id ?? undefined;
-    void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, acctId).then(setCatDrift);
-    void getFlexDriftData(current, lastPeriod, lastYear, rolling12, acctId).then(setFlexDrift);
-    void getAccountDriftData(current, lastPeriod, lastYear, rolling12).then(setAcctDrift);
-  }, [driftMode, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
+    const tag = tagFilter ?? undefined;
+    void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, acctId, tag).then(setCatDrift);
+    void getFlexDriftData(current, lastPeriod, lastYear, rolling12, acctId, tag).then(setFlexDrift);
+    void getAccountDriftData(current, lastPeriod, lastYear, rolling12, tag).then(setAcctDrift);
+  }, [driftMode, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null, tagKey]);
 
   const setTyping = useSetTyping();
-  useEffect(() => { setTyping(searchMode); }, [searchMode]);
+  useEffect(() => { setTyping(searchMode || tagPickerOpen); }, [searchMode, tagPickerOpen]);
 
   useEffect(() => {
     const term = searchMode ? searchInput : search;
     if (!term) { setSearchStats(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
-    void countSearchMatches(from, to, term, selectedAccount?.id ?? undefined).then(setSearchStats);
-  }, [searchMode ? searchInput : search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
+    void countSearchMatches(from, to, term, selectedAccount?.id ?? undefined, tagFilter ?? undefined).then(setSearchStats);
+  }, [searchMode ? searchInput : search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null, tagKey]);
 
   // When a search is committed, recompute category + flex data to only show matching transactions
   useEffect(() => {
     if (!search) { setFilteredSummary(null); setFilteredFlex(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
-    void getSearchFilteredData(from, to, search, selectedAccount?.id ?? undefined).then(({ summary: fs, flexData: ff }) => {
+    void getSearchFilteredData(from, to, search, selectedAccount?.id ?? undefined, tagFilter ?? undefined).then(({ summary: fs, flexData: ff }) => {
       setFilteredSummary(fs);
       setFilteredFlex(ff);
     });
-  }, [search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
+  }, [search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null, tagKey]);
 
   // Close drill when filter context changes significantly
   // Note: anchor and range are intentionally excluded — period/range nav keeps drill open
@@ -162,7 +169,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     setMerchantDrill(null);
     setMerchantRows([]);
     setMerchantCursor(0);
-  }, [selectedAccount?.id ?? null, search, driftMode, view]);
+  }, [selectedAccount?.id ?? null, search, tagKey, driftMode, view]);
 
   // Re-fetch merchant data when period or range changes while drill is active
   useEffect(() => {
@@ -171,7 +178,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const { category } = merchantDrill;
     setMerchantDrill({ category, from, to });
     setMerchantCursor(0);
-    void getMerchantSummary(category, from, to, selectedAccount?.id ?? undefined).then(setMerchantRows);
+    void getMerchantSummary(category, from, to, selectedAccount?.id ?? undefined, tagFilter ?? undefined).then(setMerchantRows);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anchor.toISOString().slice(0, 10), range]);
 
@@ -207,6 +214,33 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const merchantNameW = Math.max(12, inner - 30);
 
   useInput((input, key) => {
+    // Tag picker modal — capture all keys while open. Row 0 is "clear filter";
+    // rows 1..N map to tagOptions[cursor-1]. Tab toggles has/lacks.
+    if (tagPickerOpen) {
+      if (key.escape) { setTagPickerOpen(false); return; }
+      if (key.tab) {
+        const next = tagPickerMode === 'has' ? 'lacks' : 'has';
+        setTagPickerMode(next);
+        // Keep an already-applied filter in sync so the toggle takes effect live —
+        // otherwise the modal shows the new mode but Esc would discard it.
+        setTagFilter((f) => (f ? { ...f, mode: next } : f));
+        return;
+      }
+      if (key.upArrow)   { setTagPickerCursor((c) => Math.max(0, c - 1)); return; }
+      if (key.downArrow) { setTagPickerCursor((c) => Math.min(tagOptions.length, c + 1)); return; }
+      if (input === ' ') {
+        if (tagPickerCursor === 0) {
+          setTagFilter(null);
+        } else {
+          const opt = tagOptions[tagPickerCursor - 1];
+          if (opt) setTagFilter({ name: opt.name, mode: tagPickerMode });
+        }
+        setTagPickerOpen(false);
+        return;
+      }
+      return;
+    }
+
     if (merchantDrill) {
       if (key.escape) {
         setMerchantDrill(null);
@@ -343,6 +377,15 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       return;
     }
 
+    if (input === 't') {
+      setTagPickerMode(tagFilter?.mode ?? 'has');
+      // Land the cursor on the active tag (offset by 1 for the clear row), else on clear.
+      const idx = tagFilter ? tagOptions.findIndex((o) => o.name === tagFilter.name) : -1;
+      setTagPickerCursor(idx >= 0 ? idx + 1 : 0);
+      setTagPickerOpen(true);
+      return;
+    }
+
     if (key.escape && search) {
       setSearch('');
       setSearchInput('');
@@ -379,13 +422,13 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         : <Text dimColor>
             {showHints
               ? (view === 'account'
-                  ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [d] delta`
+                  ? `[/] search  ·  [t] tag  ·  ← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [d] delta`
                   : view === 'categories'
-                    ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns${driftMode ? '' : '  ·  [m] merchants'}  ·  [Tab] view  ·  [d] delta`
+                    ? `[/] search  ·  [t] tag  ·  ← → period  ·  ↑↓ select  ·  Enter txns${driftMode ? '' : '  ·  [m] merchants'}  ·  [Tab] view  ·  [d] delta`
                     : view === 'owner'
-                      ? '← → period  ·  [r] range  ·  [Tab] view'
-                      : '[/] search  ·  ← → period  ·  Enter txns  ·  [Tab] view  ·  [d] delta')
-              : '[/] search'}
+                      ? '[t] tag  ·  ← → period  ·  [r] range  ·  [Tab] view'
+                      : '[/] search  ·  [t] tag  ·  ← → period  ·  Enter txns  ·  [Tab] view  ·  [d] delta')
+              : '[/] search  ·  [t] tag'}
           </Text>
       }
 
@@ -404,6 +447,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
             : <Text bold>{formatPeriodLabel(range, anchor)}</Text>
           }
           {selectedAccount && <Text color={C_WARNING}>{selectedAccount.name}</Text>}
+          {tagFilter && <Text color={C_WARNING} bold>{tagFilter.mode === 'lacks' ? '−' : '+'}#{tagFilter.name}</Text>}
           {driftMode && <Text color={C_MANUAL} bold>delta</Text>}
           <Text dimColor>
             {merchantDrill ? `merchants · ${merchantDrill.category}` : view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : view === 'account' ? 'account' : 'owner'}
@@ -651,6 +695,40 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         </>
       ) : (
         <Text dimColor>Loading...</Text>
+      )}
+
+      {tagPickerOpen && (
+        <ModalPanel borderColor={C_WARNING} title="Filter by tag">
+          <Box marginTop={1}>
+            <Text>
+              Mode: <Text bold color={C_ACCENT}>{tagPickerMode === 'has' ? 'HAS tag' : 'LACKS tag'}</Text>
+              <Text dimColor>  ·  Tab to toggle</Text>
+            </Text>
+          </Box>
+          <Box flexDirection="column" marginTop={1}>
+            {tagOptions.length === 0 ? (
+              <Text dimColor>No tags yet — add tags to transactions in [2] Transactions.</Text>
+            ) : (
+              <>
+                <SelectableRow selected={tagPickerCursor === 0}>
+                  <Text color={tagPickerCursor === 0 ? C_ACCENT : undefined} dimColor={tagPickerCursor !== 0}>✕ Clear filter</Text>
+                </SelectableRow>
+                {tagOptions.map((opt, i) => {
+                  const isSel = tagPickerCursor === i + 1;
+                  const isActive = tagFilter?.name === opt.name;
+                  return (
+                    <SelectableRow key={opt.id} selected={isSel}>
+                      <Text color={isSel ? C_ACCENT : isActive ? C_WARNING : undefined} dimColor={!isSel && !isActive}>
+                        {isActive ? '● ' : '○ '}{opt.name}
+                      </Text>
+                    </SelectableRow>
+                  );
+                })}
+              </>
+            )}
+          </Box>
+          <Box marginTop={1}><Text dimColor>↑↓ select  ·  Tab mode  ·  Space apply  ·  Esc close</Text></Box>
+        </ModalPanel>
       )}
     </Box>
   );
