@@ -55,6 +55,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [tag, setTag] = useState<string | null>(initialFilter?.tag ?? null);
   const [account, setAccount] = useState<string | null>(initialFilter?.account ?? null);
   const [accountName, setAccountName] = useState<string | null>(initialFilter?.accountName ?? null);
+  const [txType] = useState<'income' | 'expenses' | null>(initialFilter?.txType ?? null);
+  const [flex] = useState<'fixed' | 'flexible' | 'discretionary' | null>(initialFilter?.flex ?? null);
   const [sort, setSort] = useState<SortMode>('date-desc');
   const [bounds, setBounds] = useState<{ minDate: string; maxDate: string }>({ minDate: '2000-01-01', maxDate: '2099-12-31' });
   const [search, setSearch] = useState(initialFilter?.search ?? '');
@@ -79,7 +81,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [tagInput, setTagInput] = useState('');
 
   function load(s = search, keepCursor = false) {
-    void getTransactions({ category, from, to, search: s, tag, account, sort }).then((rows) => {
+    void getTransactions({ category, from, to, search: s, tag, account, sort, txType, flex }).then((rows) => {
       setTxs(rows);
       if (!keepCursor) setCursor(0);
       else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
@@ -87,7 +89,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   }
 
   useEffect(() => { void getDataBounds().then(setBounds); void getAllCategories().then(setCategories); }, []);
-  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort, refreshKey]);
+  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort, txType, flex, refreshKey]);
 
   const setTyping = useSetTyping();
   useEffect(() => {
@@ -410,6 +412,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     tag ? `#${tag}` : null,
     search ? `"${search}"` : null,
     category,
+    txType ? txType.charAt(0).toUpperCase() + txType.slice(1) : null,
+    flex ? flex.charAt(0).toUpperCase() + flex.slice(1) : null,
   ].filter(Boolean).join(' · ');
 
   // Category list window for edit panel
