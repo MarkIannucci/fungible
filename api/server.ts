@@ -76,8 +76,9 @@ export function startApiServer(port = DEFAULT_PORT, opts: { quiet?: boolean } = 
     }
   });
 
-  server.listen(port, () => {
-    if (!opts.quiet) console.log(`[fungible-api] Listening on http://localhost:${port}`);
+  const host = process.env.FUNGIBLE_BIND_HOST ?? '127.0.0.1';
+  server.listen(port, host, () => {
+    if (!opts.quiet) console.log(`[fungible-api] Listening on http://${host}:${port}`);
   });
 }
 

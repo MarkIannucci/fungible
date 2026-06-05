@@ -159,7 +159,7 @@ async function main() {
     res.end();
   });
 
-  server.listen(PORT, () => {
+  server.listen(PORT, '127.0.0.1', () => {
     const url = `http://localhost:${PORT}`;
     console.log(`Opening ${url} ...`);
     execFile('open', [url]);

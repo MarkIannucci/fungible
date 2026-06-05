@@ -25,5 +25,5 @@ export function startMcpHttpServer(port: number): void {
     }
   });
 
-  httpServer.listen(port);
+  httpServer.listen(port, process.env.FUNGIBLE_BIND_HOST ?? '127.0.0.1');
 }
