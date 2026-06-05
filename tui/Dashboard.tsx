@@ -361,6 +361,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       return;
     }
 
+    if (input === '3' && search) { onNavigate('trends', { search }); return; }
+
     handleNavKey(input, 'dashboard', onNavigate);
   }, { isActive: isActive !== false });
 
@@ -411,8 +413,6 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         </Box>
       </Box>
 
-      <Box marginTop={1}><Divider /></Box>
-
       {/* Search bar */}
       {(searchMode || search) && (
         <Box gap={2} marginTop={1}>
@@ -436,6 +436,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           )}
         </Box>
       )}
+
+      <Box marginTop={1}><Divider /></Box>
 
       {view === 'account' ? (
         <Box flexDirection="column" marginTop={1}>

@@ -25,6 +25,8 @@ const MATCH_SQL = `
       AND LOWER(SUBSTR(csv.name,   1, INSTR(plaid.name, '*') - 1))
         = LOWER(SUBSTR(plaid.name, 1, INSTR(plaid.name, '*') - 1))
     )
+    OR TRIM(REPLACE(LOWER(csv.name), '  ', ' ')) = TRIM(REPLACE(LOWER(plaid.name), '  ', ' '))
+    OR INSTR(LOWER(csv.name), LOWER(SUBSTR(plaid.name, 1, MAX(1, INSTR(plaid.name || ' ', ' ') - 1)))) > 0
   )
 `;
 
