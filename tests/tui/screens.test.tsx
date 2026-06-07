@@ -22,11 +22,15 @@ import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';
+import { loadProfile } from '../../core/profile.js';
 
-vi.mock('../../core/profile.js', () => ({
-  loadProfile: () => null,
-  saveProfile: () => {},
-}));
+// Keep householdMembers real (a pure helper used by the owner picker) but stub
+// the fs-backed loadProfile/saveProfile. loadProfile is a vi.fn so a test can
+// supply a profile whose members populate the cycle.
+vi.mock('../../core/profile.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../core/profile.js')>();
+  return { ...actual, loadProfile: vi.fn(() => null), saveProfile: vi.fn() };
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -63,6 +67,7 @@ const noop = () => {};
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
 beforeEach(async () => {
+  vi.mocked(loadProfile).mockReturnValue(null); // no household members unless a test sets one
   for (const tbl of ['transactions', 'accounts', 'categories', 'tags', 'transaction_tags',
                      'category_rules', 'name_rules', 'hidden_categories', 'balance_history']) {
     await db.execute(`DELETE FROM ${tbl}`);
@@ -1193,6 +1198,8 @@ describe('Accounts', () => {
   });
 
   it('setting an owner refreshes the list to show the owner on the account row', async () => {
+    // The owner editor cycles over household members, so a profile must supply one.
+    vi.mocked(loadProfile).mockReturnValue({ self: { name: 'Alex Stark', birthYear: 0 }, children: [] });
     const real = accountsApi.updateAccountOwner;
     vi.spyOn(accountsApi, 'updateAccountOwner').mockImplementation(delayWrite(real));
 
@@ -1201,8 +1208,9 @@ describe('Accounts', () => {
     r.stdin.write('\r');                 // open unified edit panel (Nickname field active)
     await waitFor(() => expect(frame(r)).toContain('Edit: Test Checking'));
     r.stdin.write('\x1b[B');             // ↓ Nickname → Owner
-    r.stdin.write('Alex Stark');         // type the owner
-    await waitFor(() => expect(frame(r)).toContain('Alex Stark'));
+    await waitFor(() => expect(frame(r)).toContain('Unassigned')); // owner toggle, default Unassigned
+    r.stdin.write('\x1b[C');             // → cycle Unassigned → Alex Stark
+    await waitFor(() => expect(frame(r)).toContain('← Alex Stark'));
     r.stdin.write('\r');                 // save (separate chunk so it isn't merged)
     // The success toast is "Updated Test Checking" (it doesn't echo the owner), so
     // the owner appearing on the row proves the list reloaded after the write — under
@@ -1215,6 +1223,7 @@ describe('Accounts', () => {
   });
 
   it('surfaces an error and does not apply the owner when the write fails', async () => {
+    vi.mocked(loadProfile).mockReturnValue({ self: { name: 'Alex Stark', birthYear: 0 }, children: [] });
     vi.spyOn(accountsApi, 'updateAccountOwner').mockRejectedValue(new Error('db down'));
 
     const r = accounts();
@@ -1222,8 +1231,9 @@ describe('Accounts', () => {
     r.stdin.write('\r');                 // open unified edit panel
     await waitFor(() => expect(frame(r)).toContain('Edit: Test Checking'));
     r.stdin.write('\x1b[B');             // ↓ Nickname → Owner
-    r.stdin.write('Alex Stark');
-    await waitFor(() => expect(frame(r)).toContain('Alex Stark'));
+    await waitFor(() => expect(frame(r)).toContain('Unassigned'));
+    r.stdin.write('\x1b[C');             // → cycle to Alex Stark
+    await waitFor(() => expect(frame(r)).toContain('← Alex Stark'));
     r.stdin.write('\r');                 // save → write rejects
     await waitFor(() => expect(frame(r)).toContain('Failed to update'));
     expect(frame(r)).not.toContain('Updated Test Checking');

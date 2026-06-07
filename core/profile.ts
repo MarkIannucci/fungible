@@ -23,3 +23,20 @@ export function loadProfile(): Profile | null {
 export function saveProfile(p: Profile): void {
   fs.writeFileSync(PROFILE_PATH, JSON.stringify(p, null, 2), 'utf8');
 }
+
+/**
+ * The named household members an account can be assigned to as its owner —
+ * self, spouse, then each child, in that order. Used to populate the owner
+ * picker so the stored owner name comes from a known set rather than free text.
+ * Members without a name are omitted.
+ */
+export function householdMembers(p: Profile | null): string[] {
+  if (!p) return [];
+  const names: string[] = [];
+  if (p.self.name.trim()) names.push(p.self.name.trim());
+  if (p.spouse && p.spouse.name.trim()) names.push(p.spouse.name.trim());
+  for (const c of p.children) {
+    if (c.name.trim()) names.push(c.name.trim());
+  }
+  return names;
+}

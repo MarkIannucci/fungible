@@ -7,6 +7,7 @@ import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
+import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
 import {
   updateAccountTypeSubtype, updateAccountNickname, updateAccountOwner, updateAccountApr, updateAccountValue,
@@ -131,7 +132,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   // Unified edit panel state
   const [editNickname, setEditNickname] = useState('');
+  // Owner holds the selected household-member name ('' = Unassigned); the editor
+  // cycles over the names defined in Settings rather than accepting free text.
   const [editOwner, setEditOwner] = useState('');
+  const [ownerMembers, setOwnerMembers] = useState<string[]>([]);
   const [editApr, setEditApr] = useState('');
 
   // Dupes view state
@@ -164,6 +168,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     const subtypes = SUBTYPES[type] ?? [];
     const currentSub = acct.subtype ?? '';
     const snapped = subtypes.includes(currentSub) ? currentSub : (subtypes[0] ?? '');
+    // Re-read the profile each time so owner choices reflect the latest household.
+    setOwnerMembers(householdMembers(loadProfile()));
     setEditType(type);
     setEditSubtype(snapped);
     setEditNickname(acct.nickname ?? '');
@@ -354,7 +360,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         if (key.escape) { setAcctMode('list'); return; }
         if (key.return) { void saveEdit(); return; }
         const isDebt = editType === 'credit' || editType === 'loan';
-        const editFields: EditField[] = isDebt ? ['nickname', 'owner', 'type', 'subtype', 'apr'] : ['nickname', 'owner', 'type', 'subtype'];
+        // Owner is only focusable once household members exist to cycle through.
+        const editFields: EditField[] = [
+          'nickname',
+          ...(ownerMembers.length > 0 ? ['owner'] as const : []),
+          'type', 'subtype',
+          ...(isDebt ? ['apr'] as const : []),
+        ];
         if (key.upArrow) {
           setEditField((f) => { const i = editFields.indexOf(f); return editFields[Math.max(0, i - 1)]; });
           return;
@@ -386,8 +398,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           return;
         }
         if (editField === 'owner') {
-          if (key.backspace || key.delete) { setEditOwner((v) => v.slice(0, -1)); return; }
-          if (input && !key.ctrl && !key.meta) { setEditOwner((v) => v + input); return; }
+          if (key.leftArrow || key.rightArrow) {
+            const opts = ['', ...ownerMembers]; // '' = Unassigned
+            const idx = Math.max(0, opts.indexOf(editOwner));
+            const dir = key.leftArrow ? -1 : 1;
+            setEditOwner(opts[(idx + dir + opts.length) % opts.length]);
+          }
           return;
         }
         if (editField === 'apr') {
@@ -721,7 +737,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <ModalPanel title={`Edit: ${selectedAcct.name}${selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}`}>
                 <Box marginTop={1} flexDirection="column" gap={1}>
                   <EditTextField label="Nickname" labelWidth={10} active={editField === 'nickname'} value={editNickname} color={C_WARNING} placeholder="none" emptyText="none" />
-                  <EditTextField label="Owner" labelWidth={10} active={editField === 'owner'} value={editOwner} color={C_MANUAL} placeholder="none" emptyText="none" />
+                  {ownerMembers.length > 0
+                    ? <EditToggleField label="Owner" labelWidth={10} active={editField === 'owner'} value={editOwner || 'Unassigned'} valueColor={C_MANUAL} />
+                    : (
+                      <Box gap={2}>
+                        <Text color={C_NEUTRAL}>{'Owner'.padEnd(10)}</Text>
+                        <Text dimColor>Add household members in Settings [0]</Text>
+                      </Box>
+                    )}
                   <EditToggleField label="Type" labelWidth={10} active={editField === 'type'} value={editType} />
                   <EditToggleField label="Subtype" labelWidth={10} active={editField === 'subtype'} value={editSubtype || '—'} valueColor={C_DIM} />
                   {isDebt && <EditTextField label="APR %" labelWidth={10} active={editField === 'apr'} value={editApr} color={C_WARNING} placeholder="0.0" />}
