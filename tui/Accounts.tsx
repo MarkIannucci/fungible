@@ -7,22 +7,23 @@ import { syncAll } from '../core/sync.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, type LinkedAccount, type CsvAccount } from '../core/queries.js';
+import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
 import {
-  updateAccountTypeSubtype, updateAccountNickname, updateAccountOwner, updateAccountValue,
+  updateAccountTypeSubtype, updateAccountNickname, updateAccountOwner, updateAccountApr, updateAccountValue,
   createManualAccount, createCsvAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
 } from '../core/accounts.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
-import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader } from './components/index.js';
+import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, EditTextField, EditToggleField } from './components/index.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MainView = 'accounts' | 'add-data' | 'dupes';
-type AcctMode = 'list' | 'edit' | 'update-value' | 'nickname' | 'owner' | 'confirm-delete';
-type EditField = 'type' | 'subtype';
+type AcctMode = 'list' | 'edit' | 'update-value' | 'confirm-delete';
+type EditField = 'nickname' | 'owner' | 'type' | 'subtype' | 'apr';
 
 type AddStep =
   | 'landing'
@@ -129,11 +130,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [updateValueInput, setUpdateValueInput] = useState('');
   const [updateValueError, setUpdateValueError] = useState('');
 
-  // Nickname mode state
-  const [nicknameInput, setNicknameInput] = useState('');
-
-  // Owner mode state
-  const [ownerInput, setOwnerInput] = useState('');
+  // Unified edit panel state
+  const [editNickname, setEditNickname] = useState('');
+  // Owner holds the selected household-member name ('' = Unassigned); the editor
+  // cycles over the names defined in Settings rather than accepting free text.
+  const [editOwner, setEditOwner] = useState('');
+  const [ownerMembers, setOwnerMembers] = useState<string[]>([]);
+  const [editApr, setEditApr] = useState('');
 
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
@@ -141,7 +144,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   const setTyping = useSetTyping();
   const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'manual-name', 'manual-value', 'new-acct-name']);
-  const TEXT_INPUT_MODES = new Set<AcctMode>(['nickname', 'owner', 'update-value']);
+  const TEXT_INPUT_MODES = new Set<AcctMode>(['edit', 'update-value']);
   useEffect(() => {
     setTyping(TEXT_INPUT_STEPS.has(addStep) || TEXT_INPUT_MODES.has(acctMode));
   }, [addStep, acctMode]);
@@ -163,22 +166,31 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function openEdit(acct: LinkedAccount) {
     const type = acct.type;
     const subtypes = SUBTYPES[type] ?? [];
-    // Snap to a known subtype if possible, otherwise first option
     const currentSub = acct.subtype ?? '';
     const snapped = subtypes.includes(currentSub) ? currentSub : (subtypes[0] ?? '');
+    // Re-read the profile each time so owner choices reflect the latest household.
+    setOwnerMembers(householdMembers(loadProfile()));
     setEditType(type);
     setEditSubtype(snapped);
-    setEditField('type');
+    setEditNickname(acct.nickname ?? '');
+    setEditOwner(acct.owner ?? '');
+    setEditApr(acct.apr !== null && acct.apr !== undefined ? String(acct.apr) : '');
+    setEditField('nickname');
     setAcctMode('edit');
   }
 
   async function saveEdit() {
     const acct = linkedAccounts[acctCursor];
     if (!acct) return;
+    const isDebt = editType === 'credit' || editType === 'loan';
+    const aprVal = editApr.trim() ? parseFloat(editApr) : null;
     try {
       await updateAccountTypeSubtype(acct.id, editType, editSubtype.trim() || null);
+      await updateAccountNickname(acct.id, editNickname.trim() || null);
+      await updateAccountOwner(acct.id, editOwner.trim() || null);
+      if (isDebt) await updateAccountApr(acct.id, aprVal !== null && !isNaN(aprVal) ? aprVal : null);
       setAcctMode('list');
-      showAcctMsg(`Updated ${acct.name}`);
+      showAcctMsg(`Updated ${editNickname.trim() || acct.name}`);
       loadAccounts();
     } catch {
       showAcctErr(`Failed to update ${acct.name}`);
@@ -235,34 +247,6 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     } catch {
       setAcctMode('list');
       showAcctErr(`Failed to delete ${acct.nickname ?? acct.name}`);
-    }
-  }
-
-  async function saveNickname() {
-    const acct = linkedAccounts[acctCursor];
-    if (!acct) return;
-    const nickname = nicknameInput.trim() || null;
-    try {
-      await updateAccountNickname(acct.id, nickname);
-      setAcctMode('list');
-      showAcctMsg(nickname ? `Nickname set to "${nickname}"` : 'Nickname cleared');
-      loadAccounts();
-    } catch {
-      showAcctErr('Failed to save nickname');
-    }
-  }
-
-  async function saveOwner() {
-    const acct = linkedAccounts[acctCursor];
-    if (!acct) return;
-    const owner = ownerInput.trim() || null;
-    try {
-      await updateAccountOwner(acct.id, owner);
-      setAcctMode('list');
-      showAcctMsg(owner ? `Owner set to "${owner}"` : 'Owner cleared');
-      loadAccounts();
-    } catch {
-      showAcctErr('Failed to save owner');
     }
   }
 
@@ -375,29 +359,56 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (acctMode === 'edit') {
         if (key.escape) { setAcctMode('list'); return; }
         if (key.return) { void saveEdit(); return; }
-        if (key.tab) {
-          setEditField((f) => f === 'type' ? 'subtype' : 'type');
+        const isDebt = editType === 'credit' || editType === 'loan';
+        // Owner is only focusable once household members exist to cycle through.
+        const editFields: EditField[] = [
+          'nickname',
+          ...(ownerMembers.length > 0 ? ['owner'] as const : []),
+          'type', 'subtype',
+          ...(isDebt ? ['apr'] as const : []),
+        ];
+        if (key.upArrow) {
+          setEditField((f) => { const i = editFields.indexOf(f); return editFields[Math.max(0, i - 1)]; });
           return;
         }
-        if (editField === 'type') {
-          if (key.leftArrow || key.rightArrow) {
-            const idx = ACCOUNT_TYPES.indexOf(editType as typeof ACCOUNT_TYPES[number]);
-            const dir = key.leftArrow ? -1 : 1;
-            const nextType = ACCOUNT_TYPES[(idx + dir + ACCOUNT_TYPES.length) % ACCOUNT_TYPES.length];
-            setEditType(nextType);
-            setEditSubtype(SUBTYPES[nextType]?.[0] ?? '');
-          }
+        if (key.downArrow) {
+          setEditField((f) => { const i = editFields.indexOf(f); return editFields[Math.min(editFields.length - 1, i + 1)]; });
+          return;
+        }
+        if (editField === 'type' && (key.leftArrow || key.rightArrow)) {
+          const idx = ACCOUNT_TYPES.indexOf(editType as typeof ACCOUNT_TYPES[number]);
+          const dir = key.leftArrow ? -1 : 1;
+          const nextType = ACCOUNT_TYPES[(idx + dir + ACCOUNT_TYPES.length) % ACCOUNT_TYPES.length];
+          setEditType(nextType);
+          setEditSubtype(SUBTYPES[nextType]?.[0] ?? '');
           return;
         }
         if (editField === 'subtype') {
           const subtypes = SUBTYPES[editType] ?? [];
-          if (subtypes.length > 0) {
-            if (key.leftArrow || key.rightArrow) {
-              const idx = subtypes.indexOf(editSubtype);
-              const dir = key.leftArrow ? -1 : 1;
-              setEditSubtype(subtypes[(idx + dir + subtypes.length) % subtypes.length]);
-            }
+          if (subtypes.length > 0 && (key.leftArrow || key.rightArrow)) {
+            const idx = subtypes.indexOf(editSubtype);
+            const dir = key.leftArrow ? -1 : 1;
+            setEditSubtype(subtypes[(idx + dir + subtypes.length) % subtypes.length]);
           }
+          return;
+        }
+        if (editField === 'nickname') {
+          if (key.backspace || key.delete) { setEditNickname((v) => v.slice(0, -1)); return; }
+          if (input && !key.ctrl && !key.meta) { setEditNickname((v) => v + input); return; }
+          return;
+        }
+        if (editField === 'owner') {
+          if (key.leftArrow || key.rightArrow) {
+            const opts = ['', ...ownerMembers]; // '' = Unassigned
+            const idx = Math.max(0, opts.indexOf(editOwner));
+            const dir = key.leftArrow ? -1 : 1;
+            setEditOwner(opts[(idx + dir + opts.length) % opts.length]);
+          }
+          return;
+        }
+        if (editField === 'apr') {
+          if (key.backspace || key.delete) { setEditApr((v) => v.slice(0, -1)); return; }
+          if (input && /^[\d.]$/.test(input) && !key.ctrl && !key.meta) { setEditApr((v) => v + input); return; }
           return;
         }
         return;
@@ -408,22 +419,6 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         if (key.return) { void saveUpdatedValue(); return; }
         if (key.backspace || key.delete) { setUpdateValueInput((v) => v.slice(0, -1)); setUpdateValueError(''); return; }
         if (input && !key.ctrl && !key.meta) { setUpdateValueInput((v) => v + input); setUpdateValueError(''); return; }
-        return;
-      }
-
-      if (acctMode === 'nickname') {
-        if (key.escape) { setAcctMode('list'); setNicknameInput(''); return; }
-        if (key.return) { void saveNickname(); return; }
-        if (key.backspace || key.delete) { setNicknameInput((v) => v.slice(0, -1)); return; }
-        if (input && !key.ctrl && !key.meta) { setNicknameInput((v) => v + input); return; }
-        return;
-      }
-
-      if (acctMode === 'owner') {
-        if (key.escape) { setAcctMode('list'); setOwnerInput(''); return; }
-        if (key.return) { void saveOwner(); return; }
-        if (key.backspace || key.delete) { setOwnerInput((v) => v.slice(0, -1)); return; }
-        if (input && !key.ctrl && !key.meta) { setOwnerInput((v) => v + input); return; }
         return;
       }
 
@@ -438,18 +433,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.tab) { setMainView('add-data'); return; }
       if (key.upArrow)   { setAcctCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setAcctCursor((c) => Math.min(linkedAccounts.length - 1, c + 1)); return; }
-      if (input === 'e' && linkedAccounts[acctCursor]) {
+      if (key.return && linkedAccounts[acctCursor]) {
         openEdit(linkedAccounts[acctCursor]);
-        return;
-      }
-      if (input === 'n' && linkedAccounts[acctCursor]) {
-        setNicknameInput(linkedAccounts[acctCursor].nickname ?? '');
-        setAcctMode('nickname');
-        return;
-      }
-      if (input === 'o' && linkedAccounts[acctCursor]) {
-        setOwnerInput(linkedAccounts[acctCursor].owner ?? '');
-        setAcctMode('owner');
         return;
       }
       if (input === 'v' && linkedAccounts[acctCursor]?.id.startsWith('manual-')) {
@@ -664,9 +649,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
-            ? `↑↓ select  ·  [e] edit  ·  [n] nickname  ·  [o] owner${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
+            ? `↑↓ select  ·  Enter edit${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
-            ? 'Tab field  ·  ← → value  ·  Enter save  ·  Esc cancel'
+            ? '↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel'
             : mainView === 'dupes'
             ? '↑↓ select  ·  [x] delete CSV copy  ·  [X] delete all'
             : ''}
@@ -736,24 +721,6 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             </ModalPanel>
           )}
 
-          {/* Nickname panel */}
-          {acctMode === 'nickname' && selectedAcct && (
-            <ModalPanel title={`Nickname: ${selectedAcct.name}`} borderColor={C_WARNING}>
-              <Text dimColor>Leave empty to clear nickname</Text>
-              <Box marginTop={1} gap={1}><Text>Nickname: </Text><TextInput value={nicknameInput} color={C_WARNING} /></Box>
-              <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
-            </ModalPanel>
-          )}
-
-          {/* Owner panel */}
-          {acctMode === 'owner' && selectedAcct && (
-            <ModalPanel title={`Owner: ${selectedAcct.nickname ?? selectedAcct.name}`} borderColor={C_MANUAL}>
-              <Text dimColor>Who owns this account? Leave empty to clear owner</Text>
-              <Box marginTop={1} gap={1}><Text>Owner: </Text><TextInput value={ownerInput} color={C_MANUAL} /></Box>
-              <Box marginTop={1}><Text dimColor>Enter save · Esc cancel</Text></Box>
-            </ModalPanel>
-          )}
-
           {/* Update-value panel */}
           {acctMode === 'update-value' && selectedAcct && (
             <ModalPanel title={`Update value: ${selectedAcct.name}`} borderColor={C_WARNING}>
@@ -763,29 +730,29 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             </ModalPanel>
           )}
 
-          {/* Edit panel */}
-          {acctMode === 'edit' && selectedAcct && (
-            <ModalPanel title={`Edit: ${selectedAcct.name}${selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}`}>
-              <Box marginTop={1} flexDirection="column" gap={1}>
-                <Box gap={2}>
-                  <Text color={editField === 'type' ? C_ACCENT : C_NEUTRAL}>
-                    {editField === 'type' ? '▶ ' : '  '}Type
-                  </Text>
-                  <Text color={editField === 'type' ? C_ACCENT : undefined}>
-                    {'← '}{editType}{'  →'}
-                  </Text>
+          {/* Unified edit panel */}
+          {acctMode === 'edit' && selectedAcct && (() => {
+            const isDebt = editType === 'credit' || editType === 'loan';
+            return (
+              <ModalPanel title={`Edit: ${selectedAcct.name}${selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}`}>
+                <Box marginTop={1} flexDirection="column" gap={1}>
+                  <EditTextField label="Nickname" labelWidth={10} active={editField === 'nickname'} value={editNickname} color={C_WARNING} placeholder="none" emptyText="none" />
+                  {ownerMembers.length > 0
+                    ? <EditToggleField label="Owner" labelWidth={10} active={editField === 'owner'} value={editOwner || 'Unassigned'} valueColor={C_MANUAL} />
+                    : (
+                      <Box gap={2}>
+                        <Text color={C_NEUTRAL}>{'Owner'.padEnd(10)}</Text>
+                        <Text dimColor>Add household members in Settings [0]</Text>
+                      </Box>
+                    )}
+                  <EditToggleField label="Type" labelWidth={10} active={editField === 'type'} value={editType} />
+                  <EditToggleField label="Subtype" labelWidth={10} active={editField === 'subtype'} value={editSubtype || '—'} valueColor={C_DIM} />
+                  {isDebt && <EditTextField label="APR %" labelWidth={10} active={editField === 'apr'} value={editApr} color={C_WARNING} placeholder="0.0" />}
                 </Box>
-                <Box gap={2}>
-                  <Text color={editField === 'subtype' ? C_ACCENT : C_NEUTRAL}>
-                    {editField === 'subtype' ? '▶ ' : '  '}Subtype
-                  </Text>
-                  <Text color={editField === 'subtype' ? C_ACCENT : C_DIM}>
-                    {'← '}{editSubtype || '—'}{'  →'}
-                  </Text>
-                </Box>
-              </Box>
-            </ModalPanel>
-          )}
+                <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
+              </ModalPanel>
+            );
+          })()}
         </>
       )}
 

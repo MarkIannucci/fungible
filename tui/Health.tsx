@@ -5,7 +5,7 @@ import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, Divider } from './fmt.js
 import { handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
 import { C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT } from './ui.js';
-import { SectionHeader, SelectableRow, PageHeader } from './components/index.js';
+import { SectionHeader, PageHeader, DialRow } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 
 function savingsRateColor(rate: number): string {
@@ -39,7 +39,7 @@ function progressBar(ratio: number, width = PROGRESS_BAR_WIDTH) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-const DEFAULT_HEALTH: HealthData = { avgMonthlyExpenses: 0, monthlyIncome: 0, monthlySavings: 0, cash: 0, liquid: 0, totalDebt: 0, netWorth: 0 };
+const DEFAULT_HEALTH: HealthData = { avgMonthlyExpenses: 0, monthlyIncome: 0, monthlySavings: 0, savingsRate: 0, cash: 0, liquid: 0, retirement: 0, totalDebt: 0, loanDebt: 0, netWorth: 0 };
 
 export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen) => void; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();
@@ -48,6 +48,8 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const [dialIdx, setDialIdx]           = useState(0);
   const [monthlySpend, setMonthlySpend] = useState(SPEND_STEP);
   const [monthlySavings, setMonthlySavings] = useState(0);
+  const [editMode, setEditMode]         = useState(false);
+  const [editBuffer, setEditBuffer]     = useState('');
 
   useEffect(() => {
     void loadHealthData().then((d) => {
@@ -61,12 +63,46 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
   const currentDial: Dial = DIALS[dialIdx];
 
+  function currentDialValueStr(): string {
+    if (currentDial === 'spend')      return String(monthlySpend);
+    if (currentDial === 'savings')    return String(monthlySavings);
+    if (currentDial === 'withdrawal') return String(withdrawal);
+    if (currentDial === 'growth')     return String(growth);
+    return '';
+  }
+
+  function applyEdit(buffer: string) {
+    const n = parseFloat(buffer);
+    if (!isNaN(n)) {
+      if (currentDial === 'spend')      setMonthlySpend(Math.max(SPEND_STEP, Math.round(n / SPEND_STEP) * SPEND_STEP));
+      if (currentDial === 'savings')    setMonthlySavings(Math.round(n / SPEND_STEP) * SPEND_STEP);
+      if (currentDial === 'withdrawal') setWithdrawal(parseFloat(Math.min(10, Math.max(0.5, n)).toFixed(1)));
+      if (currentDial === 'growth')     setGrowth(parseFloat(Math.min(20, Math.max(0, n)).toFixed(1)));
+    }
+    setEditMode(false);
+    setEditBuffer('');
+  }
+
   useInput((input, key) => {
+    if (editMode) {
+      if (key.escape) { setEditMode(false); setEditBuffer(''); return; }
+      if (key.return) { applyEdit(editBuffer); return; }
+      if (key.backspace || key.delete) { setEditBuffer((b) => b.slice(0, -1)); return; }
+      if (input && /^[\d.\-]$/.test(input) && !key.ctrl && !key.meta) setEditBuffer((b) => b + input);
+      return;
+    }
+
     if (key.escape) { onNavigate('dashboard'); return; }
     handleNavKey(input, 'health', onNavigate);
 
     if (key.upArrow)   { setDialIdx((i) => (i - 1 + DIALS.length) % DIALS.length); return; }
     if (key.downArrow) { setDialIdx((i) => (i + 1) % DIALS.length); return; }
+
+    if (key.return) {
+      setEditBuffer(currentDialValueStr());
+      setEditMode(true);
+      return;
+    }
 
     if (key.rightArrow) {
       if (currentDial === 'spend')      setMonthlySpend((s) => s + SPEND_STEP);
@@ -124,7 +160,11 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       <PageHeader current="health" showHints={showHints} />
 
       <Box marginTop={1}><Text bold>Financial Health</Text></Box>
-      {showHints && <Text dimColor>↑↓ select  ·  ← → adjust  ·  [r] reset</Text>}
+      {showHints && (
+        editMode
+          ? <Text dimColor>type value  ·  Enter confirm  ·  Esc cancel</Text>
+          : <Text dimColor>↑↓ select  ·  ← → adjust  ·  Enter type  ·  [r] reset</Text>
+      )}
       <Divider />
 
       {/* ── Snapshot ───────────────────────────────────────────────────────── */}
@@ -261,45 +301,43 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       <SectionHeader>ASSUMPTIONS</SectionHeader>
 
       <Box flexDirection="column" marginTop={1}>
-        <SelectableRow selected={currentDial === 'spend'} gap={2}>
-          <Text color={currentDial === 'spend' ? C_ACCENT : undefined}>{'Monthly spending'.padEnd(16)}</Text>
-          <Text color={currentDial === 'spend' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmt(monthlySpend).padStart(V)}{' ]'}</Text>
-          <Text dimColor>
-            {currentDial === 'spend'
+        <DialRow
+          label="Monthly spending" value={fmt(monthlySpend)} selected={currentDial === 'spend'}
+          editing={editMode && currentDial === 'spend'} editBuffer={editBuffer}
+          description={editMode && currentDial === 'spend'
+            ? 'Enter confirm  ·  Esc cancel'
+            : currentDial === 'spend'
               ? (spendChanged ? `default ${fmt(defaultSpend)} · [r] reset` : `avg past 12 months  ← → ±${fmt(SPEND_STEP)}`)
               : `avg past 12 months${spendChanged ? ' (modified)' : ''}`}
-          </Text>
-        </SelectableRow>
-
-        <SelectableRow selected={currentDial === 'savings'} gap={2}>
-          <Text color={currentDial === 'savings' ? C_ACCENT : undefined}>{'Monthly savings'.padEnd(16)}</Text>
-          <Text color={currentDial === 'savings' ? C_ACCENT : monthlySavings < 0 ? C_NEGATIVE : C_NEUTRAL}>{'[ '}{fmtSigned(monthlySavings).padStart(V)}{' ]'}</Text>
-          <Text dimColor>
-            {currentDial === 'savings'
+        />
+        <DialRow
+          label="Monthly savings" value={fmtSigned(monthlySavings)} selected={currentDial === 'savings'}
+          valueColor={monthlySavings < 0 ? C_NEGATIVE : C_NEUTRAL}
+          editing={editMode && currentDial === 'savings'} editBuffer={editBuffer}
+          description={editMode && currentDial === 'savings'
+            ? 'Enter confirm  ·  Esc cancel'
+            : currentDial === 'savings'
               ? (savingsChanged ? `default ${fmt(defaultSavings)} · [r] reset` : `avg surplus past 12 mo  ← → ±${fmt(SPEND_STEP)}`)
               : `avg surplus past 12 mo${savingsChanged ? ' (modified)' : ''}`}
-          </Text>
-        </SelectableRow>
-
-        <SelectableRow selected={currentDial === 'withdrawal'} gap={2}>
-          <Text color={currentDial === 'withdrawal' ? C_ACCENT : undefined}>{'Withdrawal rate'.padEnd(16)}</Text>
-          <Text color={currentDial === 'withdrawal' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmtPct(withdrawal).padStart(V)}{' ]'}</Text>
-          <Text dimColor>
-            {currentDial === 'withdrawal'
+        />
+        <DialRow
+          label="Withdrawal rate" value={fmtPct(withdrawal)} selected={currentDial === 'withdrawal'}
+          editing={editMode && currentDial === 'withdrawal'} editBuffer={editBuffer}
+          description={editMode && currentDial === 'withdrawal'
+            ? 'Enter confirm  ·  Esc cancel'
+            : currentDial === 'withdrawal'
               ? `← → ±${fmtPct(WITHDRAW_STEP)}${withdrawChanged ? ' · [r] reset' : ''}`
               : `safe withdrawal rate${withdrawChanged ? ' (modified)' : ''}`}
-          </Text>
-        </SelectableRow>
-
-        <SelectableRow selected={currentDial === 'growth'} gap={2}>
-          <Text color={currentDial === 'growth' ? C_ACCENT : undefined}>{'Growth rate'.padEnd(16)}</Text>
-          <Text color={currentDial === 'growth' ? C_ACCENT : C_NEUTRAL}>{'[ '}{fmtPct(growth).padStart(V)}{' ]'}</Text>
-          <Text dimColor>
-            {currentDial === 'growth'
+        />
+        <DialRow
+          label="Growth rate" value={fmtPct(growth)} selected={currentDial === 'growth'}
+          editing={editMode && currentDial === 'growth'} editBuffer={editBuffer}
+          description={editMode && currentDial === 'growth'
+            ? 'Enter confirm  ·  Esc cancel'
+            : currentDial === 'growth'
               ? `← → ±${fmtPct(GROWTH_STEP)}${growthChanged ? ' · [r] reset' : ''}`
               : `real annual return${growthChanged ? ' (modified)' : ''}`}
-          </Text>
-        </SelectableRow>
+        />
       </Box>
     </Box>
   );

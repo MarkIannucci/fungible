@@ -18,15 +18,15 @@ import type { Screen, TxFilter } from './App.js';
 import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
-import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar } from './components/index.js';
+import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
 type Tx = TxRow;
 
 
-type Mode = 'list' | 'search' | 'edit' | 'edit-rule' | 'tag' | 'tag-all' | 'edit-all';
-type EditField = 'name' | 'category';
+type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all';
+type EditField = 'name' | 'category' | 'pattern' | 'type';
 
 const SORT_CYCLE: SortMode[] = ['date-desc', 'date-asc', 'name-asc', 'name-desc', 'amount-desc', 'amount-asc', 'category-asc', 'category-desc'];
 
@@ -55,6 +55,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [tag, setTag] = useState<string | null>(initialFilter?.tag ?? null);
   const [account, setAccount] = useState<string | null>(initialFilter?.account ?? null);
   const [accountName, setAccountName] = useState<string | null>(initialFilter?.accountName ?? null);
+  const [txType] = useState<'income' | 'expenses' | null>(initialFilter?.txType ?? null);
+  const [flex] = useState<'fixed' | 'flexible' | 'discretionary' | null>(initialFilter?.flex ?? null);
   const [sort, setSort] = useState<SortMode>('date-desc');
   const [bounds, setBounds] = useState<{ minDate: string; maxDate: string }>({ minDate: '2000-01-01', maxDate: '2099-12-31' });
   const [search, setSearch] = useState(initialFilter?.search ?? '');
@@ -79,7 +81,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [tagInput, setTagInput] = useState('');
 
   function load(s = search, keepCursor = false) {
-    void getTransactions({ category, from, to, search: s, tag, account, sort }).then((rows) => {
+    void getTransactions({ category, from, to, search: s, tag, account, sort, txType, flex }).then((rows) => {
       setTxs(rows);
       if (!keepCursor) setCursor(0);
       else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
@@ -87,12 +89,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   }
 
   useEffect(() => { void getDataBounds().then(setBounds); void getAllCategories().then(setCategories); }, []);
-  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort, refreshKey]);
+  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort, txType, flex, refreshKey]);
 
   const setTyping = useSetTyping();
   useEffect(() => {
-    const isTextInput = mode === 'search' || mode === 'edit-rule' || mode === 'tag' || mode === 'tag-all'
-      || (mode === 'edit' && editField === 'name');
+    const isTextInput = mode === 'search' || mode === 'tag' || mode === 'tag-all'
+      || (mode === 'edit' && (editField === 'name' || editField === 'pattern'));
     setTyping(isTextInput);
   }, [mode, editField]);
 
@@ -103,6 +105,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     void getAllCategories().then((cats) => {
       setCategories(cats);
       setEditName('');
+      setEditPattern('');
+      setEditMatchType('name');
       setEditCatCursor(Math.max(0, cats.indexOf(selected.category)));
       setEditField('name');
       setMode('edit');
@@ -165,7 +169,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     load(search, true);
   }
 
-  function saveAsRule() {
+  async function saveAsRule() {
     if (!selected) return;
     const newCat = categories[editCatCursor];
     const newDisplay = editName.trim();
@@ -175,12 +179,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     const saved: string[] = [];
 
     if (catChanged) {
-      const count = upsertCategoryRule(editPattern, editMatchType, newCat);
+      const count = await upsertCategoryRule(editPattern, editMatchType, newCat);
       saved.push(`category rule (${count} updated)`);
     }
 
     if (nameChanged) {
-      upsertNameRule(editPattern, editMatchType, newDisplay);
+      await upsertNameRule(editPattern, editMatchType, newDisplay);
       saved.push('name rule');
     }
 
@@ -281,34 +285,26 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     }
 
     if (mode === 'edit') {
+      const EDIT_FIELDS: EditField[] = ['name', 'category', 'pattern', 'type'];
       if (key.escape) { setMode('list'); return; }
+      if (key.return) {
+        if (editPattern.trim()) { void saveAsRule(); } else { saveToTransaction(); }
+        return;
+      }
+      if (key.upArrow) { setEditField((f) => EDIT_FIELDS[Math.max(0, EDIT_FIELDS.indexOf(f) - 1)]); return; }
+      if (key.downArrow) { setEditField((f) => EDIT_FIELDS[Math.min(EDIT_FIELDS.length - 1, EDIT_FIELDS.indexOf(f) + 1)]); return; }
       if (editField === 'name') {
-        if (key.return || key.rightArrow) { setEditField('category'); return; }
-        if (key.leftArrow) { return; }
         if (key.backspace || key.delete) { setEditName((n) => n.slice(0, -1)); return; }
         if (input && !key.ctrl && !key.meta) { setEditName((n) => n + input); return; }
-      } else {
-        if (key.leftArrow) { setEditField('name'); return; }
-        if (key.upArrow) { setEditCatCursor((c) => Math.max(0, c - 1)); return; }
-        if (key.downArrow) { setEditCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
-        if (input === 't' || key.return) { saveToTransaction(); return; }
-        if (input === 'r') {
-          setEditPattern(selected?.name ?? '');
-          setEditMatchType('name');
-          setMode('edit-rule');
-          return;
-        }
+      } else if (editField === 'category') {
+        if (key.leftArrow) { setEditCatCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.rightArrow) { setEditCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+      } else if (editField === 'pattern') {
+        if (key.backspace || key.delete) { setEditPattern((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setEditPattern((p) => p + input); return; }
+      } else if (editField === 'type') {
+        if (key.leftArrow || key.rightArrow) { setEditMatchType((t) => t === 'name' ? 'regex' : 'name'); return; }
       }
-      return;
-    }
-
-    if (mode === 'edit-rule') {
-      if (key.escape) { setMode('edit'); return; }
-      if (input === 'n') { setEditMatchType('name'); return; }
-      if (input === 'x') { setEditMatchType('regex'); return; }
-      if (key.return) { saveAsRule(); return; }
-      if (key.backspace || key.delete) { setEditPattern((p) => p.slice(0, -1)); return; }
-      if (input && !key.ctrl && !key.meta) { setEditPattern((p) => p + input); return; }
       return;
     }
 
@@ -347,7 +343,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (key.downArrow) setCursor((c) => Math.min(txs.length - 1, c + 1));
       if (input === 'u') { setSearch(''); setSearchInput(''); setCategory('Uncategorized'); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
       if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
-      if (input === 'e' && selected) openEdit();
+      if (key.return && selected) openEdit();
       if (input === 'E' && txs.length > 0) {
         void getAllCategories().then((cats) => {
           setCategories(cats);
@@ -416,6 +412,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     tag ? `#${tag}` : null,
     search ? `"${search}"` : null,
     category,
+    txType ? txType.charAt(0).toUpperCase() + txType.slice(1) : null,
+    flex ? flex.charAt(0).toUpperCase() + flex.slice(1) : null,
   ].filter(Boolean).join(' · ');
 
   // Category list window for edit panel
@@ -423,8 +421,15 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const catWinStart = Math.max(0, Math.min(editCatCursor - Math.floor(CAT_WIN / 2), categories.length - CAT_WIN));
   const visibleCats = categories.slice(catWinStart, catWinStart + CAT_WIN);
 
-  // Live match count for rule panel
-  const matchCount = mode === 'edit-rule' ? countPatternMatches(editPattern, editMatchType) : 0;
+  // Live match count when a rule pattern is typed
+  const [matchCount, setMatchCount] = useState(0);
+  useEffect(() => {
+    if (mode === 'edit' && editPattern.trim()) {
+      void countPatternMatches(editPattern, editMatchType).then(setMatchCount);
+    } else {
+      setMatchCount(0);
+    }
+  }, [mode, editPattern, editMatchType]);
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
@@ -443,7 +448,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `[/] search  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  [e] edit  [g] tag  [i] ignore  [x] delete`
+          ? `[/] search  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  [x] delete`
           : '[/] search'}
       </Text>
 
@@ -574,67 +579,26 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       )}
 
       {mode === 'edit' && selected && (
-        <ModalPanel>
+        <ModalPanel borderColor={editPattern.trim() ? C_MANUAL : undefined}>
           <Text bold>Edit  <Text dimColor>{selected.name}</Text></Text>
 
-          <Box marginTop={1} gap={3}>
-            <Box flexDirection="column">
-              <Text color={editField === 'name' ? C_ACCENT : C_DIM} bold>Name</Text>
-              {editField === 'name'
-                ? <TextInput value={editName} color={C_WARNING} placeholder="type new name…" />
-                : <Text dimColor>{editName || '(unchanged)'}</Text>
-              }
+          <Box marginTop={1} flexDirection="column" gap={1}>
+            <EditTextField label="Name" labelWidth={12} active={editField === 'name'} value={editName} color={C_WARNING} placeholder="type new name…" emptyText="(unchanged)" />
+            <EditToggleField label="Category" labelWidth={12} active={editField === 'category'} value={categories[editCatCursor] ?? '—'} />
+            <EditTextField label="Pattern" labelWidth={12} active={editField === 'pattern'} value={editPattern} color={C_MANUAL} placeholder="optional — saves as rule" emptyText="—" />
+            <EditToggleField label="Match type" labelWidth={12} active={editField === 'type'} value={editMatchType} />
+          </Box>
+
+          {editPattern.trim() ? (
+            <Box marginTop={1} gap={2}>
+              <Text color={C_WARNING}>{matchCount} transactions match</Text>
+              <Text dimColor>· Enter saves as rule</Text>
             </Box>
+          ) : null}
 
-            <Box flexDirection="column">
-              <Text color={editField === 'category' ? C_ACCENT : C_DIM} bold>Category</Text>
-              {editField === 'category' ? (
-                <Box flexDirection="column">
-                  {visibleCats.map((cat, i) => {
-                    const idx = catWinStart + i;
-                    const isSel = idx === editCatCursor;
-                    return (
-                      <SelectableRow key={cat} selected={isSel}>
-                        <Text color={isSel ? C_ACCENT : undefined} dimColor={!isSel}>{cat}</Text>
-                      </SelectableRow>
-                    );
-                  })}
-                </Box>
-              ) : (
-                <Text color={C_ACCENT}>{categories[editCatCursor]}</Text>
-              )}
-            </Box>
+          <Box marginTop={1}>
+            <Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text>
           </Box>
-
-          <Box marginTop={1} gap={3}>
-            {editField === 'name'
-              ? <Text dimColor>Enter / → to pick category  ·  Esc cancel</Text>
-              : <><Text color={C_ACCENT}>[t] / Enter  this transaction</Text><Text color={C_ACCENT}>[r] make rule</Text><Text dimColor>← name  ·  Esc cancel</Text></>
-            }
-          </Box>
-        </ModalPanel>
-      )}
-
-      {mode === 'edit-rule' && selected && (
-        <ModalPanel borderColor={C_MANUAL}>
-          <Text bold>Make Rule</Text>
-          {categories[editCatCursor] !== selected.category && (
-            <Text dimColor>Category: <Text color={C_NEGATIVE}>{selected.category}</Text> → <Text color={C_ACCENT}>{categories[editCatCursor]}</Text></Text>
-          )}
-          {editName.trim().length > 0 && (
-            <Text dimColor>Name: <Text color={C_POSITIVE}>{editName}</Text></Text>
-          )}
-
-          <Box gap={2} marginTop={1}>
-            <Text>Pattern </Text>
-            <TextInput value={editPattern} color={C_MANUAL} />
-          </Box>
-          <Box gap={3} marginTop={1}>
-            <Text color={editMatchType === 'name' ? C_NEUTRAL : undefined} dimColor={editMatchType !== 'name'}>[n] name</Text>
-            <Text color={editMatchType === 'regex' ? C_NEUTRAL : undefined} dimColor={editMatchType !== 'regex'}>[x] regex</Text>
-            <Text color={C_WARNING}>{matchCount} transactions match</Text>
-          </Box>
-          <Box marginTop={1}><Text dimColor>Enter save  ·  Esc back</Text></Box>
         </ModalPanel>
       )}
     </Box>

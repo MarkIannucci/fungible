@@ -14,6 +14,7 @@ import {
   getMerchantSummary,
   getOwnerRows,
   hasAccounts,
+  getTransactions,
 } from '../core/queries.js';
 
 let txId = 0;
@@ -383,6 +384,76 @@ describe('getRecentTransactions', () => {
     const txs = await getRecentTransactions();
     expect(txs).toHaveLength(1);
     expect(txs[0].amount).toBe(200);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getTransactions — txType filter', () => {
+  it('income returns only negative-amount transactions', async () => {
+    await insertTx({ amount: -500, category: 'Income' });
+    await insertTx({ amount: 100,  category: 'Shopping' });
+    const rows = await getTransactions({ txType: 'income' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].amount).toBe(-500);
+  });
+
+  it('income excludes hidden categories', async () => {
+    await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Transfer'] });
+    await insertTx({ amount: -500, category: 'Income' });
+    await insertTx({ amount: -200, category: 'Transfer' });
+    const rows = await getTransactions({ txType: 'income' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].category).toBe('Income');
+  });
+
+  it('expenses returns only positive-amount transactions', async () => {
+    await insertTx({ amount: 100,  category: 'Shopping' });
+    await insertTx({ amount: -500, category: 'Income' });
+    const rows = await getTransactions({ txType: 'expenses' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].amount).toBe(100);
+  });
+
+  it('expenses excludes hidden categories', async () => {
+    await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Transfer'] });
+    await insertTx({ amount: 100, category: 'Shopping' });
+    await insertTx({ amount: 200, category: 'Transfer' });
+    const rows = await getTransactions({ txType: 'expenses' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].category).toBe('Shopping');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getTransactions — flex filter', () => {
+  beforeEach(async () => {
+    await db.execute("INSERT INTO categories (name, flexibility) VALUES ('Rent', 'fixed')");
+    await db.execute("INSERT INTO categories (name, flexibility) VALUES ('Grocery', 'flexible')");
+    await db.execute("INSERT INTO categories (name, flexibility) VALUES ('Dining', 'discretionary')");
+  });
+
+  it('returns only transactions in categories with the given flex tier', async () => {
+    await insertTx({ amount: 1500, category: 'Rent' });
+    await insertTx({ amount: 200,  category: 'Grocery' });
+    await insertTx({ amount: 50,   category: 'Dining' });
+    await insertTx({ amount: 100,  category: 'Shopping' }); // no flex tier
+    const fixed = await getTransactions({ flex: 'fixed' });
+    expect(fixed).toHaveLength(1);
+    expect(fixed[0].category).toBe('Rent');
+  });
+
+  it('works for all three tiers', async () => {
+    await insertTx({ amount: 1500, category: 'Rent' });
+    await insertTx({ amount: 200,  category: 'Grocery' });
+    await insertTx({ amount: 50,   category: 'Dining' });
+    expect((await getTransactions({ flex: 'fixed' })).map((r) => r.category)).toEqual(['Rent']);
+    expect((await getTransactions({ flex: 'flexible' })).map((r) => r.category)).toEqual(['Grocery']);
+    expect((await getTransactions({ flex: 'discretionary' })).map((r) => r.category)).toEqual(['Dining']);
+  });
+
+  it('excludes categories with no flex tier', async () => {
+    await insertTx({ amount: 100, category: 'Shopping' });
+    expect(await getTransactions({ flex: 'fixed' })).toHaveLength(0);
   });
 });
 

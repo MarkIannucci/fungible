@@ -15,6 +15,10 @@ export async function updateAccountOwner(id: string, owner: string | null): Prom
   await db.execute({ sql: 'UPDATE accounts SET owner = ? WHERE id = ?', args: [owner, id] });
 }
 
+export async function updateAccountApr(id: string, apr: number | null): Promise<void> {
+  await db.execute({ sql: 'UPDATE accounts SET apr = ? WHERE id = ?', args: [apr, id] });
+}
+
 export async function updateAccountValue(id: string, value: number): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
   await db.execute({
