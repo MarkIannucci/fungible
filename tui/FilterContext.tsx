@@ -9,8 +9,8 @@ type FilterCtx = { filter: Filter; setFilter: (f: Filter) => void };
 
 const Ctx = createContext<FilterCtx>({ filter: EMPTY_FILTER, setFilter: () => {} });
 
-export function FilterProvider({ children }: { children: React.ReactNode }) {
-  const [filter, setFilter] = useState<Filter>(EMPTY_FILTER);
+export function FilterProvider({ initial, children }: { initial?: Filter; children: React.ReactNode }) {
+  const [filter, setFilter] = useState<Filter>(initial ?? EMPTY_FILTER);
   return <Ctx.Provider value={{ filter, setFilter }}>{children}</Ctx.Provider>;
 }
 

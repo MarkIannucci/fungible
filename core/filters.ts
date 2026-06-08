@@ -66,6 +66,23 @@ export function mergeFilters(base: Filter | undefined, extra: Filter | undefined
 }
 
 /**
+ * Panel serialization helpers for the select-from-universe dimensions
+ * (categories/accounts/owners). The panel holds the *selected* members as a Set;
+ * these convert to/from the Filter representation, where a fully-selected
+ * universe means "no constraint" (undefined) and a partial selection is the
+ * explicit member list (an empty Set serializes to [] = match-nothing).
+ */
+export function selectionToDim(selected: Set<string>, universe: string[]): string[] | undefined {
+  return selected.size === universe.length && universe.every((v) => selected.has(v))
+    ? undefined
+    : [...selected];
+}
+
+export function selectionFromDim(dim: string[] | undefined, universe: string[]): Set<string> {
+  return dim === undefined ? new Set(universe) : new Set(dim);
+}
+
+/**
  * Builds the SQL condition fragments + bound args that restrict rows by the
  * filter. `alias` is the alias (or table name) of the transactions row the
  * conditions reference — 't' in aliased queries, 'transactions' in unaliased

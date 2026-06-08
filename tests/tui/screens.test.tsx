@@ -13,6 +13,7 @@ import { App } from '../../tui/App.js';
 import { Dashboard } from '../../tui/Dashboard.js';
 import { Transactions } from '../../tui/Transactions.js';
 import { Trends } from '../../tui/Trends.js';
+import { FilterPanel } from '../../tui/FilterPanel.js';
 import { NetWorth } from '../../tui/NetWorth.js';
 import { Tags } from '../../tui/Tags.js';
 import { Rules } from '../../tui/Rules.js';
@@ -21,6 +22,7 @@ import * as accountsApi from '../../core/accounts.js';
 import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
+import { FilterProvider } from '../../tui/FilterContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';
 import { loadProfile, saveProfile } from '../../core/profile.js';
 
@@ -357,11 +359,19 @@ describe('Transactions', () => {
     await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined));
   });
 
-  it('shows category filter label when category is provided', async () => {
-    const r = txns({ initialFilter: { ...MAY_DATE_FILTER, category: 'Grocery' } });
+  it('shows a filter-summary label when the shared filter is active', async () => {
+    const r = render(
+      <RefreshProvider>
+        <TypingContext.Provider value={() => {}}>
+          <FilterProvider initial={{ categories: ['Grocery'] }}>
+            <Transactions onNavigate={noop} showHints={false} initialFilter={MAY_DATE_FILTER} />
+          </FilterProvider>
+        </TypingContext.Provider>
+      </RefreshProvider>,
+    );
     await waitFor(() => {
       const f = frame(r);
-      expect(f).toContain('Grocery');
+      expect(f).toContain('1 category');
     });
   });
 
@@ -1439,5 +1449,48 @@ describe('App', () => {
     await waitFor(() => expect(frame(r)).toContain('Dashboard'));
     r.stdin.write('0');
     await waitFor(() => expect(frame(r)).toContain('Settings'));
+  });
+});
+
+// ── FilterPanel ─────────────────────────────────────────────────────────────
+describe('FilterPanel', () => {
+  function panel(initial = {}, onClose = noop) {
+    return render(
+      <RefreshProvider>
+        <TypingContext.Provider value={() => {}}>
+          <FilterProvider initial={initial}>
+            <FilterPanel isActive onClose={onClose} />
+          </FilterProvider>
+        </TypingContext.Provider>
+      </RefreshProvider>,
+    );
+  }
+
+  it('renders all four dimension sections with seeded options', async () => {
+    const r = panel();
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Filter');
+      expect(f).toContain('Categories');
+      expect(f).toContain('Grocery');
+      expect(f).toContain('Accounts');
+      expect(f).toContain('Test Checking');
+    });
+  });
+
+  it('Esc closes without applying', async () => {
+    const onClose = vi.fn();
+    const r = panel({}, onClose);
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('Enter applies and closes', async () => {
+    const onClose = vi.fn();
+    const r = panel({}, onClose);
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 });

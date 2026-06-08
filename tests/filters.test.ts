@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   buildFilterConditions, buildFilterClause, mergeFilters,
-  isFilterActive, filterSummary, type Filter,
+  isFilterActive, filterSummary, selectionToDim, selectionFromDim, type Filter,
 } from '../core/filters.js';
 
 // ── Pure clause-builder tests (no database) ────────────────────────────────────
@@ -105,6 +105,37 @@ describe('isFilterActive / filterSummary', () => {
   });
 });
 
+describe('selectionToDim / selectionFromDim (panel serialization)', () => {
+  const universe = ['Rent', 'Dining', 'Shopping'];
+
+  it('serializes a fully-selected universe to undefined (no constraint)', () => {
+    expect(selectionToDim(new Set(universe), universe)).toBeUndefined();
+  });
+
+  it('serializes a partial selection to the member list', () => {
+    expect(selectionToDim(new Set(['Rent', 'Dining']), universe)?.sort()).toEqual(['Dining', 'Rent']);
+  });
+
+  it('serializes an empty selection to [] (match nothing)', () => {
+    expect(selectionToDim(new Set(), universe)).toEqual([]);
+  });
+
+  it('treats an empty universe as no constraint', () => {
+    expect(selectionToDim(new Set(), [])).toBeUndefined();
+  });
+
+  it('hydrates undefined to the full universe and a list back to itself', () => {
+    expect(selectionFromDim(undefined, universe)).toEqual(new Set(universe));
+    expect(selectionFromDim(['Rent'], universe)).toEqual(new Set(['Rent']));
+    expect(selectionFromDim([], universe)).toEqual(new Set());
+  });
+
+  it('round-trips a partial selection', () => {
+    const sel = selectionFromDim(['Dining'], universe);
+    expect(selectionToDim(sel, universe)).toEqual(['Dining']);
+  });
+});
+
 // ── Database-backed integration tests ──────────────────────────────────────────
 
 vi.mock('../core/db.js', async () => {
@@ -113,7 +144,7 @@ vi.mock('../core/db.js', async () => {
 });
 
 const { db } = await import('../core/db.js');
-const { getTransactions, getRangeSummary } = await import('../core/queries.js');
+const { getTransactions, getRangeSummary, getFilterOptions } = await import('../core/queries.js');
 const { getPeriodTotals } = await import('../core/trends.js');
 
 let txId = 0;
@@ -229,5 +260,26 @@ describe('getPeriodTotals with a Filter', () => {
     expect(all.find((p) => p.from === '2025-01-01')?.total).toBeCloseTo(350);
     const a1 = await getPeriodTotals(view, 'month', { accounts: ['a1'] });
     expect(a1.find((p) => p.from === '2025-01-01')?.total).toBeCloseTo(100);
+  });
+});
+
+describe('getFilterOptions', () => {
+  it('returns categories, accounts (with owner), distinct owners, and tags', async () => {
+    await db.execute("INSERT INTO categories (name) VALUES ('Rent'), ('Dining')");
+    await addAccount('chase', 'Mark');
+    await addAccount('amex', 'Mark');
+    await addAccount('joint', null); // null owner → Unassigned bucket
+    const tx = await insertTx({ accountId: 'chase', amount: 10 });
+    await tagTx(tx, 'shared');
+
+    const opts = await getFilterOptions();
+    expect(opts.categories).toEqual(['Dining', 'Rent']); // alphabetical
+    expect(opts.accounts).toEqual([
+      { id: 'amex', name: 'amex', owner: 'Mark' },
+      { id: 'chase', name: 'chase', owner: 'Mark' },
+      { id: 'joint', name: 'joint', owner: 'Unassigned' },
+    ]);
+    expect(opts.owners).toEqual(['Mark', 'Unassigned']); // distinct, sorted
+    expect(opts.tags).toEqual(['shared']);
   });
 });

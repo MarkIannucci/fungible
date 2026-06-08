@@ -363,6 +363,38 @@ export async function getAllCategories(): Promise<string[]> {
   return (result.rows as unknown as { name: string }[]).map((r) => r.name);
 }
 
+// Option universes for the shared filter panel: every category, account
+// (id/name/owner), distinct owner bucket ('Unassigned' for accounts with no
+// owner), and tag name. The panel selects from these and serializes a Filter.
+export type FilterOptionAccount = { id: string; name: string; owner: string };
+export type FilterOptions = {
+  categories: string[];
+  accounts: FilterOptionAccount[];
+  owners: string[];
+  tags: string[];
+};
+
+export async function getFilterOptions(): Promise<FilterOptions> {
+  const [cats, accts, tags] = await Promise.all([
+    db.execute('SELECT name FROM categories ORDER BY name'),
+    db.execute(
+      `SELECT id, name, COALESCE(NULLIF(TRIM(owner), ''), 'Unassigned') as owner
+       FROM accounts ORDER BY name`,
+    ),
+    db.execute('SELECT name FROM tags ORDER BY name'),
+  ]);
+  const accounts = (accts.rows as unknown as FilterOptionAccount[]).map((r) => ({
+    id: r.id, name: r.name, owner: r.owner,
+  }));
+  const owners = [...new Set(accounts.map((a) => a.owner))].sort();
+  return {
+    categories: (cats.rows as unknown as { name: string }[]).map((r) => r.name),
+    accounts,
+    owners,
+    tags: (tags.rows as unknown as { name: string }[]).map((r) => r.name),
+  };
+}
+
 export async function getCategoryDetails(): Promise<CategoryDetail[]> {
   const result = await db.execute('SELECT name, flexibility FROM categories ORDER BY name');
   return result.rows as unknown as CategoryDetail[];
