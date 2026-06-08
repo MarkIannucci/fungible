@@ -83,6 +83,13 @@ const SCHEMA = `
     date TEXT NOT NULL,
     PRIMARY KEY (account_id, date)
   );
+
+  CREATE TABLE household_members (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    birth_year INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
 `;
 
 export async function makeTestDb() {

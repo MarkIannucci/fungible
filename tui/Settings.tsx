@@ -45,10 +45,12 @@ export function Settings({ onNavigate, isActive, showHints }: {
   showHints: boolean;
 }) {
   const setTyping = useSetTyping();
-  const [profile, setProfile] = useState<Profile>(
-    () => loadProfile() ?? { self: { name: '', birthYear: 0 }, children: [] }
-  );
+  const [profile, setProfile] = useState<Profile>({ self: { name: '', birthYear: 0 }, children: [] });
   const [cursor, setCursor] = useState(0);
+
+  useEffect(() => {
+    void loadProfile().then((p) => { if (p) setProfile(p); });
+  }, []);
   const [editing, setEditing] = useState(false);
   const [editBuffer, setEditBuffer] = useState('');
 
@@ -60,7 +62,7 @@ export function Settings({ onNavigate, isActive, showHints }: {
 
   function persist(next: Profile) {
     setProfile(next);
-    saveProfile(next);
+    void saveProfile(next);
   }
 
   function commitEdit() {

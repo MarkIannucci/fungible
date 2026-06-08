@@ -97,6 +97,12 @@ export async function initDb() {
     )`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_balance_history_acct_date
       ON balance_history(account_id, date)`,
+    `CREATE TABLE IF NOT EXISTS household_members (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      birth_year INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    )`,
   ], 'write');
 
   // Idempotent column migrations (each may fail if column exists — that's fine)
@@ -164,6 +170,24 @@ export async function initDb() {
     })),
     'write',
   );
+
+  // One-time migration: seed household_members from profile.json if table is empty
+  const hmCount = await db.execute('SELECT COUNT(*) as n FROM household_members');
+  if (Number(hmCount.rows[0].n) === 0) {
+    type ProfileJson = { self: { name: string; birthYear: number }; spouse?: { name: string; birthYear: number }; children: { name: string; birthYear: number }[] };
+    let p: ProfileJson | null = null;
+    try { p = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'profile.json'), 'utf8')) as ProfileJson; } catch {}
+    const self = p?.self ?? { name: '', birthYear: 0 };
+    const rows: { sql: string; args: (string | number)[] }[] = [
+      { sql: 'INSERT INTO household_members (id, name, birth_year, sort_order) VALUES (?,?,?,0)', args: ['self', self.name, self.birthYear] },
+    ];
+    if (p?.spouse) rows.push({ sql: 'INSERT INTO household_members (id, name, birth_year, sort_order) VALUES (?,?,?,1)', args: ['spouse', p.spouse.name, p.spouse.birthYear] });
+    for (let i = 0; i < (p?.children ?? []).length; i++) {
+      const c = p!.children[i];
+      rows.push({ sql: 'INSERT INTO household_members (id, name, birth_year, sort_order) VALUES (?,?,?,?)', args: [`child-${i}`, c.name, c.birthYear, i + 2] });
+    }
+    await db.batch(rows, 'write');
+  }
 
   // Seed default categories
   const defaultCategories = [
