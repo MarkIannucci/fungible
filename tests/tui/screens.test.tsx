@@ -25,11 +25,11 @@ import { TypingContext } from '../../tui/TypingContext.js';
 import { loadProfile } from '../../core/profile.js';
 
 // Keep householdMembers real (a pure helper used by the owner picker) but stub
-// the fs-backed loadProfile/saveProfile. loadProfile is a vi.fn so a test can
+// the DB-backed loadProfile/saveProfile. loadProfile is a vi.fn so a test can
 // supply a profile whose members populate the cycle.
 vi.mock('../../core/profile.js', async (importActual) => {
   const actual = await importActual<typeof import('../../core/profile.js')>();
-  return { ...actual, loadProfile: vi.fn(() => null), saveProfile: vi.fn() };
+  return { ...actual, loadProfile: vi.fn(() => Promise.resolve(null)), saveProfile: vi.fn(() => Promise.resolve()) };
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ const noop = () => {};
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
 beforeEach(async () => {
-  vi.mocked(loadProfile).mockReturnValue(null); // no household members unless a test sets one
+  vi.mocked(loadProfile).mockResolvedValue(null); // no household members unless a test sets one
   for (const tbl of ['transactions', 'accounts', 'categories', 'tags', 'transaction_tags',
                      'category_rules', 'name_rules', 'hidden_categories', 'balance_history']) {
     await db.execute(`DELETE FROM ${tbl}`);
@@ -1199,7 +1199,7 @@ describe('Accounts', () => {
 
   it('setting an owner refreshes the list to show the owner on the account row', async () => {
     // The owner editor cycles over household members, so a profile must supply one.
-    vi.mocked(loadProfile).mockReturnValue({ self: { name: 'Alex Stark', birthYear: 0 }, children: [] });
+    vi.mocked(loadProfile).mockResolvedValue({ self: { name: 'Alex Stark', birthYear: 0 }, children: [] });
     const real = accountsApi.updateAccountOwner;
     vi.spyOn(accountsApi, 'updateAccountOwner').mockImplementation(delayWrite(real));
 
@@ -1223,7 +1223,7 @@ describe('Accounts', () => {
   });
 
   it('surfaces an error and does not apply the owner when the write fails', async () => {
-    vi.mocked(loadProfile).mockReturnValue({ self: { name: 'Alex Stark', birthYear: 0 }, children: [] });
+    vi.mocked(loadProfile).mockResolvedValue({ self: { name: 'Alex Stark', birthYear: 0 }, children: [] });
     vi.spyOn(accountsApi, 'updateAccountOwner').mockRejectedValue(new Error('db down'));
 
     const r = accounts();

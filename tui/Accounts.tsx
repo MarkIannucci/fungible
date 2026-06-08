@@ -162,14 +162,15 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     void getCsvPlaidDupeCandidates().then(setDupes);
   }
   useEffect(() => { loadAccounts(); }, [refreshKey]);
+  useEffect(() => {
+    void loadProfile().then((p) => setOwnerMembers(householdMembers(p)));
+  }, [isActive]);
 
   function openEdit(acct: LinkedAccount) {
     const type = acct.type;
     const subtypes = SUBTYPES[type] ?? [];
     const currentSub = acct.subtype ?? '';
     const snapped = subtypes.includes(currentSub) ? currentSub : (subtypes[0] ?? '');
-    // Re-read the profile each time so owner choices reflect the latest household.
-    setOwnerMembers(householdMembers(loadProfile()));
     setEditType(type);
     setEditSubtype(snapped);
     setEditNickname(acct.nickname ?? '');

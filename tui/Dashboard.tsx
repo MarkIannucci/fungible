@@ -177,7 +177,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
 
   // Don't strand the user on the owner view if the last owner gets unassigned elsewhere.
   useEffect(() => {
-    if (view === 'owner' && ownerRows.length > 0 && !ownerRows.some((r) => r.owner !== 'Unassigned')) {
+    if (view === 'owner' && !ownerRows.some((r) => r.owner !== 'Unassigned')) {
       setView('categories');
     }
   }, [view, ownerRows]);
@@ -195,7 +195,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   // Every owned account yields an OwnerRow (LEFT JOIN), so a non-'Unassigned' row here
   // means an owner exists regardless of whether they spent anything this period.
   const hasOwners = ownerRows.some((r) => r.owner !== 'Unassigned');
-  const maxOwnerSpend = ownerRows[0]?.spending || 1;
+  const maxOwnerSpend = ownerRows[0]?.spending ?? 1;
   // Drift categories: 3 delta cols × 9 chars + 4 gaps of 2 = 27+8=35 for cols; plus amount(10)+gaps
   // total fixed = 2(cursor) + 10(amt) + 4(gaps to amt) + 27(3×9) + 4(gaps between deltas) = 47
   const driftCatNameW = Math.max(12, inner - 47);
