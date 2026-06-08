@@ -14,7 +14,9 @@ import {
 import { applyCategoriesToAll } from '../core/categorize.js';
 import { countPatternMatches } from '../core/rule-utils.js';
 import { getTransactions, getAllCategories, getDataBounds, type TxRow, type SortMode } from '../core/queries.js';
+import { mergeFilters } from '../core/filters.js';
 import type { Screen, TxFilter } from './App.js';
+import { useFilter } from './FilterContext.js';
 import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
@@ -49,6 +51,7 @@ function truncate(s: string, n: number) {
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();
+  const { filter: sharedFilter } = useFilter();
   const [category, setCategory] = useState<string | null>(initialFilter?.category ?? null);
   const [from, setFrom] = useState<string | null>(initialFilter?.from ?? null);
   const [to, setTo] = useState<string | null>(initialFilter?.to ?? null);
@@ -81,7 +84,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [tagInput, setTagInput] = useState('');
 
   function load(s = search, keepCursor = false) {
-    void getTransactions({ category, from, to, search: s, tag, account, sort, txType, flex }).then((rows) => {
+    const queryFilter = mergeFilters(sharedFilter, {
+      categories: category ? [category] : undefined,
+      accounts: account ? [account] : undefined,
+      tags: tag ? [{ name: tag, mode: 'has' }] : undefined,
+    });
+    void getTransactions({ filter: queryFilter, from, to, search: s, sort, txType, flex }).then((rows) => {
       setTxs(rows);
       if (!keepCursor) setCursor(0);
       else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
@@ -89,7 +97,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   }
 
   useEffect(() => { void getDataBounds().then(setBounds); void getAllCategories().then(setCategories); }, []);
-  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort, txType, flex, refreshKey]);
+  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort, txType, flex, sharedFilter, refreshKey]);
 
   const setTyping = useSetTyping();
   useEffect(() => {

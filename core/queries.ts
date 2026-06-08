@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { buildFilterClause, buildFilterConditions, type Filter } from './filters.js';
 
 export type CategorySummary = { category: string; total: number };
 export type MonthlySummary  = { income: number; expenses: number; net: number; byCategory: CategorySummary[] };
@@ -22,16 +23,15 @@ export async function getMonthlySummary(year: number, month: number): Promise<Mo
   return getRangeSummary(from, to);
 }
 
-export async function getRangeSummary(from: string, to: string, accountId?: string): Promise<MonthlySummary> {
-  const acctClause = accountId ? 'AND account_id = ?' : '';
-  const args: (string | number | null)[] = accountId ? [from, to, accountId] : [from, to];
+export async function getRangeSummary(from: string, to: string, filter?: Filter): Promise<MonthlySummary> {
+  const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
     sql: `SELECT category, SUM(amount) as total
           FROM transactions
-          WHERE date >= ? AND date <= ? AND pending = 0 AND ignored = 0 ${acctClause}
+          WHERE date >= ? AND date <= ? AND pending = 0 AND ignored = 0${f.clause}
             AND category NOT IN (SELECT category FROM hidden_categories)
           GROUP BY category ORDER BY total DESC`,
-    args,
+    args: [from, to, ...f.args],
   });
   const rows = result.rows as unknown as { category: string; total: number }[];
   const income   = rows.filter((r) => r.total < 0).reduce((s, r) => s + Math.abs(r.total), 0);
@@ -62,22 +62,20 @@ export async function getMerchantSummary(
   category: string,
   from: string,
   to: string,
-  accountId?: string,
+  filter?: Filter,
 ): Promise<MerchantSummaryRow[]> {
-  const acctClause = accountId ? 'AND account_id = ?' : '';
-  const args: (string | number | null)[] = accountId ? [from, to, category, accountId] : [from, to, category];
+  const f = buildFilterClause(filter, 'transactions');
 
   const result = await db.execute({
     sql: `SELECT COALESCE(display_name, name) as merchant, SUM(amount) as total, COUNT(*) as count
           FROM transactions
           WHERE date >= ? AND date <= ? AND category = ?
             AND pending = 0 AND ignored = 0
-            AND category NOT IN (SELECT category FROM hidden_categories)
-            ${acctClause}
+            AND category NOT IN (SELECT category FROM hidden_categories)${f.clause}
           GROUP BY merchant
           HAVING SUM(amount) > 0
           ORDER BY total DESC, count DESC, merchant ASC`,
-    args,
+    args: [from, to, category, ...f.args],
   });
   const rows = result.rows as unknown as { merchant: string; total: number; count: number }[];
 
@@ -96,8 +94,8 @@ export async function getMerchantSummary(
 
 export type FlexSummary = { fixed: number; flexible: number; discretionary: number; untagged: number };
 
-export async function getFlexSummary(from: string, to: string, accountId?: string): Promise<FlexSummary> {
-  return queryFlexTotals(from, to, accountId);
+export async function getFlexSummary(from: string, to: string, filter?: Filter): Promise<FlexSummary> {
+  return queryFlexTotals(from, to, filter);
 }
 
 export async function getRecentTransactions(limit = 10): Promise<RecentTransaction[]> {
@@ -113,14 +111,13 @@ export async function hasAccounts(): Promise<boolean> {
   return Number((result.rows[0] as unknown as { count: number }).count) > 0;
 }
 
-export async function getUncategorizedCount(from: string, to: string, accountId?: string): Promise<number> {
-  const where = accountId ? 'AND account_id = ?' : '';
-  const args: (string | number | null)[] = accountId ? [from, to, accountId] : [from, to];
+export async function getUncategorizedCount(from: string, to: string, filter?: Filter): Promise<number> {
+  const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
     sql: `SELECT COUNT(*) as c FROM transactions
           WHERE category = 'Uncategorized' AND pending = 0 AND ignored = 0
-            AND date >= ? AND date <= ? ${where}`,
-    args,
+            AND date >= ? AND date <= ?${f.clause}`,
+    args: [from, to, ...f.args],
   });
   return Number((result.rows[0] as unknown as { c: number }).c);
 }
@@ -187,38 +184,36 @@ export type FlexDriftData = Record<keyof FlexSummary, DriftSlice>;
 export type AccountDrift  = { id: string; name: string; subtype: string | null } & DriftSlice;
 type Window = { from: string; to: string };
 
-async function queryCategoryTotals(from: string, to: string, accountId?: string): Promise<Map<string, number>> {
-  const acctClause = accountId ? 'AND account_id = ?' : '';
-  const args: (string | number | null)[] = accountId ? [from, to, accountId] : [from, to];
+async function queryCategoryTotals(from: string, to: string, filter?: Filter): Promise<Map<string, number>> {
+  const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
     sql: `SELECT category, SUM(amount) as total
           FROM transactions
-          WHERE date >= ? AND date <= ? ${acctClause}
+          WHERE date >= ? AND date <= ?
             AND amount > 0 AND pending = 0 AND ignored = 0
-            AND category NOT IN (SELECT category FROM hidden_categories)
+            AND category NOT IN (SELECT category FROM hidden_categories)${f.clause}
           GROUP BY category HAVING SUM(amount) > 0`,
-    args,
+    args: [from, to, ...f.args],
   });
   const rows = result.rows as unknown as { category: string; total: number }[];
   return new Map(rows.map((r) => [r.category, Number(r.total)]));
 }
 
-async function queryFlexTotals(from: string, to: string, accountId?: string): Promise<FlexSummary> {
-  const acctClause = accountId ? 'AND t.account_id = ?' : '';
-  const args: (string | number | null)[] = accountId ? [from, to, accountId] : [from, to];
+async function queryFlexTotals(from: string, to: string, filter?: Filter): Promise<FlexSummary> {
+  const f = buildFilterClause(filter, 't');
   const result = await db.execute({
     sql: `SELECT COALESCE(c.flexibility, 'untagged') as tier, SUM(cat_totals.total) as total
           FROM (
             SELECT t.category, SUM(t.amount) as total
             FROM transactions t
-            WHERE t.date >= ? AND t.date <= ? ${acctClause}
+            WHERE t.date >= ? AND t.date <= ?
               AND t.pending = 0 AND t.ignored = 0
-              AND t.category NOT IN (SELECT category FROM hidden_categories)
+              AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}
             GROUP BY t.category HAVING SUM(t.amount) > 0
           ) as cat_totals
           LEFT JOIN categories c ON c.name = cat_totals.category
           GROUP BY tier`,
-    args,
+    args: [from, to, ...f.args],
   });
   const rows = result.rows as unknown as { tier: string; total: number }[];
   const out: FlexSummary = { fixed: 0, flexible: 0, discretionary: 0, untagged: 0 };
@@ -250,13 +245,13 @@ function sliceFor(current: number, last: number, year: number, rolling: number[]
 }
 
 export async function getCategoryDriftData(
-  currentWin: Window, lastPeriodWin: Window, lastYearWin: Window, rolling12: Window[], accountId?: string,
+  currentWin: Window, lastPeriodWin: Window, lastYearWin: Window, rolling12: Window[], filter?: Filter,
 ): Promise<CategoryDrift[]> {
   const [cur, last, yr, ...rolls] = await Promise.all([
-    queryCategoryTotals(currentWin.from, currentWin.to, accountId),
-    queryCategoryTotals(lastPeriodWin.from, lastPeriodWin.to, accountId),
-    queryCategoryTotals(lastYearWin.from, lastYearWin.to, accountId),
-    ...rolling12.map((w) => queryCategoryTotals(w.from, w.to, accountId)),
+    queryCategoryTotals(currentWin.from, currentWin.to, filter),
+    queryCategoryTotals(lastPeriodWin.from, lastPeriodWin.to, filter),
+    queryCategoryTotals(lastYearWin.from, lastYearWin.to, filter),
+    ...rolling12.map((w) => queryCategoryTotals(w.from, w.to, filter)),
   ]);
   return [...cur.entries()]
     .map(([category, currentAmt]) => ({
@@ -267,13 +262,13 @@ export async function getCategoryDriftData(
 }
 
 export async function getFlexDriftData(
-  currentWin: Window, lastPeriodWin: Window, lastYearWin: Window, rolling12: Window[], accountId?: string,
+  currentWin: Window, lastPeriodWin: Window, lastYearWin: Window, rolling12: Window[], filter?: Filter,
 ): Promise<FlexDriftData> {
   const [cur, last, yr, ...rolls] = await Promise.all([
-    queryFlexTotals(currentWin.from, currentWin.to, accountId),
-    queryFlexTotals(lastPeriodWin.from, lastPeriodWin.to, accountId),
-    queryFlexTotals(lastYearWin.from, lastYearWin.to, accountId),
-    ...rolling12.map((w) => queryFlexTotals(w.from, w.to, accountId)),
+    queryFlexTotals(currentWin.from, currentWin.to, filter),
+    queryFlexTotals(lastPeriodWin.from, lastPeriodWin.to, filter),
+    queryFlexTotals(lastYearWin.from, lastYearWin.to, filter),
+    ...rolling12.map((w) => queryFlexTotals(w.from, w.to, filter)),
   ]);
   const tiers: (keyof FlexSummary)[] = ['fixed', 'flexible', 'discretionary', 'untagged'];
   return Object.fromEntries(
@@ -304,19 +299,18 @@ export async function getAccountDriftData(
 }
 
 export async function getSearchFilteredData(
-  from: string, to: string, search: string, accountId?: string,
+  from: string, to: string, search: string, filter?: Filter,
 ): Promise<{ summary: MonthlySummary; flexData: FlexSummary }> {
-  const acctClause = accountId ? 'AND t.account_id = ?' : '';
-  const args: (string | number | null)[] = accountId ? [from, to, accountId] : [from, to];
+  const f = buildFilterClause(filter, 't');
   const result = await db.execute({
     sql: `SELECT COALESCE(t.display_name, t.name) as display, t.merchant_name, t.amount, t.category,
             COALESCE(c.flexibility, 'untagged') as flex
           FROM transactions t
           LEFT JOIN categories c ON c.name = t.category
-          WHERE t.date >= ? AND t.date <= ? ${acctClause}
+          WHERE t.date >= ? AND t.date <= ?
             AND t.pending = 0 AND t.ignored = 0
-            AND t.category NOT IN (SELECT category FROM hidden_categories)`,
-    args,
+            AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}`,
+    args: [from, to, ...f.args],
   });
   const rows = result.rows as unknown as { display: string; merchant_name: string | null; amount: number; category: string; flex: string }[];
 
@@ -427,22 +421,19 @@ export function buildSearchRe(search: string): RegExp {
 }
 
 export async function getTransactions(filters: {
-  category?: string | null; from?: string | null; to?: string | null;
-  search?: string; tag?: string | null; account?: string | null; sort?: SortMode;
+  filter?: Filter; from?: string | null; to?: string | null;
+  search?: string; sort?: SortMode;
   txType?: 'income' | 'expenses' | null;
   flex?: 'fixed' | 'flexible' | 'discretionary' | null;
 }): Promise<TxRow[]> {
-  const { category, from, to, search, tag, account, sort = 'date-desc', txType, flex } = filters;
+  const { filter, from, to, search, sort = 'date-desc', txType, flex } = filters;
   const conditions: string[] = [];
   const args: (string | number | null)[] = [];
 
-  if (category) { conditions.push('t.category = ?'); args.push(category); }
   if (from && to) { conditions.push('t.date >= ? AND t.date <= ?'); args.push(from, to); }
-  if (tag) {
-    conditions.push('EXISTS (SELECT 1 FROM transaction_tags tt JOIN tags tg ON tg.id = tt.tag_id WHERE tt.transaction_id = t.id AND tg.name = ?)');
-    args.push(tag);
-  }
-  if (account) { conditions.push('t.account_id = ?'); args.push(account); }
+  const fc = buildFilterConditions(filter, 't');
+  conditions.push(...fc.conditions);
+  args.push(...fc.args);
   if (txType === 'income') { conditions.push('t.amount < 0'); conditions.push('t.category NOT IN (SELECT category FROM hidden_categories)'); }
   if (txType === 'expenses') { conditions.push('t.amount > 0'); conditions.push('t.category NOT IN (SELECT category FROM hidden_categories)'); }
   if (flex) { conditions.push('EXISTS (SELECT 1 FROM categories c WHERE c.name = t.category AND c.flexibility = ?)'); args.push(flex); }
@@ -463,15 +454,14 @@ export async function getTransactions(filters: {
 }
 
 export async function countSearchMatches(
-  from: string, to: string, search: string, accountId?: string,
+  from: string, to: string, search: string, filter?: Filter,
 ): Promise<{ count: number; expenses: number }> {
   if (!search) return { count: 0, expenses: 0 };
-  const acctClause = accountId ? 'AND account_id = ?' : '';
-  const args: (string | number | null)[] = accountId ? [from, to, accountId] : [from, to];
+  const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
     sql: `SELECT COALESCE(display_name, name) as display, merchant_name, amount
-          FROM transactions WHERE date >= ? AND date <= ? ${acctClause} AND pending = 0 AND ignored = 0`,
-    args,
+          FROM transactions WHERE date >= ? AND date <= ?${f.clause} AND pending = 0 AND ignored = 0`,
+    args: [from, to, ...f.args],
   });
   const rows = result.rows as unknown as { display: string; merchant_name: string | null; amount: number }[];
   const re = buildSearchRe(search);

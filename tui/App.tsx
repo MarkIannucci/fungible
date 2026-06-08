@@ -14,6 +14,7 @@ import { Canvas } from './Canvas.js';
 import { Settings } from './Settings.js';
 import { Chat } from './Chat.js';
 import { RefreshProvider, useRefreshKey } from './RefreshContext.js';
+import { FilterProvider } from './FilterContext.js';
 import type { CanvasSpec } from '../core/canvas-agent.js';
 import { CANVAS_SPEC_PATH } from '../core/canvas-history.js';
 
@@ -118,7 +119,9 @@ function AppInner() {
 export function App() {
   return (
     <RefreshProvider>
-      <AppInner />
+      <FilterProvider>
+        <AppInner />
+      </FilterProvider>
     </RefreshProvider>
   );
 }

@@ -263,7 +263,7 @@ describe('getCategoryDriftData', () => {
     await insertTx({ date: '2026-05-15', amount: 100, category: 'Food', account_id: 'acct1' });
     await insertTx({ date: '2026-05-15', amount: 200, category: 'Food', account_id: 'acct2' });
 
-    const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12, 'acct1');
+    const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12, { accounts: ['acct1'] });
     const row = result.find((r) => r.category === 'Food')!;
     expect(row.current).toBeCloseTo(100);
   });
