@@ -7,6 +7,7 @@ import { truncate } from './fmt.js';
 import { CURSOR, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT, C_DIM } from './ui.js';
 import { TextInput } from './components/index.js';
 import type { Screen, TxFilter } from './App.js';
+import { useFilter } from './FilterContext.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ export function Chat({
   onDeactivate: () => void;
   onNavigate: (s: Screen, f?: TxFilter) => void;
 }) {
+  const { filter: sharedFilter, setFilter } = useFilter();
   const [displayMsgs, setDisplayMsgs] = useState<DisplayMsg[]>([]);
   const [input, setInput]             = useState('');
   const [isStreaming, setIsStreaming]  = useState(false);
@@ -95,17 +97,26 @@ export function Chat({
           };
         }),
         onNavigate: (screen, filter) => {
+          const s = screen as Screen;
+          // Filtering dimensions drive the sticky shared filter (replace those
+          // dims); category/tag focus targets ride along as transient nav params.
+          if (s === 'transactions' && (filter?.category || filter?.account || filter?.tag)) {
+            setFilter({
+              ...sharedFilter,
+              ...(filter.category ? { categories: [filter.category] } : {}),
+              ...(filter.account ? { accounts: [filter.account] } : {}),
+              ...(filter.tag ? { tags: [{ name: filter.tag, mode: 'has' as const }] } : {}),
+            });
+          }
           const txFilter: TxFilter = {};
-          if (filter?.category)    txFilter.category    = filter.category;
-          if (filter?.from)        txFilter.from        = filter.from;
-          if (filter?.to)          txFilter.to          = filter.to;
-          if (filter?.tag)         txFilter.tag         = filter.tag;
-          if (filter?.account)     txFilter.account     = filter.account;
-          if (filter?.accountName) txFilter.accountName = filter.accountName;
-          if (filter?.search)      txFilter.search      = filter.search;
-          if (filter?.range)       txFilter.range       = filter.range;
-          if (filter?.anchor)      txFilter.anchor      = filter.anchor;
-          onNavigate(screen as Screen, Object.keys(txFilter).length ? txFilter : undefined);
+          if (filter?.from)     txFilter.from   = filter.from;
+          if (filter?.to)       txFilter.to     = filter.to;
+          if (filter?.search)   txFilter.search = filter.search;
+          if (filter?.range)    txFilter.range  = filter.range;
+          if (filter?.anchor)   txFilter.anchor = filter.anchor;
+          if (s === 'trends' && filter?.category) txFilter.focusCategory = filter.category;
+          if (s === 'tags'   && filter?.tag)      txFilter.focusTag      = filter.tag;
+          onNavigate(s, Object.keys(txFilter).length ? txFilter : undefined);
         },
       });
 

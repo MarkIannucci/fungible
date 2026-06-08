@@ -15,24 +15,26 @@ import { Settings } from './Settings.js';
 import { Chat } from './Chat.js';
 import { RefreshProvider, useRefreshKey } from './RefreshContext.js';
 import { FilterProvider } from './FilterContext.js';
+import { FilterPanel } from './FilterPanel.js';
 import type { CanvasSpec } from '../core/canvas-agent.js';
 import { CANVAS_SPEC_PATH } from '../core/canvas-history.js';
 
 export type Screen = 'dashboard' | 'transactions' | 'trends' | 'networth' | 'tags' | 'rules' | 'accounts' | 'health' | 'canvas' | 'settings';
 
+// Transient, per-navigation params. The persistent transaction-filtering
+// dimensions (categories/accounts/owners/tags) live in the shared FilterContext
+// now; what remains here is screen-scoped navigation state.
 export type TxFilter = {
-  category?: string;
   from?: string;
   to?: string;
-  tag?: string;
-  account?: string;
-  accountName?: string;
   search?: string;
   range?: string;   // 'week' | 'month' | 'quarter' | 'year' | 'alltime'
   anchor?: string;  // YYYY-MM-DD — which specific period to land on
   canvasSpec?: string; // JSON-encoded CanvasSpec, used when navigating to 'canvas'
   txType?: 'income' | 'expenses';
   flex?: 'fixed' | 'flexible' | 'discretionary';
+  focusCategory?: string; // land on this category's trend (Trends focus, not a filter)
+  focusTag?: string;      // land on this tag's detail (Tags focus, not a filter)
 };
 
 function AppInner() {
@@ -43,6 +45,7 @@ function AppInner() {
   const [chatFocused, setChatFocused] = useState(false);
   const [screenTyping, setScreenTyping] = useState(false);
   const [showHints, setShowHints]   = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
   const { exit } = useApp();
   const refreshKey = useRefreshKey();
   const lastSpecRef = useRef<string>('');
@@ -77,12 +80,15 @@ function AppInner() {
   }
 
   useInput((input) => {
-    if (chatFocused || screenTyping) return;
+    if (chatFocused || screenTyping || filterOpen) return;
     if (input === 'q') exit();
     if (input === 'h') setShowHints((v) => !v);
+    if (input === 'f' && (screen === 'dashboard' || screen === 'transactions' || screen === 'trends')) {
+      setFilterOpen(true);
+    }
   });
 
-  const screenIsActive = !chatFocused;
+  const screenIsActive = !chatFocused && !filterOpen;
 
   const currentScreen = (() => {
     switch (screen) {
@@ -105,6 +111,7 @@ function AppInner() {
         <Box flexGrow={1}>
           {currentScreen}
         </Box>
+        {filterOpen && <FilterPanel isActive={filterOpen} onClose={() => setFilterOpen(false)} />}
         <Chat
           isActive={chatFocused}
           onActivate={() => setChatFocused(true)}
