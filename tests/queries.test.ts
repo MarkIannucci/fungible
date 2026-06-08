@@ -12,6 +12,7 @@ import {
   getHiddenCategories,
   getRecentTransactions,
   getMerchantSummary,
+  getOwnerRows,
   hasAccounts,
   getTransactions,
 } from '../core/queries.js';
@@ -455,5 +456,63 @@ describe('hasAccounts', () => {
       args: [],
     });
     expect(await hasAccounts()).toBe(true);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getOwnerRows', () => {
+  const RANGE = ['2025-01-01', '2025-01-31'] as const;
+  const addAccount = (id: string, owner: string | null) =>
+    db.execute({
+      sql: "INSERT INTO accounts (id, name, type, owner) VALUES (?, ?, 'depository', ?)",
+      args: [id, id, owner],
+    });
+
+  it('sums expenses per owner, sorted by spend descending', async () => {
+    await addAccount('a1', 'Mark');
+    await addAccount('a2', 'Partner');
+    await insertTx({ accountId: 'a1', amount: 100 });
+    await insertTx({ accountId: 'a1', amount: 50 });
+    await insertTx({ accountId: 'a2', amount: 200 });
+    const rows = await getOwnerRows(...RANGE);
+    expect(rows).toEqual([
+      { owner: 'Partner', spending: 200 },
+      { owner: 'Mark', spending: 150 },
+    ]);
+  });
+
+  it('buckets accounts with no owner under Unassigned', async () => {
+    await addAccount('a1', 'Mark');
+    await addAccount('a2', null);
+    await addAccount('a3', '   '); // whitespace-only owner counts as unassigned
+    await insertTx({ accountId: 'a1', amount: 100 });
+    await insertTx({ accountId: 'a2', amount: 75 });
+    await insertTx({ accountId: 'a3', amount: 25 });
+    const rows = await getOwnerRows(...RANGE);
+    expect(rows.find((r) => r.owner === 'Unassigned')?.spending).toBe(100);
+  });
+
+  it('lists an owned account even when it has no spend this period (zero row)', async () => {
+    await addAccount('a1', 'Mark');
+    const rows = await getOwnerRows(...RANGE);
+    expect(rows).toEqual([{ owner: 'Mark', spending: 0 }]);
+  });
+
+  it('returns no rows when there are no accounts', async () => {
+    await insertTx({ amount: 100 }); // orphan tx, no account row
+    expect(await getOwnerRows(...RANGE)).toEqual([]);
+  });
+
+  it('excludes income, pending, ignored, hidden categories, and out-of-range txns', async () => {
+    await db.execute({ sql: 'INSERT INTO hidden_categories VALUES (?)', args: ['Transfer'] });
+    await addAccount('a1', 'Mark');
+    await insertTx({ accountId: 'a1', amount: 100 });                      // counts
+    await insertTx({ accountId: 'a1', amount: -500 });                     // income, excluded
+    await insertTx({ accountId: 'a1', amount: 40, pending: 1 });           // pending, excluded
+    await insertTx({ accountId: 'a1', amount: 40, ignored: 1 });           // ignored, excluded
+    await insertTx({ accountId: 'a1', amount: 40, category: 'Transfer' }); // hidden, excluded
+    await insertTx({ accountId: 'a1', amount: 999, date: '2024-12-31' });  // out of range, excluded
+    const rows = await getOwnerRows(...RANGE);
+    expect(rows).toEqual([{ owner: 'Mark', spending: 100 }]);
   });
 });

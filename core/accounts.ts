@@ -11,6 +11,10 @@ export async function updateAccountNickname(id: string, nickname: string | null)
   await db.execute({ sql: 'UPDATE accounts SET nickname = ? WHERE id = ?', args: [nickname, id] });
 }
 
+export async function updateAccountOwner(id: string, owner: string | null): Promise<void> {
+  await db.execute({ sql: 'UPDATE accounts SET owner = ? WHERE id = ?', args: [owner, id] });
+}
+
 export async function updateAccountApr(id: string, apr: number | null): Promise<void> {
   await db.execute({ sql: 'UPDATE accounts SET apr = ? WHERE id = ?', args: [apr, id] });
 }

@@ -9,6 +9,7 @@ const SCHEMA = `
     institution_name TEXT,
     mask TEXT,
     nickname TEXT,
+    owner TEXT,
     apr REAL
   );
 

@@ -153,6 +153,32 @@ export async function getAccountRows(from: string, to: string): Promise<AccountR
   return result.rows as unknown as AccountRow[];
 }
 
+export type OwnerRow = { owner: string; spending: number };
+
+// Total expenses grouped by account owner, for splitting shared spending. Accounts
+// with no owner fall under 'Unassigned'. Uses the same expense definition as the
+// dashboard's headline Expenses (getRangeSummary): excludes hidden categories,
+// pending, and ignored transactions. Filters live in the LEFT JOIN ON clause (not
+// WHERE) so every owned account still yields a row even with zero spend this
+// period — callers rely on that to detect whether any owner has been assigned.
+export async function getOwnerRows(from: string, to: string): Promise<OwnerRow[]> {
+  const result = await db.execute({
+    sql: `SELECT COALESCE(NULLIF(TRIM(a.owner), ''), 'Unassigned') as owner,
+            COALESCE(SUM(t.amount), 0) as spending
+          FROM accounts a
+          LEFT JOIN transactions t
+            ON t.account_id = a.id
+            AND t.amount > 0
+            AND t.date >= ? AND t.date <= ?
+            AND t.pending = 0 AND t.ignored = 0
+            AND t.category NOT IN (SELECT category FROM hidden_categories)
+          GROUP BY COALESCE(NULLIF(TRIM(a.owner), ''), 'Unassigned')
+          ORDER BY spending DESC, owner`,
+    args: [from, to],
+  });
+  return result.rows as unknown as OwnerRow[];
+}
+
 // ── Drift ──────────────────────────────────────────────────────────────────────
 
 export type DriftSlice    = { current: number; lastPeriodDelta: number; lastYearDelta: number; avg12mDelta: number; avg12m: number };
@@ -453,11 +479,11 @@ export async function countSearchMatches(
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 
-export type LinkedAccount = { id: string; name: string; nickname: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; last_synced: string | null; apr: number | null };
+export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; last_synced: string | null; apr: number | null };
 
 export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
   const result = await db.execute(`
-    SELECT a.id, a.name, a.nickname, a.type, a.subtype, a.institution_name, a.mask, a.apr,
+    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.apr,
       (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
     FROM accounts a
     ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END, a.name
