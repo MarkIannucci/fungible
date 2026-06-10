@@ -259,7 +259,7 @@ describe('getRangeSummary with accountId', () => {
   it('filters to the given account', async () => {
     await insertTx({ amount: 100, category: 'Shopping', accountId: 'acct1' });
     await insertTx({ amount: 200, category: 'Dining',   accountId: 'acct2' });
-    const s = await getRangeSummary('2025-01-01', '2025-01-31', 'acct1');
+    const s = await getRangeSummary('2025-01-01', '2025-01-31', { accounts: ['acct1'] });
     expect(s.expenses).toBeCloseTo(100);
     expect(s.byCategory).toHaveLength(1);
     expect(s.byCategory[0].category).toBe('Shopping');
@@ -267,7 +267,7 @@ describe('getRangeSummary with accountId', () => {
 
   it('returns zeros when account has no transactions in range', async () => {
     await insertTx({ amount: 100, accountId: 'acct2' });
-    const s = await getRangeSummary('2025-01-01', '2025-01-31', 'acct1');
+    const s = await getRangeSummary('2025-01-01', '2025-01-31', { accounts: ['acct1'] });
     expect(s.expenses).toBe(0);
     expect(s.income).toBe(0);
   });
@@ -313,7 +313,7 @@ describe('getMerchantSummary', () => {
     await insertTx({ amount: 200, category: 'Food', name: 'D', accountId: 'acct1', ignored: 1 });
     await insertTx({ amount: 500, category: 'Transfer', name: 'E', accountId: 'acct1' });
 
-    const rows = await getMerchantSummary('Food', '2025-01-01', '2025-01-31', 'acct1');
+    const rows = await getMerchantSummary('Food', '2025-01-01', '2025-01-31', { accounts: ['acct1'] });
     expect(rows).toHaveLength(1);
     expect(rows[0].merchant).toBe('A');
     expect(rows[0].total).toBeCloseTo(90);
@@ -330,14 +330,14 @@ describe('getFlexSummary with accountId', () => {
     await insertCat('Rent', 'fixed');
     await insertTx({ amount: 1500, category: 'Rent', accountId: 'acct1' });
     await insertTx({ amount: 999,  category: 'Rent', accountId: 'acct2' });
-    const s = await getFlexSummary('2025-01-01', '2025-01-31', 'acct1');
+    const s = await getFlexSummary('2025-01-01', '2025-01-31', { accounts: ['acct1'] });
     expect(s.fixed).toBeCloseTo(1500);
   });
 
   it('returns zeros when account has no transactions', async () => {
     await insertCat('Rent', 'fixed');
     await insertTx({ amount: 1500, category: 'Rent', accountId: 'acct2' });
-    const s = await getFlexSummary('2025-01-01', '2025-01-31', 'acct1');
+    const s = await getFlexSummary('2025-01-01', '2025-01-31', { accounts: ['acct1'] });
     expect(s.fixed).toBe(0);
   });
 });

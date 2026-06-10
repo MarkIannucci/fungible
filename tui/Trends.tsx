@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { type TrendsRange } from '../core/dateUtils.js';
 import { buildTrendViews, generateAllPeriods, getPeriodTotals, getSearchMatchingPeriods, getSearchPeriodTotals, type View, type PeriodRow } from '../core/trends.js';
 import type { Screen, TxFilter } from './App.js';
+import { useFilter } from './FilterContext.js';
 import { fmt, fmtSigned, bar, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACCENT } from './ui.js';
@@ -33,6 +34,7 @@ export function Trends({
   showHints: boolean;
 }) {
   const refreshKey = useRefreshKey();
+  const { filter: sharedFilter } = useFilter();
   const [views, setViews] = useState<View[]>([
     { mode: 'expenses',      category: null, flex: null,            label: 'Expenses'      },
     { mode: 'income',        category: null, flex: null,            label: 'Income'        },
@@ -74,26 +76,26 @@ export function Trends({
 
   useEffect(() => {
     if (!view) return;
-    void getPeriodTotals(view, range).then((data) => {
+    void getPeriodTotals(view, range, sharedFilter).then((data) => {
       setRows(data);
       setCursor(Math.max(0, data.length - 1));
     });
-  }, [viewIdx, range, views, refreshKey]);
+  }, [viewIdx, range, views, sharedFilter, refreshKey]);
 
   // Live match count while typing; committed search rows
   const liveSearch = searchMode ? searchInput : search;
   useEffect(() => {
     if (!liveSearch) { setMatchCount(null); return; }
-    void getSearchMatchingPeriods(liveSearch, range).then(({ count }) => setMatchCount(count));
-  }, [liveSearch, range]);
+    void getSearchMatchingPeriods(liveSearch, range, sharedFilter).then(({ count }) => setMatchCount(count));
+  }, [liveSearch, range, sharedFilter]);
 
   useEffect(() => {
     if (!search) { setSearchRows([]); return; }
-    void getSearchPeriodTotals(search, range).then((data) => {
+    void getSearchPeriodTotals(search, range, sharedFilter).then((data) => {
       setSearchRows(data);
       setCursor(Math.max(0, data.length - 1));
     });
-  }, [search, range]);
+  }, [search, range, sharedFilter]);
 
   const activeRows = search ? searchRows : rows;
   const clampedCursor = activeRows.length > 0 ? Math.min(cursor, activeRows.length - 1) : 0;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, getOwnerRows,
@@ -18,6 +18,8 @@ import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEU
 import { StatCard, SectionHeader, SelectableRow, TextInput, PageHeader } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
+import { useFilter } from './FilterContext.js';
+import { mergeFilters, type Filter } from '../core/filters.js';
 
 const BAR_WIDTH = 20;
 
@@ -54,6 +56,7 @@ const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }
 
 export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { onNavigate: (s: Screen, filter?: TxFilter) => void; isActive?: boolean; initialFilter?: TxFilter; showHints: boolean }) {
   const refreshKey = useRefreshKey();
+  const { filter: sharedFilter } = useFilter();
   const now = new Date();
   const [range, setRange] = useState<Range>(() => {
     const r = initialFilter?.range;
@@ -98,43 +101,44 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   // Owner split
   const [ownerRows, setOwnerRows] = useState<OwnerRow[]>([]);
 
-  function load(r: Range, a: Date, acct: AccountRow | null) {
+  // The session-global filter ANDed with the local account selection drives all
+  // summary queries. Until the filter panel lands (PR2) the shared filter is
+  // empty, so this reduces to the previous account-only behavior.
+  const queryFilter: Filter = useMemo(
+    () => mergeFilters(sharedFilter, selectedAccount ? { accounts: [selectedAccount.id] } : undefined),
+    [sharedFilter, selectedAccount?.id ?? null],
+  );
+
+  function load(r: Range, a: Date, qf: Filter) {
     const { from, to } = getPeriodDates(r, a);
     void getAccountRows(from, to).then(setAccountRows);
     void getOwnerRows(from, to).then(setOwnerRows);
     setAcctCursor(0);
-    if (acct) {
-      void getRangeSummary(from, to, acct.id).then(setSummary);
-      void getFlexSummary(from, to, acct.id).then(setFlexData);
-      void getUncategorizedCount(from, to, acct.id).then(setUncategorized);
-    } else {
-      void getRangeSummary(from, to).then(setSummary);
-      void getFlexSummary(from, to).then(setFlexData);
-      void getUncategorizedCount(from, to).then(setUncategorized);
-    }
+    void getRangeSummary(from, to, qf).then(setSummary);
+    void getFlexSummary(from, to, qf).then(setFlexData);
+    void getUncategorizedCount(from, to, qf).then(setUncategorized);
   }
 
   function openMerchantDrill(category: string, from: string, to: string) {
     setMerchantDrill({ category, from, to });
     setMerchantCursor(0);
-    void getMerchantSummary(category, from, to, selectedAccount?.id ?? undefined).then(setMerchantRows);
+    void getMerchantSummary(category, from, to, queryFilter).then(setMerchantRows);
   }
 
   useEffect(() => {
-    load(range, anchor, selectedAccount);
+    load(range, anchor, queryFilter);
     setCatCursor(0);
-  }, [range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null, refreshKey]);
+  }, [range, anchor.toISOString().slice(0, 10), queryFilter, refreshKey]);
 
   useEffect(() => {
     if (!driftMode) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
     const windows = getDriftWindows(range, anchor, new Date());
     if (!windows) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
     const { current, lastPeriod, lastYear, rolling12 } = windows;
-    const acctId = selectedAccount?.id ?? undefined;
-    void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, acctId).then(setCatDrift);
-    void getFlexDriftData(current, lastPeriod, lastYear, rolling12, acctId).then(setFlexDrift);
+    void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(setCatDrift);
+    void getFlexDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(setFlexDrift);
     void getAccountDriftData(current, lastPeriod, lastYear, rolling12).then(setAcctDrift);
-  }, [driftMode, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
+  }, [driftMode, range, anchor.toISOString().slice(0, 10), queryFilter]);
 
   const setTyping = useSetTyping();
   useEffect(() => { setTyping(searchMode); }, [searchMode]);
@@ -143,18 +147,18 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const term = searchMode ? searchInput : search;
     if (!term) { setSearchStats(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
-    void countSearchMatches(from, to, term, selectedAccount?.id ?? undefined).then(setSearchStats);
-  }, [searchMode ? searchInput : search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
+    void countSearchMatches(from, to, term, queryFilter).then(setSearchStats);
+  }, [searchMode ? searchInput : search, range, anchor.toISOString().slice(0, 10), queryFilter]);
 
   // When a search is committed, recompute category + flex data to only show matching transactions
   useEffect(() => {
     if (!search) { setFilteredSummary(null); setFilteredFlex(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
-    void getSearchFilteredData(from, to, search, selectedAccount?.id ?? undefined).then(({ summary: fs, flexData: ff }) => {
+    void getSearchFilteredData(from, to, search, queryFilter).then(({ summary: fs, flexData: ff }) => {
       setFilteredSummary(fs);
       setFilteredFlex(ff);
     });
-  }, [search, range, anchor.toISOString().slice(0, 10), selectedAccount?.id ?? null]);
+  }, [search, range, anchor.toISOString().slice(0, 10), queryFilter]);
 
   // Close drill when filter context changes significantly
   // Note: anchor and range are intentionally excluded — period/range nav keeps drill open
@@ -162,7 +166,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     setMerchantDrill(null);
     setMerchantRows([]);
     setMerchantCursor(0);
-  }, [selectedAccount?.id ?? null, search, driftMode, view]);
+  }, [queryFilter, search, driftMode, view]);
 
   // Re-fetch merchant data when period or range changes while drill is active
   useEffect(() => {
@@ -171,7 +175,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const { category } = merchantDrill;
     setMerchantDrill({ category, from, to });
     setMerchantCursor(0);
-    void getMerchantSummary(category, from, to, selectedAccount?.id ?? undefined).then(setMerchantRows);
+    void getMerchantSummary(category, from, to, queryFilter).then(setMerchantRows);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anchor.toISOString().slice(0, 10), range]);
 
