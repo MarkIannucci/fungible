@@ -6,3 +6,5 @@ dist/
 memory/
 PLANS.md
 scripts/seed-rules.ts
+.claude/
+out/
