@@ -6,8 +6,12 @@
   "homepage": "https://github.com/tomfunk/fungible",
   "author": "",
   "keywords": [],
+  "main": "out/main/index.js",
   "scripts": {
     "dev": "node --import tsx/esm tui/index.tsx",
+    "gui": "electron-vite dev",
+    "gui:demo": "FUNGIBLE_DATA_DIR=$HOME/.fungible-demo electron-vite dev",
+    "gui:build": "electron-vite build",
     "demo": "FUNGIBLE_DATA_DIR=$HOME/.fungible-demo node --import tsx/esm tui/index.tsx --demo",
     "setup": "node --import tsx/esm tui/index.tsx --setup",
     "link": "node --import tsx/esm scripts/link.ts",
@@ -15,7 +19,7 @@
     "seed-rules": "node --import tsx/esm scripts/seed-rules.ts",
     "mcp": "node --import tsx/esm mcp/server.ts",
     "api": "node --import tsx/esm api/server.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p gui/renderer",
     "test": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest run",
     "test:watch": "~/.nvm/versions/node/v22.22.3/bin/node ./node_modules/.bin/vitest"
   },
@@ -39,10 +43,20 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^42.4.0",
+    "electron-vite": "^5.0.0",
     "ink-testing-library": "^4.0.0",
+    "jsdom": "^29.1.1",
+    "react-dom": "^19.2.7",
+    "recharts": "^3.8.1",
     "typescript": "^6.0.3",
+    "vite": "^7.3.5",
     "vitest": "^3.2.4"
   }
 }

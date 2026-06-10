@@ -10,5 +10,5 @@
     "outDir": "dist",
     "types": ["node"]
   },
-  "include": ["core/**/*", "tui/**/*", "mcp/**/*", "api/**/*", "scripts/**/*", "tests/**/*", "vitest.config.ts"]
+  "include": ["core/**/*", "tui/**/*", "mcp/**/*", "api/**/*", "scripts/**/*", "tests/**/*", "vitest.config.ts", "gui/main/**/*", "gui/preload/**/*", "gui/shared/**/*", "gui/renderer/src/env.d.ts", "gui/renderer/src/vite-env.d.ts", "electron.vite.config.ts"]
 }
