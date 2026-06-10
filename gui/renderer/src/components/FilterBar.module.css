@@ -1,0 +1,171 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.filterBtn,
+.filterBtnActive {
+  font-size: 12.5px;
+  padding: 4px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.filterBtn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.filterBtnActive {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.clearBtn {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-decoration: underline;
+}
+
+.clearBtn:hover {
+  color: var(--text);
+}
+
+.hint {
+  font-size: 11.5px;
+  margin-left: auto;
+}
+
+.section {
+  margin-bottom: 16px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.sectionHeader h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.sectionBtns {
+  display: flex;
+  gap: 8px;
+}
+
+.sectionBtns button {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  text-decoration: underline;
+}
+
+.sectionBtns button:hover {
+  color: var(--accent);
+}
+
+.checkGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px 14px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.check:hover {
+  color: var(--text);
+}
+
+.check input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+.tagHint {
+  font-size: 11.5px;
+}
+
+.tagRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tagAny,
+.tagHas,
+.tagLacks {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.tagAny:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.tagHas {
+  color: var(--positive);
+  border-color: var(--positive);
+}
+
+.tagLacks {
+  color: var(--negative);
+  border-color: var(--negative);
+  text-decoration: line-through;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.btnPrimary {
+  background: var(--accent);
+  color: #06281f;
+  font-weight: 600;
+  padding: 7px 16px;
+  border-radius: 6px;
+}
+
+.btnPrimary:hover {
+  filter: brightness(1.1);
+}
+
+.btnSecondary {
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 7px 16px;
+  border-radius: 6px;
+}
+
+.btnSecondary:hover {
+  color: var(--text);
+}

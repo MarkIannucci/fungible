@@ -1,0 +1,548 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { api } from '../api.js';
+import { useQuery } from '../hooks/useQuery.js';
+import { useStatus } from '../hooks/useStatus.js';
+import { Modal } from '../components/Modal.js';
+import { useScreenKeys } from '../hooks/useScreenKeys.js';
+import { KeyHints } from '../components/KeyHints.js';
+import { fmt } from '../../../../core/fmt.js';
+import type { Rule, NameRule } from '../../../../core/queries.js';
+import styles from './Rules.module.css';
+
+type Tab = 'rules' | 'names' | 'categories';
+
+const FLEX_OPTIONS = ['', 'fixed', 'flexible', 'discretionary'] as const;
+
+function amountLabel(min: number | null, max: number | null): string {
+  if (min !== null && max !== null) return `${fmt(min, 0)}–${fmt(max, 0)}`;
+  if (min !== null) return `≥ ${fmt(min, 0)}`;
+  if (max !== null) return `≤ ${fmt(max, 0)}`;
+  return '';
+}
+
+export function Rules() {
+  const { showStatus, statusEl } = useStatus();
+  const [tab, setTab] = useState<Tab>('rules');
+  const [search, setSearch] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = () => setReloadKey((k) => k + 1);
+
+  const rules = useQuery(() => api.rules.getAllRules(), [reloadKey]) ?? [];
+  const nameRules = useQuery(() => api.rules.getAllNameRules(), [reloadKey]) ?? [];
+  const categories = useQuery(() => api.queries.getAllCategories(), [reloadKey]) ?? [];
+  const catDetails = useQuery(() => api.rules.getCategoryDetails(), [reloadKey]) ?? [];
+  const hiddenSet = useQuery(() => api.queries.getHiddenCategorySet(), [reloadKey]);
+  const uncategorized = useQuery(() => api.rules.getTotalUncategorizedCount(), [reloadKey]) ?? 0;
+
+  const [ruleForm, setRuleForm] = useState<{ editing: Rule | null } | null>(null);
+  const [nameRuleForm, setNameRuleForm] = useState<{ editing: NameRule | null } | null>(null);
+  const [addCatOpen, setAddCatOpen] = useState(false);
+  const [renameCat, setRenameCat] = useState<string | null>(null);
+
+  const searchRef = useRef<HTMLInputElement>(null);
+  const TABS: Tab[] = ['rules', 'names', 'categories'];
+  useScreenKeys({
+    Tab: () => {
+      setSearch('');
+      setTab((t) => TABS[(TABS.indexOf(t) + 1) % TABS.length]);
+    },
+    '/': () => searchRef.current?.focus(),
+    a: () => {
+      if (tab === 'rules') setRuleForm({ editing: null });
+      else if (tab === 'names') setNameRuleForm({ editing: null });
+      else setAddCatOpen(true);
+    },
+    Escape: () => setSearch(''),
+  });
+
+  const q = search.toLowerCase();
+  const filteredRules = q
+    ? rules.filter((r) => r.pattern.toLowerCase().includes(q) || r.category.toLowerCase().includes(q))
+    : rules;
+  const filteredNameRules = q
+    ? nameRules.filter((r) => r.pattern.toLowerCase().includes(q) || r.replacement.toLowerCase().includes(q))
+    : nameRules;
+
+  return (
+    <div className={styles.screen}>
+      <KeyHints hints="[1-9·0] screens   [tab] section   [/] filter   [a] add" />
+      <div className={styles.topBar}>
+        <h1 className={styles.title}>Rules</h1>
+        <div className={styles.tabs}>
+          <button className={tab === 'rules' ? styles.tabActive : styles.tab} onClick={() => setTab('rules')}>
+            Category rules ({rules.length})
+          </button>
+          <button className={tab === 'names' ? styles.tabActive : styles.tab} onClick={() => setTab('names')}>
+            Name rules ({nameRules.length})
+          </button>
+          <button className={tab === 'categories' ? styles.tabActive : styles.tab} onClick={() => setTab('categories')}>
+            Categories ({catDetails.length})
+          </button>
+        </div>
+        {tab !== 'categories' && (
+          <input
+            ref={searchRef}
+            className={styles.search}
+            placeholder="Filter…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setSearch('');
+            }}
+          />
+        )}
+        {uncategorized > 0 && <span className="warn">{uncategorized} uncategorized</span>}
+        <button
+          className={styles.addBtn}
+          onClick={() => {
+            if (tab === 'rules') setRuleForm({ editing: null });
+            else if (tab === 'names') setNameRuleForm({ editing: null });
+            else setAddCatOpen(true);
+          }}
+        >
+          + Add
+        </button>
+      </div>
+
+      {tab === 'rules' && (
+        <section className={styles.panel}>
+          {filteredRules.length === 0 ? (
+            <p className="dim">{search ? 'No rules match.' : 'No category rules yet.'}</p>
+          ) : (
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.th}>Type</th>
+                  <th className={styles.th}>Pattern</th>
+                  <th className={styles.th}>Amount</th>
+                  <th className={styles.th}>Category</th>
+                  <th className={styles.th}>Priority</th>
+                  <th className={styles.th} />
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRules.map((r) => (
+                  <tr key={r.id} className={styles.row} onClick={() => setRuleForm({ editing: r })}>
+                    <td className="dim">{r.match_type}</td>
+                    <td className={styles.tdPattern}>{r.pattern}</td>
+                    <td className="num dim">{amountLabel(r.min_amount, r.max_amount)}</td>
+                    <td className="accent">{r.category}</td>
+                    <td className="num dim">{r.priority}</td>
+                    <td className={styles.tdActions}>
+                      <button
+                        className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await api.rules.deleteCategoryRule(r.id);
+                          showStatus('Rule deleted');
+                          reload();
+                        }}
+                      >
+                        delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
+
+      {tab === 'names' && (
+        <section className={styles.panel}>
+          {filteredNameRules.length === 0 ? (
+            <p className="dim">{search ? 'No name rules match.' : 'No name rules yet.'}</p>
+          ) : (
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.th}>Type</th>
+                  <th className={styles.th}>Pattern</th>
+                  <th className={styles.th}>Amount</th>
+                  <th className={styles.th}>Display name</th>
+                  <th className={styles.th} />
+                </tr>
+              </thead>
+              <tbody>
+                {filteredNameRules.map((r) => (
+                  <tr key={r.id} className={styles.row} onClick={() => setNameRuleForm({ editing: r })}>
+                    <td className="dim">{r.match_type}</td>
+                    <td className={styles.tdPattern}>{r.pattern}</td>
+                    <td className="num dim">{amountLabel(r.min_amount, r.max_amount)}</td>
+                    <td className="warn">{r.replacement}</td>
+                    <td className={styles.tdActions}>
+                      <button
+                        className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await api.rules.deleteNameRule(r.id);
+                          showStatus('Name rule deleted');
+                          reload();
+                        }}
+                      >
+                        delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
+
+      {tab === 'categories' && (
+        <section className={styles.panel}>
+          <table className={styles.table}>
+            <thead>
+              <tr>
+                <th className={styles.th}>Name</th>
+                <th className={styles.th}>Flexibility</th>
+                <th className={styles.th}>Visible</th>
+                <th className={styles.th} />
+              </tr>
+            </thead>
+            <tbody>
+              {catDetails.map((c) => {
+                const hidden = hiddenSet?.has(c.name) ?? false;
+                return (
+                  <tr key={c.name} className={styles.rowStatic}>
+                    <td className={hidden ? 'dim' : ''}>{c.name}</td>
+                    <td>
+                      <select
+                        className={styles.inlineSelect}
+                        value={c.flexibility ?? ''}
+                        style={{
+                          color:
+                            c.flexibility === 'fixed'
+                              ? 'var(--flex-fixed)'
+                              : c.flexibility === 'flexible'
+                                ? 'var(--flex-flexible)'
+                                : c.flexibility === 'discretionary'
+                                  ? 'var(--flex-discretionary)'
+                                  : 'var(--text-dim)',
+                        }}
+                        onChange={async (e) => {
+                          await api.rules.setCategoryFlexibility(c.name, e.target.value || null);
+                          reload();
+                        }}
+                      >
+                        {FLEX_OPTIONS.map((f) => (
+                          <option key={f} value={f}>
+                            {f || '—'}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <button
+                        className={hidden ? styles.hiddenBtn : styles.visibleBtn}
+                        title={hidden ? 'Hidden from summaries — click to show' : 'Visible — click to hide from summaries'}
+                        onClick={async () => {
+                          if (!hiddenSet) return;
+                          await api.rules.toggleHiddenCategory(c.name, hiddenSet);
+                          reload();
+                        }}
+                      >
+                        {hidden ? 'hidden' : 'visible'}
+                      </button>
+                    </td>
+                    <td className={styles.tdActions}>
+                      <button
+                        className={styles.rowBtn}
+                        onClick={() => setRenameCat(c.name)}
+                      >
+                        rename
+                      </button>
+                      <button
+                        className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
+                        onClick={async () => {
+                          await api.rules.deleteCategory(c.name);
+                          showStatus(`Deleted "${c.name}" — its transactions are Uncategorized now`, 3000);
+                          reload();
+                        }}
+                      >
+                        delete
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {ruleForm && (
+        <RuleFormModal
+          editing={ruleForm.editing}
+          categories={categories}
+          onClose={() => setRuleForm(null)}
+          onSaved={(count) => {
+            setRuleForm(null);
+            showStatus(`Rule saved · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
+            reload();
+          }}
+        />
+      )}
+
+      {nameRuleForm && (
+        <NameRuleFormModal
+          editing={nameRuleForm.editing}
+          onClose={() => setNameRuleForm(null)}
+          onSaved={() => {
+            setNameRuleForm(null);
+            showStatus('Name rule saved');
+            reload();
+          }}
+        />
+      )}
+
+      {addCatOpen && (
+        <CatNameModal
+          title="New category"
+          initial=""
+          onClose={() => setAddCatOpen(false)}
+          onSave={async (name) => {
+            await api.rules.createCategory(name);
+            setAddCatOpen(false);
+            showStatus(`Created "${name}"`);
+            reload();
+          }}
+        />
+      )}
+
+      {renameCat && (
+        <CatNameModal
+          title={`Rename "${renameCat}"`}
+          initial={renameCat}
+          onClose={() => setRenameCat(null)}
+          onSave={async (name) => {
+            await api.rules.renameCategory(renameCat, name);
+            setRenameCat(null);
+            showStatus('Category renamed');
+            reload();
+          }}
+        />
+      )}
+
+      {statusEl}
+    </div>
+  );
+}
+
+// ── Rule form (add/edit category rule) ──────────────────────────────────────
+
+function RuleFormModal({
+  editing,
+  categories,
+  onClose,
+  onSaved,
+}: {
+  editing: Rule | null;
+  categories: string[];
+  onClose: () => void;
+  onSaved: (count: number) => void;
+}) {
+  const [pattern, setPattern] = useState(editing?.pattern ?? '');
+  const [matchType, setMatchType] = useState<'name' | 'regex'>((editing?.match_type as 'name' | 'regex') ?? 'name');
+  const [minAmount, setMinAmount] = useState(editing?.min_amount !== null && editing ? String(editing.min_amount) : '');
+  const [maxAmount, setMaxAmount] = useState(editing?.max_amount !== null && editing ? String(editing.max_amount) : '');
+  const [category, setCategory] = useState(editing?.category ?? categories[0] ?? '');
+  const [matchCount, setMatchCount] = useState(0);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (pattern.trim()) {
+      api.rules
+        .countPatternMatches(pattern, matchType)
+        .then(setMatchCount)
+        .catch(() => setMatchCount(0));
+    } else {
+      setMatchCount(0);
+    }
+  }, [pattern, matchType]);
+
+  async function save() {
+    if (!pattern.trim() || !category) return;
+    try {
+      const count = await api.rules.saveCategoryRule({
+        pattern,
+        matchType,
+        category,
+        minAmount: minAmount.trim() ? parseFloat(minAmount) : null,
+        maxAmount: maxAmount.trim() ? parseFloat(maxAmount) : null,
+        editingId: editing?.id ?? null,
+      });
+      onSaved(count);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save rule');
+    }
+  }
+
+  return (
+    <Modal title={editing ? 'Edit category rule' : 'New category rule'} onClose={onClose} accent="var(--manual)">
+      <div className={styles.formGrid}>
+        <label>Pattern</label>
+        <input value={pattern} onChange={(e) => setPattern(e.target.value)} autoFocus placeholder="e.g. UBER or ^AMZN" />
+        <label>Match type</label>
+        <select value={matchType} onChange={(e) => setMatchType(e.target.value as 'name' | 'regex')}>
+          <option value="name">name (substring)</option>
+          <option value="regex">regex</option>
+        </select>
+        <label>Min $ (optional)</label>
+        <input value={minAmount} onChange={(e) => setMinAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
+        <label>Max $ (optional)</label>
+        <input value={maxAmount} onChange={(e) => setMaxAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
+        <label>Category</label>
+        <select value={category} onChange={(e) => setCategory(e.target.value)}>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+      </div>
+      {pattern.trim() && (
+        <p className={styles.matchHint}>
+          <span className="warn">{matchCount} transactions match</span>
+          <span className="dim"> · saving recategorizes them</span>
+        </p>
+      )}
+      {error && <p className="neg">{error}</p>}
+      <div className={styles.modalActions}>
+        <button className={styles.btnSecondary} onClick={onClose}>
+          Cancel
+        </button>
+        <button className={styles.btnPrimary} onClick={() => void save()} disabled={!pattern.trim() || !category}>
+          Save
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Name rule form ──────────────────────────────────────────────────────────
+
+function NameRuleFormModal({
+  editing,
+  onClose,
+  onSaved,
+}: {
+  editing: NameRule | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [pattern, setPattern] = useState(editing?.pattern ?? '');
+  const [matchType, setMatchType] = useState<'name' | 'regex'>((editing?.match_type as 'name' | 'regex') ?? 'name');
+  const [minAmount, setMinAmount] = useState(editing?.min_amount !== null && editing ? String(editing.min_amount) : '');
+  const [maxAmount, setMaxAmount] = useState(editing?.max_amount !== null && editing ? String(editing.max_amount) : '');
+  const [replacement, setReplacement] = useState(editing?.replacement ?? '');
+  const [matchCount, setMatchCount] = useState(0);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (pattern.trim()) {
+      api.rules
+        .countPatternMatches(pattern, matchType)
+        .then(setMatchCount)
+        .catch(() => setMatchCount(0));
+    } else {
+      setMatchCount(0);
+    }
+  }, [pattern, matchType]);
+
+  async function save() {
+    if (!pattern.trim() || !replacement.trim()) return;
+    try {
+      await api.rules.saveNameRule({
+        pattern,
+        matchType,
+        replacement: replacement.trim(),
+        minAmount: minAmount.trim() ? parseFloat(minAmount) : null,
+        maxAmount: maxAmount.trim() ? parseFloat(maxAmount) : null,
+        editingId: editing?.id ?? null,
+      });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save name rule');
+    }
+  }
+
+  return (
+    <Modal title={editing ? 'Edit name rule' : 'New name rule'} onClose={onClose} accent="var(--warning)">
+      <div className={styles.formGrid}>
+        <label>Pattern</label>
+        <input value={pattern} onChange={(e) => setPattern(e.target.value)} autoFocus placeholder="e.g. AMZN Mktp" />
+        <label>Match type</label>
+        <select value={matchType} onChange={(e) => setMatchType(e.target.value as 'name' | 'regex')}>
+          <option value="name">name (substring)</option>
+          <option value="regex">regex</option>
+        </select>
+        <label>Min $ (optional)</label>
+        <input value={minAmount} onChange={(e) => setMinAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
+        <label>Max $ (optional)</label>
+        <input value={maxAmount} onChange={(e) => setMaxAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
+        <label>Display name</label>
+        <input value={replacement} onChange={(e) => setReplacement(e.target.value)} placeholder="e.g. Amazon" />
+      </div>
+      {pattern.trim() && (
+        <p className={styles.matchHint}>
+          <span className="warn">{matchCount} transactions match</span>
+        </p>
+      )}
+      {error && <p className="neg">{error}</p>}
+      <div className={styles.modalActions}>
+        <button className={styles.btnSecondary} onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          className={styles.btnPrimary}
+          onClick={() => void save()}
+          disabled={!pattern.trim() || !replacement.trim()}
+        >
+          Save
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Category name modal (add / rename) ──────────────────────────────────────
+
+function CatNameModal({
+  title,
+  initial,
+  onClose,
+  onSave,
+}: {
+  title: string;
+  initial: string;
+  onClose: () => void;
+  onSave: (name: string) => void;
+}) {
+  const [name, setName] = useState(initial);
+  return (
+    <Modal title={title} onClose={onClose}>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && name.trim()) onSave(name.trim());
+        }}
+        placeholder="Category name"
+        autoFocus
+        className={styles.modalInput}
+      />
+      <div className={styles.modalActions}>
+        <button className={styles.btnSecondary} onClick={onClose}>
+          Cancel
+        </button>
+        <button className={styles.btnPrimary} onClick={() => name.trim() && onSave(name.trim())} disabled={!name.trim()}>
+          Save
+        </button>
+      </div>
+    </Modal>
+  );
+}

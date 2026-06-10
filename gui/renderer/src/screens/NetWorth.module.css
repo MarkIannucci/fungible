@@ -1,0 +1,119 @@
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 1100px;
+}
+
+.topBar {
+  display: flex;
+  align-items: baseline;
+  gap: 24px;
+}
+
+.title {
+  font-size: 20px;
+  margin: 0;
+}
+
+.bigNumber {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.panelHeader h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin: 0;
+}
+
+.rangePills {
+  display: flex;
+  gap: 4px;
+}
+
+.pill,
+.pillActive {
+  padding: 4px 11px;
+  border-radius: 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.pill:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.pillActive {
+  background: var(--bg-raised);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.toggleBtn {
+  font-size: 12px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 9px;
+}
+
+.toggleBtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.table td {
+  padding: 6px 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tdName {
+  text-align: left !important;
+  color: var(--text-dim);
+  width: 50%;
+}
+
+.tdSub {
+  font-size: 12px;
+}
+
+.totalRow td {
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+  padding-top: 9px;
+}
+
+.totalRow .tdName {
+  color: var(--text);
+}
