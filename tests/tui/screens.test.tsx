@@ -22,14 +22,14 @@ import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
 import { TypingContext } from '../../tui/TypingContext.js';
-import { loadProfile } from '../../core/profile.js';
+import { loadProfile, saveProfile } from '../../core/profile.js';
 
 // Keep householdMembers real (a pure helper used by the owner picker) but stub
-// the fs-backed loadProfile/saveProfile. loadProfile is a vi.fn so a test can
+// the DB-backed loadProfile/saveProfile. loadProfile is a vi.fn so a test can
 // supply a profile whose members populate the cycle.
 vi.mock('../../core/profile.js', async (importActual) => {
   const actual = await importActual<typeof import('../../core/profile.js')>();
-  return { ...actual, loadProfile: vi.fn(() => null), saveProfile: vi.fn() };
+  return { ...actual, loadProfile: vi.fn(() => Promise.resolve(null)), saveProfile: vi.fn(() => Promise.resolve()) };
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ const noop = () => {};
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
 beforeEach(async () => {
-  vi.mocked(loadProfile).mockReturnValue(null); // no household members unless a test sets one
+  vi.mocked(loadProfile).mockResolvedValue(null); // no household members unless a test sets one
   for (const tbl of ['transactions', 'accounts', 'categories', 'tags', 'transaction_tags',
                      'category_rules', 'name_rules', 'hidden_categories', 'balance_history']) {
     await db.execute(`DELETE FROM ${tbl}`);
@@ -763,6 +763,80 @@ describe('Settings', () => {
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
+
+  it('loaded profile values appear after async init', async () => {
+    vi.mocked(loadProfile).mockResolvedValue({ self: { name: 'Thomas', birthYear: 1990 }, children: [] });
+    const r = settings();
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Thomas');
+      expect(f).toContain('1990');
+    });
+  });
+
+  it('committing a name edit calls saveProfile with the updated value', async () => {
+    vi.mocked(saveProfile).mockClear();
+    const r = settings();
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    r.stdin.write('Alice');
+    await waitFor(() => expect(frame(r)).toContain('Alice'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).not.toContain('▊'));
+    expect(vi.mocked(saveProfile)).toHaveBeenCalledWith(
+      expect.objectContaining({ self: expect.objectContaining({ name: 'Alice' }) }),
+    );
+  });
+
+  it('[a] when spouse exists adds a child row', async () => {
+    const r = settings();
+    r.stdin.write('a');           // add spouse (no spouse yet)
+    await waitFor(() => expect(frame(r)).toContain('Spouse name'));
+    r.stdin.write('a');           // add child (spouse now exists)
+    await waitFor(() => expect(frame(r)).toContain('Child 1'));
+  });
+
+  it('[d] on a child row removes it', async () => {
+    const r = settings();
+    r.stdin.write('a');           // add spouse
+    await waitFor(() => expect(frame(r)).toContain('Spouse name'));
+    r.stdin.write('a');           // add child → rows: self-name(0) self-year(1) spouse-name(2) spouse-year(3) child-0-name(4)
+    await waitFor(() => expect(frame(r)).toContain('Child 1'));
+    r.stdin.write('\x1B[B');      // ↓ → row 1
+    r.stdin.write('\x1B[B');      // ↓ → row 2
+    r.stdin.write('\x1B[B');      // ↓ → row 3
+    r.stdin.write('\x1B[B');      // ↓ → row 4 (Child 1 name)
+    await waitFor(() => expect(frame(r)).toContain('[d] remove'));
+    r.stdin.write('d');
+    await waitFor(() => expect(frame(r)).not.toContain('Child 1'));
+  });
+
+  it('birth year field rejects out-of-range years', async () => {
+    const r = settings();
+    r.stdin.write('\x1B[B');      // ↓ to self-year (row 1)
+    r.stdin.write('\r');          // open edit
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    // Write digits individually — numeric fields check /^\d$/ per keypress
+    for (const d of '1800') r.stdin.write(d);
+    await waitFor(() => expect(frame(r)).toContain('1800')); // buffer visible while editing
+    r.stdin.write('\r');          // commit — rejected because 1800 < 1900
+    await waitFor(() => expect(frame(r)).not.toContain('▊'));
+    expect(frame(r)).not.toContain('1800');
+  });
+
+  it('birth year field accepts years in range', async () => {
+    const r = settings();
+    r.stdin.write('\x1B[B');      // ↓ to self-year (row 1)
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('▊'));
+    for (const d of '1990') r.stdin.write(d);
+    await waitFor(() => expect(frame(r)).toContain('1990')); // buffer visible while editing
+    r.stdin.write('\r');
+    await waitFor(() => {
+      expect(frame(r)).toContain('1990');
+      expect(frame(r)).not.toContain('▊');
+    });
+  });
 });
 
 // ── Net Worth ─────────────────────────────────────────────────────────────────
@@ -1199,7 +1273,7 @@ describe('Accounts', () => {
 
   it('setting an owner refreshes the list to show the owner on the account row', async () => {
     // The owner editor cycles over household members, so a profile must supply one.
-    vi.mocked(loadProfile).mockReturnValue({ self: { name: 'Alex Stark', birthYear: 0 }, children: [] });
+    vi.mocked(loadProfile).mockResolvedValue({ self: { name: 'Alex Stark', birthYear: 0 }, children: [] });
     const real = accountsApi.updateAccountOwner;
     vi.spyOn(accountsApi, 'updateAccountOwner').mockImplementation(delayWrite(real));
 
@@ -1223,7 +1297,7 @@ describe('Accounts', () => {
   });
 
   it('surfaces an error and does not apply the owner when the write fails', async () => {
-    vi.mocked(loadProfile).mockReturnValue({ self: { name: 'Alex Stark', birthYear: 0 }, children: [] });
+    vi.mocked(loadProfile).mockResolvedValue({ self: { name: 'Alex Stark', birthYear: 0 }, children: [] });
     vi.spyOn(accountsApi, 'updateAccountOwner').mockRejectedValue(new Error('db down'));
 
     const r = accounts();

@@ -256,7 +256,7 @@ export type CanvasContext = {
 export async function loadCanvasContext(): Promise<CanvasContext> {
   const health = await loadHealthData();
   const taxableBrokerage = health.liquid - health.cash;
-  const profile = loadProfile();
+  const profile = await loadProfile();
   const currentYear = new Date().getFullYear();
 
   const householdLines: string[] = [];

@@ -25,6 +25,7 @@ const MOCK_SPEC: CanvasSpec = {
 };
 
 vi.mock('../../core/health.js', () => ({ loadHealthData: async () => MOCK_HEALTH }));
+vi.mock('../../core/profile.js', () => ({ loadProfile: async () => null, householdMembers: () => [] }));
 vi.mock('../../core/llm-provider.js', () => ({
   streamResponse: vi.fn(async function* () {
     yield { type: 'tool_use', id: 'test-id', name: 'render_canvas', input: MOCK_SPEC };
