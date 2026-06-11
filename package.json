@@ -12,6 +12,10 @@
     "gui": "electron-vite dev",
     "gui:demo": "FUNGIBLE_DATA_DIR=$HOME/.fungible-demo electron-vite dev",
     "gui:build": "electron-vite build",
+    "gui:dist": "electron-vite build && electron-builder",
+    "gui:dist:mac": "electron-vite build && electron-builder --mac",
+    "gui:dist:win": "electron-vite build && electron-builder --win",
+    "gui:dist:linux": "electron-vite build && electron-builder --linux",
     "demo": "FUNGIBLE_DATA_DIR=$HOME/.fungible-demo node --import tsx/esm tui/index.tsx --demo",
     "setup": "node --import tsx/esm tui/index.tsx --setup",
     "link": "node --import tsx/esm scripts/link.ts",
@@ -42,6 +46,9 @@
     "tsx": "^4.22.4",
     "zod": "^4.4.3"
   },
+  "overrides": {
+    "@noble/hashes": "1.8.0"
+  },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -50,6 +57,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^42.4.0",
+    "electron-builder": "^26.15.2",
     "electron-vite": "^5.0.0",
     "ink-testing-library": "^4.0.0",
     "jsdom": "^29.1.1",

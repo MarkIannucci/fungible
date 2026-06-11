@@ -8,3 +8,4 @@ PLANS.md
 scripts/seed-rules.ts
 .claude/
 out/
+release/
