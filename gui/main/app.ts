@@ -9,6 +9,7 @@ import { syncAll } from '../../core/sync.js';
 import { registerBridge } from './bridge.js';
 import { registerRefreshPush } from './refresh-ipc.js';
 import { registerAgentIpc, rejectPendingConfirms } from './agent-ipc.js';
+import { buildMenu } from './menu.js';
 
 const isDev = !!process.env.ELECTRON_RENDERER_URL;
 
@@ -41,6 +42,7 @@ if (!app.requestSingleInstanceLock()) {
     registerBridge();
     registerRefreshPush();
     registerAgentIpc();
+    buildMenu();
     createWindow();
 
     syncAll().catch((err) => console.error('[gui] background sync failed:', err));
