@@ -30,3 +30,24 @@ jobs:
     uses: ./.github/workflows/build-gui.yml
     with:
       mode: dir
+
+  # Aggregator: branch protection requires only this one check name instead of
+  # listing every matrix leg of gui-build individually. gui-build is "skipped"
+  # on PRs that don't target main — treat skipped as passing so dev PRs still
+  # merge with just test green.
+  ci-all-passed:
+    needs: [test, gui-build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required jobs succeeded
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "::error::test job failed"
+            exit 1
+          fi
+          if [ "${{ needs.gui-build.result }}" != "success" ] && [ "${{ needs.gui-build.result }}" != "skipped" ]; then
+            echo "::error::gui-build matrix failed"
+            exit 1
+          fi
+          echo "All required jobs passed."
