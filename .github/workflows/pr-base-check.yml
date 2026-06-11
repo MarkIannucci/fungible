@@ -1,0 +1,21 @@
+name: PR base check
+
+# Enforce dev-only merges into main. main is the release branch — every
+# merge triggers a tag, installer build, and Homebrew formula update —
+# so we accumulate work on dev and only promote dev -> main when ready.
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  enforce-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only dev can PR into main
+        run: |
+          if [ "${{ github.head_ref }}" != "dev" ]; then
+            echo "::error::PRs into main must come from 'dev'. This PR is from '${{ github.head_ref }}'."
+            echo "Open your PR against 'dev' instead. main only takes dev -> main release promotions."
+            exit 1
+          fi
+          echo "Source branch is dev — OK."

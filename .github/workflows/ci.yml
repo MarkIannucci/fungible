@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   test:
@@ -21,3 +21,12 @@ jobs:
       - run: npm run typecheck
 
       - run: node --no-warnings ./node_modules/.bin/vitest run
+
+  # Smoke-build the unpacked Electron app on each platform when something is
+  # about to land on main — catches packaging regressions (missing deps,
+  # broken file filters, native-binding paths) before a release tag is cut.
+  gui-build:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    uses: ./.github/workflows/build-gui.yml
+    with:
+      mode: dir
