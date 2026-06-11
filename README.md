@@ -111,14 +111,6 @@ Data and config live at `~/.fungible/` (override with `$FUNGIBLE_DATA_DIR`). Pla
 
 Full per-screen keybindings: [`docs/keybindings.md`](docs/keybindings.md).
 
-## Scripts
-
-```bash
-npm run link            # link a new bank account via Plaid
-npm run import-csv      # import a CSV file
-npm run seed-rules      # seed default category rules
-```
-
 ## Docs
 
 - [`docs/keybindings.md`](docs/keybindings.md) — per-screen keyboard reference
