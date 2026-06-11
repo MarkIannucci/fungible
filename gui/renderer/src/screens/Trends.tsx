@@ -2,8 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ResponsiveContainer,
   ComposedChart,
-  Line,
-  Area,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
@@ -163,6 +162,7 @@ export function Trends() {
               if (e.key === 'Escape') {
                 setSearch('');
                 setSearchInput('');
+                searchRef.current?.blur();
               }
             }}
           />
@@ -204,32 +204,28 @@ export function Trends() {
                 <>
                   <Legend />
                   <ReferenceLine y={0} stroke={CHART.axis} />
-                  <Line type="monotone" dataKey="income" name="Income" stroke={CHART.positive} dot={false} strokeWidth={2} />
-                  <Line type="monotone" dataKey="expenses" name="Expenses" stroke={CHART.negative} dot={false} strokeWidth={2} />
-                  <Line type="monotone" dataKey="total" name="Net" stroke={CHART.accent} dot={false} strokeWidth={2.5} />
+                  <Bar dataKey="income" name="Income" fill={CHART.positive} />
+                  <Bar dataKey="expenses" name="Expenses" fill={CHART.negative} />
+                  <Bar dataKey="total" name="Net" fill={CHART.accent} />
                 </>
               ) : isFlexBreakdown ? (
                 <>
                   <Legend />
-                  <Area type="monotone" dataKey="fixed" name="Fixed" stackId="flex" stroke={CHART.fixed} fill={CHART.fixed} fillOpacity={0.45} />
-                  <Area type="monotone" dataKey="flexible" name="Flexible" stackId="flex" stroke={CHART.flexible} fill={CHART.flexible} fillOpacity={0.45} />
-                  <Area type="monotone" dataKey="discretionary" name="Discretionary" stackId="flex" stroke={CHART.discretionary} fill={CHART.discretionary} fillOpacity={0.45} />
+                  <Bar dataKey="fixed" name="Fixed" stackId="flex" fill={CHART.fixed} />
+                  <Bar dataKey="flexible" name="Flexible" stackId="flex" fill={CHART.flexible} />
+                  <Bar dataKey="discretionary" name="Discretionary" stackId="flex" fill={CHART.discretionary} />
                 </>
               ) : (
-                <Area
-                  type="monotone"
+                <Bar
                   dataKey="total"
                   name={search ? `"${search}"` : view?.label ?? ''}
-                  stroke={search ? searchOnlyColor : lineColor}
                   fill={search ? searchOnlyColor : lineColor}
-                  fillOpacity={0.18}
-                  strokeWidth={2}
                 />
               )}
             </ComposedChart>
           </ResponsiveContainer>
         )}
-        {activeRows.length > 0 && <p className={`dim ${styles.chartHint}`}>Click a point to see its transactions</p>}
+        {activeRows.length > 0 && <p className={`dim ${styles.chartHint}`}>Click a bar to see its transactions</p>}
       </section>
 
       {activeRows.length > 0 && (

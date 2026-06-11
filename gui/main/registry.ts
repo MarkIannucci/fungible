@@ -86,6 +86,7 @@ import { loadProfile, saveProfile, householdMembers } from '../../core/profile.j
 import { syncAll } from '../../core/sync.js';
 import { loadHistory, deleteHistoryEntry, CANVAS_SPEC_PATH } from '../../core/canvas-history.js';
 import type { CanvasSpec } from '../../core/canvas-spec.js';
+import { writeEnvFile, type EnvUpdates } from '../../core/env-file.js';
 import { readFileSync } from 'node:fs';
 
 // Explicit picks (no module spreads): keeps the IPC surface intentional and
@@ -200,5 +201,11 @@ export const registry = {
   },
   sync: {
     syncAll,
+  },
+  config: {
+    writeEnv: async (updates: EnvUpdates): Promise<{ written: string[] }> => {
+      const { written } = writeEnvFile(updates);
+      return { written };
+    },
   },
 } as const;

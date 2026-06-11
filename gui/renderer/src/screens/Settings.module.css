@@ -98,3 +98,24 @@
   opacity: 0.5;
   cursor: default;
 }
+
+.configRow {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.configLabel {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+}
+
+.configHint {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+

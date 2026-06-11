@@ -137,15 +137,104 @@ export function Settings() {
         </div>
       </section>
 
-      <section className={styles.panel}>
-        <h2>Configuration</h2>
-        <p className="dim">
-          API keys, Plaid credentials, and data location live in <span className="num">~/.fungible/.env</span>. The
-          first-run setup wizard is available via <span className="num">fungible --setup</span> in a terminal.
-        </p>
-      </section>
+      <ConfigPanel showStatus={showStatus} />
 
       {statusEl}
     </div>
+  );
+}
+
+type ConfigField = {
+  key: string;
+  label: string;
+  hint: string;
+  secret?: boolean;
+};
+
+const CONFIG_FIELDS: ConfigField[] = [
+  { key: 'PLAID_CLIENT_ID', label: 'Plaid Client ID', hint: 'Plaid dashboard → Team Settings → Keys' },
+  { key: 'PLAID_SECRET', label: 'Plaid Secret', hint: 'Matches the selected Plaid environment', secret: true },
+  { key: 'ANTHROPIC_API_KEY', label: 'Anthropic API Key', hint: 'Enables the agent (Claude)', secret: true },
+  { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', hint: 'Alternate agent provider', secret: true },
+];
+
+const PLAID_ENVS = ['sandbox', 'development', 'production'] as const;
+
+function ConfigPanel({ showStatus }: { showStatus: (msg: string) => void }) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [plaidEnv, setPlaidEnv] = useState<string>('');
+  const [saving, setSaving] = useState(false);
+
+  const hasInput = Object.values(values).some((v) => v.trim() !== '') || plaidEnv !== '';
+
+  async function save() {
+    setSaving(true);
+    try {
+      const payload: Record<string, string> = { ...values };
+      if (plaidEnv) payload['PLAID_ENV'] = plaidEnv;
+      const { written } = await api.config.writeEnv(payload);
+      setValues({});
+      setPlaidEnv('');
+      showStatus(
+        written.length === 0
+          ? 'Nothing to save'
+          : `Saved ${written.length} value${written.length === 1 ? '' : 's'} · restart to apply`,
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className={styles.panel}>
+      <h2>Configuration</h2>
+      <p className="dim">
+        Write API keys and Plaid credentials to <span className="num">~/.fungible/.env</span>. Fields are blank by
+        design — existing values aren't shown. Leave a field blank to keep its current value; fill in only what you
+        want to change. Restart the app for changes to take effect.
+      </p>
+
+      {CONFIG_FIELDS.map((f) => (
+        <div key={f.key} className={styles.configRow}>
+          <label className={styles.configLabel}>
+            {f.label}
+            <span className={styles.configHint}>{f.hint}</span>
+          </label>
+          <input
+            type={f.secret ? 'password' : 'text'}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="(unchanged)"
+            value={values[f.key] ?? ''}
+            onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+          />
+        </div>
+      ))}
+
+      <div className={styles.configRow}>
+        <label className={styles.configLabel}>
+          Plaid Environment
+          <span className={styles.configHint}>"development" for real bank data on the free tier</span>
+        </label>
+        <select value={plaidEnv} onChange={(e) => setPlaidEnv(e.target.value)}>
+          <option value="">(unchanged)</option>
+          {PLAID_ENVS.map((e) => (
+            <option key={e} value={e}>
+              {e}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className={styles.actions}>
+        <button
+          className={styles.btnPrimary}
+          onClick={() => void save()}
+          disabled={!hasInput || saving}
+        >
+          {saving ? 'Saving…' : 'Save to .env'}
+        </button>
+      </div>
+    </section>
   );
 }

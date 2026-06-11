@@ -57,7 +57,10 @@ export function Tags() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Escape') setSearch('');
+            if (e.key === 'Escape') {
+              setSearch('');
+              searchRef.current?.blur();
+            }
           }}
         />
         <button className={styles.addBtn} onClick={() => setAddOpen(true)}>

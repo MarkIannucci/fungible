@@ -193,8 +193,8 @@ export function ChatDrawer() {
           onKeyDown={(e) => {
             if (e.key === 'Enter') void send();
             if (e.key === 'Escape') {
-              if (input) setInput('');
-              else setOpen(false);
+              inputRef.current?.blur();
+              setOpen(false);
             }
           }}
         />
