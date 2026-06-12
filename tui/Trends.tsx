@@ -10,6 +10,7 @@ import { useTerminalWidth, FLEX_COLORS, C_POSITIVE, C_NEGATIVE, C_NEUTRAL, C_ACC
 import { StatCard, usePagination, SelectableRow, PageHeader, TextInput } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
+import { useLoadGuard } from './useLoadGuard.js';
 
 const TRENDS_RANGES: TrendsRange[] = ['week', 'month', 'quarter', 'year'];
 const RANGE_LABELS: Record<TrendsRange, string> = { week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year' };
@@ -74,9 +75,17 @@ export function Trends({
   const isNet = view?.mode === 'net';
   const isFlexBreakdown = view?.mode === 'flexbreakdown';
 
+  // Drop stale out-of-order results so a slow earlier query can't repaint over
+  // a faster later one as the filter/range change (see useLoadGuard).
+  const rowsGuard = useLoadGuard();
+  const matchGuard = useLoadGuard();
+  const searchGuard = useLoadGuard();
+
   useEffect(() => {
     if (!view) return;
+    const token = rowsGuard.begin();
     void getPeriodTotals(view, range, sharedFilter).then((data) => {
+      if (!rowsGuard.isLatest(token)) return;
       setRows(data);
       setCursor(Math.max(0, data.length - 1));
     });
@@ -86,12 +95,17 @@ export function Trends({
   const liveSearch = searchMode ? searchInput : search;
   useEffect(() => {
     if (!liveSearch) { setMatchCount(null); return; }
-    void getSearchMatchingPeriods(liveSearch, range, sharedFilter).then(({ count }) => setMatchCount(count));
+    const token = matchGuard.begin();
+    void getSearchMatchingPeriods(liveSearch, range, sharedFilter).then(({ count }) => {
+      if (matchGuard.isLatest(token)) setMatchCount(count);
+    });
   }, [liveSearch, range, sharedFilter]);
 
   useEffect(() => {
     if (!search) { setSearchRows([]); return; }
+    const token = searchGuard.begin();
     void getSearchPeriodTotals(search, range, sharedFilter).then((data) => {
+      if (!searchGuard.isLatest(token)) return;
       setSearchRows(data);
       setCursor(Math.max(0, data.length - 1));
     });

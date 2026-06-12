@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   setTransactionCategory, clearTransactionOverride, setTransactionIgnored,
@@ -17,6 +17,7 @@ import { getTransactions, getAllCategories, getDataBounds, type TxRow, type Sort
 import { isFilterActive, filterSummary } from '../core/filters.js';
 import type { Screen, TxFilter } from './App.js';
 import { useFilter } from './FilterContext.js';
+import { useLoadGuard } from './useLoadGuard.js';
 import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
@@ -79,15 +80,14 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [tagCursor, setTagCursor] = useState(0);
   const [tagInput, setTagInput] = useState('');
 
-  // Monotonic load token. Filter changes (especially the live preview) can fire
-  // queries faster than they resolve; without this guard a slow earlier query
-  // could land after a faster later one and paint stale rows. Only the newest
-  // load is allowed to apply its result.
-  const loadSeq = useRef(0);
+  // Filter changes (especially the live preview) can fire queries faster than
+  // they resolve, so a slow earlier query could land after a faster later one
+  // and paint stale rows. The guard drops all but the newest load's result.
+  const loadGuard = useLoadGuard();
   function load(s = search, keepCursor = false) {
-    const seq = ++loadSeq.current;
+    const token = loadGuard.begin();
     void getTransactions({ filter: sharedFilter, from, to, search: s, sort, txType, flex }).then((rows) => {
-      if (seq !== loadSeq.current) return; // superseded by a newer load
+      if (!loadGuard.isLatest(token)) return; // superseded by a newer load
       setTxs(rows);
       if (!keepCursor) setCursor(0);
       else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
