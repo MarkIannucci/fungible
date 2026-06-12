@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   setTransactionCategory, clearTransactionOverride, setTransactionIgnored,
@@ -79,8 +79,15 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [tagCursor, setTagCursor] = useState(0);
   const [tagInput, setTagInput] = useState('');
 
+  // Monotonic load token. Filter changes (especially the live preview) can fire
+  // queries faster than they resolve; without this guard a slow earlier query
+  // could land after a faster later one and paint stale rows. Only the newest
+  // load is allowed to apply its result.
+  const loadSeq = useRef(0);
   function load(s = search, keepCursor = false) {
+    const seq = ++loadSeq.current;
     void getTransactions({ filter: sharedFilter, from, to, search: s, sort, txType, flex }).then((rows) => {
+      if (seq !== loadSeq.current) return; // superseded by a newer load
       setTxs(rows);
       if (!keepCursor) setCursor(0);
       else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));

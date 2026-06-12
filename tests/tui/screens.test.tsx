@@ -1820,3 +1820,48 @@ describe('FilterPanel live preview — propagation & history', () => {
   });
 });
 
+// ── Transactions out-of-order query guard ──────────────────────────────────
+describe('Transactions load() race guard', () => {
+  // Simulates the live-preview hazard: a slow earlier query resolving after a
+  // faster later one. The unfiltered load (no categories) is forced slow; the
+  // category-filtered load is fast, so it lands first — the stale slow result
+  // that follows must not clobber it.
+  function SetFilterOnMount({ filter }: { filter: Filter }) {
+    const { setFilter } = useFilter();
+    React.useEffect(() => { setFilter(filter); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+    return null;
+  }
+
+  it('a slow stale query does not overwrite a faster newer one', async () => {
+    const realGet = queries.getTransactions;
+    const spy = vi.spyOn(queries, 'getTransactions').mockImplementation(async (args) => {
+      const rows = await realGet(args);
+      const isFiltered = Array.isArray((args.filter ?? {}).categories);
+      await new Promise((res) => setTimeout(res, isFiltered ? 10 : 200));
+      return rows;
+    });
+    try {
+      const r = render(
+        <W>
+          <FilterProvider>
+            <SetFilterOnMount filter={{ categories: ['Dining'] }} />
+            <Transactions onNavigate={noop} showHints={false} />
+          </FilterProvider>
+        </W>,
+      );
+      // The fast filtered load settles first: Dining shows, Grocery's merchant doesn't.
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('Sweetgreen');
+        expect(f).not.toContain('Whole Foods');
+      });
+      // Give the slow unfiltered load time to resolve and (incorrectly) repaint.
+      await new Promise((res) => setTimeout(res, 300));
+      expect(frame(r)).toContain('Sweetgreen');
+      expect(frame(r)).not.toContain('Whole Foods'); // stale result was discarded
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
