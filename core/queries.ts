@@ -132,7 +132,13 @@ export async function getDataBounds(): Promise<{ minDate: string; maxDate: strin
 
 export type AccountRow = { id: string; name: string; subtype: string | null; spending: number; income: number };
 
-export async function getAccountRows(from: string, to: string): Promise<AccountRow[]> {
+// Per-account spending/income. Honors the shared filter's other dimensions
+// (categories/owners/tags) but ignores its own accounts dimension — the view
+// groups by account and doubles as the account picker, so every account keeps
+// its row. Filter conditions live in the LEFT JOIN ON clause so accounts with
+// no matching transactions still appear with zero totals.
+export async function getAccountRows(from: string, to: string, filter?: Filter): Promise<AccountRow[]> {
+  const f = buildFilterClause({ ...filter, accounts: undefined }, 't');
   const result = await db.execute({
     sql: `SELECT a.id, a.name, a.subtype,
             COALESCE(SUM(CASE WHEN t.amount > 0 AND t.date >= ? AND t.date <= ?
@@ -142,10 +148,10 @@ export async function getAccountRows(from: string, to: string): Promise<AccountR
                                AND t.pending = 0 AND t.ignored = 0
                                AND t.category != 'Transfer' THEN t.amount ELSE 0 END), 0) as income
           FROM accounts a
-          LEFT JOIN transactions t ON t.account_id = a.id
+          LEFT JOIN transactions t ON t.account_id = a.id${f.clause}
           GROUP BY a.id, a.name, a.subtype
           ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 ELSE 2 END, spending DESC`,
-    args: [from, to, from, to],
+    args: [from, to, from, to, ...f.args],
   });
   return result.rows as unknown as AccountRow[];
 }
@@ -155,10 +161,13 @@ export type OwnerRow = { owner: string; spending: number };
 // Total expenses grouped by account owner, for splitting shared spending. Accounts
 // with no owner fall under 'Unassigned'. Uses the same expense definition as the
 // dashboard's headline Expenses (getRangeSummary): excludes hidden categories,
-// pending, and ignored transactions. Filters live in the LEFT JOIN ON clause (not
-// WHERE) so every owned account still yields a row even with zero spend this
-// period — callers rely on that to detect whether any owner has been assigned.
-export async function getOwnerRows(from: string, to: string): Promise<OwnerRow[]> {
+// pending, and ignored transactions. Honors the shared filter's other dimensions
+// (categories/accounts/tags) but ignores its own owners dimension, since it
+// groups by owner. Filters live in the LEFT JOIN ON clause (not WHERE) so every
+// owned account still yields a row even with zero spend this period — callers
+// rely on that to detect whether any owner has been assigned.
+export async function getOwnerRows(from: string, to: string, filter?: Filter): Promise<OwnerRow[]> {
+  const f = buildFilterClause({ ...filter, owners: undefined }, 't');
   const result = await db.execute({
     sql: `SELECT COALESCE(NULLIF(TRIM(a.owner), ''), 'Unassigned') as owner,
             COALESCE(SUM(t.amount), 0) as spending
@@ -168,10 +177,10 @@ export async function getOwnerRows(from: string, to: string): Promise<OwnerRow[]
             AND t.amount > 0
             AND t.date >= ? AND t.date <= ?
             AND t.pending = 0 AND t.ignored = 0
-            AND t.category NOT IN (SELECT category FROM hidden_categories)
+            AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}
           GROUP BY COALESCE(NULLIF(TRIM(a.owner), ''), 'Unassigned')
           ORDER BY spending DESC, owner`,
-    args: [from, to],
+    args: [from, to, ...f.args],
   });
   return result.rows as unknown as OwnerRow[];
 }

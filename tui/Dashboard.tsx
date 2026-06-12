@@ -111,8 +111,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
 
   function load(r: Range, a: Date, qf: Filter) {
     const { from, to } = getPeriodDates(r, a);
-    void getAccountRows(from, to).then(setAccountRows);
-    void getOwnerRows(from, to).then(setOwnerRows);
+    void getAccountRows(from, to, qf).then(setAccountRows);
+    void getOwnerRows(from, to, qf).then(setOwnerRows);
     setAcctCursor(0);
     void getRangeSummary(from, to, qf).then(setSummary);
     void getFlexSummary(from, to, qf).then(setFlexData);

@@ -245,7 +245,7 @@ vi.mock('../core/db.js', async () => {
 });
 
 const { db } = await import('../core/db.js');
-const { getTransactions, getRangeSummary, getFilterOptions } = await import('../core/queries.js');
+const { getTransactions, getRangeSummary, getFilterOptions, getAccountRows, getOwnerRows } = await import('../core/queries.js');
 const { getPeriodTotals } = await import('../core/trends.js');
 
 let txId = 0;
@@ -349,6 +349,59 @@ describe('getRangeSummary with a Filter', () => {
     expect(all.expenses).toBeCloseTo(500);
     const noPersonal = await getRangeSummary('2025-01-01', '2025-01-31', { tags: [{ name: 'personal', mode: 'lacks' }] });
     expect(noPersonal.expenses).toBeCloseTo(400);
+  });
+});
+
+describe('getAccountRows with a Filter', () => {
+  it('honors other dimensions but keeps a row per account', async () => {
+    await addAccount('a1', 'Mark');
+    await addAccount('a2', 'Sam');
+    await insertTx({ accountId: 'a1', category: 'Dining', amount: 100 });
+    await insertTx({ accountId: 'a1', category: 'Rent', amount: 400 });
+    await insertTx({ accountId: 'a2', category: 'Dining', amount: 50 });
+
+    const dining = await getAccountRows('2025-01-01', '2025-01-31', { categories: ['Dining'] });
+    expect(dining.find((r) => r.id === 'a1')?.spending).toBeCloseTo(100);
+    expect(dining.find((r) => r.id === 'a2')?.spending).toBeCloseTo(50);
+  });
+
+  it('ignores its own accounts dimension so the picker keeps every row', async () => {
+    await addAccount('a1', 'Mark');
+    await addAccount('a2', 'Sam');
+    await insertTx({ accountId: 'a1', amount: 100 });
+    await insertTx({ accountId: 'a2', amount: 50 });
+
+    const rows = await getAccountRows('2025-01-01', '2025-01-31', { accounts: ['a1'] });
+    expect(rows.find((r) => r.id === 'a2')?.spending).toBeCloseTo(50);
+  });
+});
+
+describe('getOwnerRows with a Filter', () => {
+  it('honors category and tag constraints (the spouse-split use case)', async () => {
+    await addAccount('a1', 'Mark');
+    await addAccount('a2', 'Sam');
+    const t1 = await insertTx({ accountId: 'a1', category: 'Dining', amount: 100 });
+    await insertTx({ accountId: 'a1', category: 'Rent', amount: 400 });
+    await insertTx({ accountId: 'a2', category: 'Dining', amount: 50 });
+    await tagTx(t1, 'personal');
+
+    const dining = await getOwnerRows('2025-01-01', '2025-01-31', { categories: ['Dining'] });
+    expect(dining.find((r) => r.owner === 'Mark')?.spending).toBeCloseTo(100);
+    expect(dining.find((r) => r.owner === 'Sam')?.spending).toBeCloseTo(50);
+
+    const noPersonal = await getOwnerRows('2025-01-01', '2025-01-31', { tags: [{ name: 'personal', mode: 'lacks' }] });
+    expect(noPersonal.find((r) => r.owner === 'Mark')?.spending).toBeCloseTo(400);
+    expect(noPersonal.find((r) => r.owner === 'Sam')?.spending).toBeCloseTo(50);
+  });
+
+  it('ignores its own owners dimension since it groups by owner', async () => {
+    await addAccount('a1', 'Mark');
+    await addAccount('a2', 'Sam');
+    await insertTx({ accountId: 'a1', amount: 100 });
+    await insertTx({ accountId: 'a2', amount: 50 });
+
+    const rows = await getOwnerRows('2025-01-01', '2025-01-31', { owners: ['Mark'] });
+    expect(rows.find((r) => r.owner === 'Sam')?.spending).toBeCloseTo(50);
   });
 });
 
