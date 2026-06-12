@@ -2,7 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getFilterOptions, type FilterOptions } from '../core/queries.js';
 import { useFilter } from './FilterContext.js';
-import { selectionToDim, selectionFromDim, type Filter, type TagPredicate } from '../core/filters.js';
+import {
+  selectionToDim, selectionFromDim, invertSelection, invertTagModes,
+  type Filter, type TagPredicate,
+} from '../core/filters.js';
 import { ModalPanel } from './components/index.js';
 import { C_ACCENT, C_POSITIVE, C_NEGATIVE, C_DIM } from './ui.js';
 
@@ -10,16 +13,16 @@ import { C_ACCENT, C_POSITIVE, C_NEGATIVE, C_DIM } from './ui.js';
 // shared filter into a draft, lets you adjust all four dimensions, and writes it
 // back via setFilter on apply. Categories/accounts/owners use a select-from-
 // universe model (everything selected → no constraint); tags are tri-state
-// (off / has / lacks) matching the TagPredicate model.
+// (off / has / lacks) matching the TagPredicate model. The dimensions render as
+// horizontal tabs (←/→ to switch) so every section is discoverable at a glance.
 
 type Section = 'categories' | 'accounts' | 'owners' | 'tags';
+const SECTIONS: Section[] = ['categories', 'accounts', 'owners', 'tags'];
 const SECTION_LABEL: Record<Section, string> = {
   categories: 'Categories', accounts: 'Accounts', owners: 'Owners', tags: 'Tags',
 };
 
-type Row =
-  | { kind: 'header'; section: Section }
-  | { kind: 'item'; section: Section; key: string; label: string; sub?: string };
+type Item = { key: string; label: string; sub?: string };
 
 const WINDOW = 16;
 
@@ -33,7 +36,12 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
   const [acctSel, setAcctSel] = useState<Set<string>>(new Set());
   const [ownerSel, setOwnerSel] = useState<Set<string>>(new Set());
   const [tagModes, setTagModes] = useState<Map<string, 'has' | 'lacks'>>(new Map());
-  const [cursor, setCursor] = useState(0);
+  const [section, setSection] = useState(0);
+  // Per-section cursors, kept while the panel is open so flipping between tabs
+  // doesn't lose your place in a long list.
+  const [cursors, setCursors] = useState<Record<Section, number>>({
+    categories: 0, accounts: 0, owners: 0, tags: 0,
+  });
 
   // Load options + hydrate the draft from the current shared filter on open.
   useEffect(() => {
@@ -43,27 +51,24 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
       setAcctSel(selectionFromDim(filter.accounts, o.accounts.map((a) => a.id)));
       setOwnerSel(selectionFromDim(filter.owners, o.owners));
       setTagModes(new Map((filter.tags ?? []).map((t) => [t.name, t.mode])));
-      setCursor(0);
+      setSection(0);
+      setCursors({ categories: 0, accounts: 0, owners: 0, tags: 0 });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Flattened row list (headers + items) and the indices that are selectable.
-  const rows: Row[] = [];
-  if (opts) {
-    rows.push({ kind: 'header', section: 'categories' });
-    for (const c of opts.categories) rows.push({ kind: 'item', section: 'categories', key: c, label: c });
-    rows.push({ kind: 'header', section: 'accounts' });
-    for (const a of opts.accounts) rows.push({ kind: 'item', section: 'accounts', key: a.id, label: a.name, sub: a.owner });
-    rows.push({ kind: 'header', section: 'owners' });
-    for (const o of opts.owners) rows.push({ kind: 'item', section: 'owners', key: o, label: o });
-    rows.push({ kind: 'header', section: 'tags' });
-    for (const t of opts.tags) rows.push({ kind: 'item', section: 'tags', key: t, label: t });
+  const currentSection = SECTIONS[section];
+
+  function itemsForSection(s: Section): Item[] {
+    if (!opts) return [];
+    if (s === 'categories') return opts.categories.map((c) => ({ key: c, label: c }));
+    if (s === 'accounts') return opts.accounts.map((a) => ({ key: a.id, label: a.name, sub: a.owner }));
+    if (s === 'owners') return opts.owners.map((o) => ({ key: o, label: o }));
+    return opts.tags.map((t) => ({ key: t, label: t }));
   }
-  const selectable = rows.map((r, i) => (r.kind === 'item' ? i : -1)).filter((i) => i >= 0);
-  const cursorRowIdx = selectable[Math.min(cursor, Math.max(0, selectable.length - 1))] ?? 0;
-  const current = rows[cursorRowIdx];
-  const currentSection: Section | null = current?.kind === 'item' ? current.section : null;
+  const items = itemsForSection(currentSection);
+  const cursor = Math.min(cursors[currentSection], Math.max(0, items.length - 1));
+  const current: Item | undefined = items[cursor];
 
   function selForSection(s: Section): [Set<string>, (next: Set<string>) => void] {
     if (s === 'categories') return [catSel, setCatSel];
@@ -77,9 +82,16 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
     return opts.owners;
   }
 
+  function moveCursor(delta: number) {
+    setCursors((c) => ({
+      ...c,
+      [currentSection]: Math.max(0, Math.min(items.length - 1, c[currentSection] + delta)),
+    }));
+  }
+
   function toggleCurrent() {
-    if (current?.kind !== 'item') return;
-    if (current.section === 'tags') {
+    if (!current) return;
+    if (currentSection === 'tags') {
       setTagModes((m) => {
         const n = new Map(m);
         const cur = n.get(current.key);
@@ -90,20 +102,28 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
       });
       return;
     }
-    const [sel, set] = selForSection(current.section);
+    const [sel, set] = selForSection(currentSection);
     const n = new Set(sel);
     if (n.has(current.key)) n.delete(current.key); else n.add(current.key);
     set(n);
   }
 
   function bulk(all: boolean) {
-    if (!currentSection) return;
     if (currentSection === 'tags') {
       if (!all) setTagModes(new Map());
       return;
     }
     const [, set] = selForSection(currentSection);
     set(all ? new Set(universeForSection(currentSection)) : new Set());
+  }
+
+  function invert() {
+    if (currentSection === 'tags') {
+      setTagModes((m) => invertTagModes(m));
+      return;
+    }
+    const [sel, set] = selForSection(currentSection);
+    set(invertSelection(sel, universeForSection(currentSection)));
   }
 
   function clearAll() {
@@ -132,19 +152,26 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
   useInput((input, key) => {
     if (key.escape) { onClose(); return; }
     if (key.return) { apply(); return; }
-    if (key.upArrow) { setCursor((c) => Math.max(0, c - 1)); return; }
-    if (key.downArrow) { setCursor((c) => Math.min(selectable.length - 1, c + 1)); return; }
+    if (key.leftArrow) { setSection((s) => (s + SECTIONS.length - 1) % SECTIONS.length); return; }
+    if (key.rightArrow) { setSection((s) => (s + 1) % SECTIONS.length); return; }
+    if (key.upArrow) { moveCursor(-1); return; }
+    if (key.downArrow) { moveCursor(1); return; }
     if (input === ' ') { toggleCurrent(); return; }
-    if (input === 'A') { bulk(true); return; }
-    if (input === 'N') { bulk(false); return; }
+    const k = input.toLowerCase();
+    if (k === 'a') { bulk(true); return; }
+    if (k === 'n') { bulk(false); return; }
+    if (k === 'i') { invert(); return; }
     if (input === 'c') { clearAll(); return; }
   }, { isActive });
 
   if (!opts) return null;
 
-  // Window the row list around the cursor so a long universe stays bounded.
-  const winStart = Math.max(0, Math.min(cursorRowIdx - Math.floor(WINDOW / 2), rows.length - WINDOW));
-  const visible = rows.slice(winStart, winStart + WINDOW);
+  // Window the focused section's list around the cursor so a long universe
+  // stays bounded.
+  const winStart = Math.max(0, Math.min(cursor - Math.floor(WINDOW / 2), items.length - WINDOW));
+  const visible = items.slice(winStart, winStart + WINDOW);
+  const clippedAbove = winStart;
+  const clippedBelow = items.length - (winStart + visible.length);
 
   function sectionCount(s: Section): string {
     if (s === 'tags') {
@@ -159,46 +186,53 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
   return (
     <ModalPanel title="Filter" borderColor={C_ACCENT}>
       <Text dimColor>
-        ↑↓ move  ·  Space toggle  ·  A all  ·  N none  ·  c clear  ·  Enter apply  ·  Esc cancel
+        ←→ section  ·  ↑↓ move  ·  Space toggle  ·  a all  ·  n none  ·  i invert  ·  c clear  ·  Enter apply  ·  Esc cancel
       </Text>
+      <Box marginTop={1} gap={3}>
+        {SECTIONS.map((s) => (
+          <Text
+            key={s}
+            bold={s === currentSection}
+            color={s === currentSection ? C_ACCENT : undefined}
+            dimColor={s !== currentSection}
+          >
+            {s === currentSection ? '▶ ' : '  '}{SECTION_LABEL[s]}{sectionCount(s)}
+          </Text>
+        ))}
+      </Box>
       <Box flexDirection="column" marginTop={1}>
-        {visible.map((row, i) => {
-          const idx = winStart + i;
-          if (row.kind === 'header') {
-            return (
-              <Box key={`h-${row.section}`} marginTop={i === 0 ? 0 : 1}>
-                <Text bold color={currentSection === row.section ? C_ACCENT : undefined}>
-                  {SECTION_LABEL[row.section]}{sectionCount(row.section)}
-                </Text>
-              </Box>
-            );
-          }
-          const isCursor = idx === cursorRowIdx;
+        {items.length === 0 ? (
+          <Text dimColor>  no {SECTION_LABEL[currentSection].toLowerCase()}</Text>
+        ) : null}
+        {clippedAbove > 0 ? <Text color={C_DIM}>  ↑ {clippedAbove} more</Text> : null}
+        {visible.map((item, i) => {
+          const isCursor = winStart + i === cursor;
           let mark: React.ReactNode;
-          if (row.section === 'tags') {
-            const mode = tagModes.get(row.key);
+          if (currentSection === 'tags') {
+            const mode = tagModes.get(item.key);
             mark = mode === 'has'
               ? <Text color={C_POSITIVE}>✓ has  </Text>
               : mode === 'lacks'
                 ? <Text color={C_NEGATIVE}>✗ lacks</Text>
                 : <Text dimColor>○ off  </Text>;
           } else {
-            const [sel] = selForSection(row.section);
-            mark = sel.has(row.key)
+            const [sel] = selForSection(currentSection);
+            mark = sel.has(item.key)
               ? <Text color={C_POSITIVE}>●</Text>
               : <Text dimColor>○</Text>;
           }
           return (
-            <Box key={`${row.section}-${row.key}`}>
+            <Box key={`${currentSection}-${item.key}`}>
               <Text color={isCursor ? C_ACCENT : undefined}>{isCursor ? '▶ ' : '  '}</Text>
               <Box gap={1}>
                 {mark}
-                <Text color={isCursor ? C_ACCENT : undefined} dimColor={!isCursor}>{row.label}</Text>
-                {row.sub ? <Text color={C_DIM}>{row.sub}</Text> : null}
+                <Text color={isCursor ? C_ACCENT : undefined} dimColor={!isCursor}>{item.label}</Text>
+                {item.sub ? <Text color={C_DIM}>{item.sub}</Text> : null}
               </Box>
             </Box>
           );
         })}
+        {clippedBelow > 0 ? <Text color={C_DIM}>  ↓ {clippedBelow} more</Text> : null}
       </Box>
     </ModalPanel>
   );

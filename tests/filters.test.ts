@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   buildFilterConditions, buildFilterClause, mergeFilters,
-  isFilterActive, filterSummary, selectionToDim, selectionFromDim, type Filter,
+  isFilterActive, filterSummary, selectionToDim, selectionFromDim,
+  invertSelection, invertTagModes, filtersEqual,
+  pushFilter, popFilter, MAX_FILTER_HISTORY,
+  type Filter, type FilterHistory,
 } from '../core/filters.js';
 
 // ── Pure clause-builder tests (no database) ────────────────────────────────────
@@ -133,6 +136,104 @@ describe('selectionToDim / selectionFromDim (panel serialization)', () => {
   it('round-trips a partial selection', () => {
     const sel = selectionFromDim(['Dining'], universe);
     expect(selectionToDim(sel, universe)).toEqual(['Dining']);
+  });
+});
+
+describe('invertSelection', () => {
+  const universe = ['Rent', 'Dining', 'Shopping'];
+
+  it('complements a partial selection against the universe', () => {
+    expect(invertSelection(new Set(['Rent']), universe)).toEqual(new Set(['Dining', 'Shopping']));
+  });
+
+  it('maps full to empty and empty to full', () => {
+    expect(invertSelection(new Set(universe), universe)).toEqual(new Set());
+    expect(invertSelection(new Set(), universe)).toEqual(new Set(universe));
+  });
+
+  it('double-invert is identity', () => {
+    const sel = new Set(['Dining']);
+    expect(invertSelection(invertSelection(sel, universe), universe)).toEqual(sel);
+  });
+});
+
+describe('invertTagModes', () => {
+  it('swaps has and lacks; off (absent) tags stay off', () => {
+    const inverted = invertTagModes(new Map([['shared', 'has'], ['personal', 'lacks']]));
+    expect(inverted).toEqual(new Map([['shared', 'lacks'], ['personal', 'has']]));
+    expect(inverted.has('untouched')).toBe(false);
+  });
+
+  it('double-invert is identity', () => {
+    const modes = new Map<string, 'has' | 'lacks'>([['x', 'has'], ['y', 'lacks']]);
+    expect(invertTagModes(invertTagModes(modes))).toEqual(modes);
+  });
+});
+
+describe('filtersEqual', () => {
+  it('treats empty, undefined, and absent dimensions as equal', () => {
+    expect(filtersEqual({}, {})).toBe(true);
+    expect(filtersEqual(undefined, {})).toBe(true);
+    expect(filtersEqual({ categories: undefined }, {})).toBe(true);
+  });
+
+  it('distinguishes undefined (unconstrained) from [] (match nothing)', () => {
+    expect(filtersEqual({ categories: [] }, {})).toBe(false);
+    expect(filtersEqual({ categories: [] }, { categories: [] })).toBe(true);
+  });
+
+  it('compares set dimensions order-insensitively', () => {
+    expect(filtersEqual({ categories: ['A', 'B'] }, { categories: ['B', 'A'] })).toBe(true);
+    expect(filtersEqual({ categories: ['A'] }, { categories: ['A', 'B'] })).toBe(false);
+  });
+
+  it('compares tags by name and mode, order-insensitively', () => {
+    const a: Filter = { tags: [{ name: 'x', mode: 'has' }, { name: 'y', mode: 'lacks' }] };
+    const b: Filter = { tags: [{ name: 'y', mode: 'lacks' }, { name: 'x', mode: 'has' }] };
+    expect(filtersEqual(a, b)).toBe(true);
+    expect(filtersEqual(a, { tags: [{ name: 'x', mode: 'lacks' }, { name: 'y', mode: 'lacks' }] })).toBe(false);
+  });
+});
+
+describe('pushFilter / popFilter (filter history)', () => {
+  const empty: FilterHistory = { current: {}, stack: [] };
+
+  it('pushes the previous current onto the stack', () => {
+    const h = pushFilter(empty, { categories: ['Rent'] });
+    expect(h.current).toEqual({ categories: ['Rent'] });
+    expect(h.stack).toEqual([{}]);
+  });
+
+  it('skips deep-equal no-op sets, including reordered arrays', () => {
+    const h = pushFilter(empty, { categories: ['A', 'B'] });
+    expect(pushFilter(h, { categories: ['B', 'A'] })).toBe(h);
+    expect(pushFilter(empty, {})).toBe(empty);
+  });
+
+  it('caps the stack, dropping the oldest entries', () => {
+    let h = empty;
+    for (let i = 0; i < MAX_FILTER_HISTORY + 5; i++) {
+      h = pushFilter(h, { categories: [`c${i}`] });
+    }
+    expect(h.stack).toHaveLength(MAX_FILTER_HISTORY);
+    expect(h.stack[0]).toEqual({ categories: ['c4'] });
+  });
+
+  it('pop restores the top of the stack one level at a time', () => {
+    let h = pushFilter(empty, { categories: ['A'] });
+    h = pushFilter(h, { categories: ['B'] });
+    h = pushFilter(h, { categories: ['C'] });
+    h = popFilter(h);
+    expect(h.current).toEqual({ categories: ['B'] });
+    h = popFilter(h);
+    expect(h.current).toEqual({ categories: ['A'] });
+  });
+
+  it('pop with an empty stack clears an active filter, no-ops on an inactive one', () => {
+    const active: FilterHistory = { current: { categories: ['A'] }, stack: [] };
+    expect(popFilter(active).current).toEqual({});
+    const inactive: FilterHistory = { current: {}, stack: [] };
+    expect(popFilter(inactive)).toBe(inactive);
   });
 });
 

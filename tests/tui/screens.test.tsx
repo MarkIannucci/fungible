@@ -22,7 +22,8 @@ import * as accountsApi from '../../core/accounts.js';
 import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
-import { FilterProvider } from '../../tui/FilterContext.js';
+import { FilterProvider, useFilter } from '../../tui/FilterContext.js';
+import type { Filter } from '../../core/filters.js';
 import { TypingContext } from '../../tui/TypingContext.js';
 import { loadProfile, saveProfile } from '../../core/profile.js';
 
@@ -356,6 +357,60 @@ describe('Transactions', () => {
     );
     await waitFor(() => expect(frame(r)).toContain('Transactions'));
     r.stdin.write('\x1b');
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined));
+  });
+
+  it('Escape clears an active shared filter before navigating', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider initial={{ categories: ['Grocery'] }}>
+          <Transactions onNavigate={onNavigate} showHints={false} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('1 category'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).not.toContain('1 category'));
+    expect(onNavigate).not.toHaveBeenCalled();
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined));
+  });
+
+  it('Escape steps back one filter level at a time through history', async () => {
+    // Pushes filter levels into the shared context on mount, simulating a
+    // panel apply followed by a drill-in.
+    function PushFilters({ filters }: { filters: Filter[] }) {
+      const { setFilter } = useFilter();
+      React.useEffect(() => {
+        for (const f of filters) setFilter(f);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+      return null;
+    }
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <PushFilters filters={[
+            { categories: ['Grocery'] },
+            { categories: ['Grocery'], accounts: ['test-credit'] },
+          ]} />
+          <Transactions onNavigate={onNavigate} showHints={false} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('1 account, 1 category'));
+    r.stdin.write('\x1b'); // pop drill-in → back to the category-only filter
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('1 category');
+      expect(f).not.toContain('1 account');
+    });
+    r.stdin.write('\x1b'); // pop again → back to no filter
+    await waitFor(() => expect(frame(r)).not.toContain('1 category'));
+    expect(onNavigate).not.toHaveBeenCalled();
+    r.stdin.write('\x1b'); // nothing left → navigate
     await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined));
   });
 
@@ -1466,15 +1521,114 @@ describe('FilterPanel', () => {
     );
   }
 
-  it('renders all four dimension sections with seeded options', async () => {
+  it('shows all four section tabs with counts; only the focused section lists items', async () => {
     const r = panel();
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('Filter');
-      expect(f).toContain('Categories');
+      expect(f).toContain('▶ Categories (all)');
+      expect(f).toContain('Accounts (all)');
+      expect(f).toContain('Owners (all)');
+      expect(f).toContain('Tags');
       expect(f).toContain('Grocery');
-      expect(f).toContain('Accounts');
+      // Account rows live on their own tab now
+      expect(f).not.toContain('Test Checking');
+    });
+  });
+
+  it('right arrow switches to the Accounts section', async () => {
+    const r = panel();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\x1b[C');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('▶ Accounts (all)');
       expect(f).toContain('Test Checking');
+      expect(f).not.toContain('Grocery');
+    });
+  });
+
+  it('left arrow from Categories wraps around to Tags', async () => {
+    const r = panel();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\x1b[D');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('▶ Tags');
+      expect(f).toContain('travel');
+      expect(f).not.toContain('Grocery');
+    });
+  });
+
+  it('counts stay visible in the tab header after switching sections', async () => {
+    const r = panel();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write(' '); // toggle first category off
+    await waitFor(() => expect(frame(r)).toMatch(/▶ Categories \(\d+\/\d+\)/));
+    r.stdin.write('\x1b[C');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('▶ Accounts (all)');
+      expect(f).toMatch(/Categories \(\d+\/\d+\)/);
+    });
+  });
+
+  it('keeps a per-section cursor when flipping between tabs', async () => {
+    const r = panel();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\x1b[B'); // ↓
+    r.stdin.write('\x1b[B'); // ↓ → third category (Grocery)
+    await waitFor(() => expect(frame(r)).toContain('▶ ● Grocery'));
+    r.stdin.write('\x1b[C'); // → Accounts
+    r.stdin.write('\x1b[D'); // ← back
+    await waitFor(() => expect(frame(r)).toContain('▶ ● Grocery'));
+  });
+
+  it('lowercase n deselects all and a reselects all in the focused section', async () => {
+    const r = panel();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('n');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toMatch(/▶ Categories \(0\/\d+\)/);
+      expect(f).toContain('○ Grocery');
+    });
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('▶ Categories (all)'));
+  });
+
+  it('i inverts the selection in the focused section', async () => {
+    const r = panel();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('n'); // none
+    await waitFor(() => expect(frame(r)).toContain('○ Grocery'));
+    r.stdin.write('\x1b[B');
+    r.stdin.write('\x1b[B');
+    await waitFor(() => expect(frame(r)).toContain('▶ ○ Grocery'));
+    r.stdin.write(' '); // select only Grocery
+    await waitFor(() => expect(frame(r)).toContain('▶ ● Grocery'));
+    r.stdin.write('i');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('○ Grocery');
+      expect(f).toContain('● Bills & Utilities');
+      expect(f).toContain('● Dining');
+    });
+  });
+
+  it('i on the Tags section swaps has and lacks, leaving off tags off', async () => {
+    const r = panel();
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\x1b[D'); // wrap to Tags
+    await waitFor(() => expect(frame(r)).toContain('travel'));
+    r.stdin.write(' '); // travel → has
+    await waitFor(() => expect(frame(r)).toContain('✓ has'));
+    r.stdin.write('i');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('✗ lacks');
+      expect(f).not.toContain('✓ has');
+      expect(f).toContain('○ off'); // work stays off
     });
   });
 
