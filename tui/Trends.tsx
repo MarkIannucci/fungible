@@ -34,7 +34,7 @@ export function Trends({
   showHints: boolean;
 }) {
   const refreshKey = useRefreshKey();
-  const { filter: sharedFilter } = useFilter();
+  const { filter: sharedFilter, setFilter } = useFilter();
   const [views, setViews] = useState<View[]>([
     { mode: 'expenses',      category: null, flex: null,            label: 'Expenses'      },
     { mode: 'income',        category: null, flex: null,            label: 'Income'        },
@@ -62,7 +62,7 @@ export function Trends({
   useEffect(() => {
     void buildTrendViews().then((loaded) => {
       setViews(loaded);
-      const cat = initialFilter?.category;
+      const cat = initialFilter?.focusCategory;
       if (cat) {
         const idx = loaded.findIndex((v) => v.category === cat);
         if (idx >= 0) setViewIdx(idx);
@@ -117,9 +117,9 @@ export function Trends({
     if (input === '1') { onNavigate('dashboard', search ? { search } : undefined); return; }
     if (input === '2') {
       const row = activeRows[clampedCursor];
+      if (!search && view.category) setFilter({ ...sharedFilter, categories: [view.category] });
       onNavigate('transactions', {
         ...(row ? { from: row.from, to: row.to } : {}),
-        ...(!search && view.category ? { category: view.category } : {}),
         ...(!search && view.mode === 'income' ? { txType: 'income' as const } : {}),
         ...(!search && view.mode === 'expenses' ? { txType: 'expenses' as const } : {}),
         ...(!search && view.mode === 'flex' && view.flex ? { flex: view.flex } : {}),
@@ -140,14 +140,18 @@ export function Trends({
     }
     if (key.return) {
       const row = activeRows[clampedCursor];
-      if (row) onNavigate('transactions', {
-        ...(!search && view.category ? { category: view.category } : {}),
-        ...(!search && view.mode === 'income' ? { txType: 'income' as const } : {}),
-        ...(!search && view.mode === 'expenses' ? { txType: 'expenses' as const } : {}),
-        ...(!search && view.mode === 'flex' && view.flex ? { flex: view.flex } : {}),
-        from: row.from, to: row.to,
-        ...(search ? { search } : {}),
-      });
+      if (row) {
+        if (!search && view.category) setFilter({ ...sharedFilter, categories: [view.category] });
+        onNavigate('transactions', {
+          ...(!search && view.mode === 'income' ? { txType: 'income' as const } : {}),
+          ...(!search && view.mode === 'expenses' ? { txType: 'expenses' as const } : {}),
+          ...(!search && view.mode === 'flex' && view.flex ? { flex: view.flex } : {}),
+          from: row.from, to: row.to,
+          ...(search ? { search } : {}),
+          // drillFrom only when a filter level was actually pushed
+          ...(!search && view.category ? { drillFrom: 'trends' as const } : {}),
+        });
+      }
     }
   }, { isActive: isActive !== false });
 

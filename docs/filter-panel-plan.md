@@ -85,16 +85,21 @@ this PR is pure refactor + plumbing and is reviewable on its own.
 
 ## PR 2 — Filter panel UI
 
-7. **`tui/components/FilterPanel.tsx` (new)**, built on the existing `ModalPanel`:
-   - Loads universes: categories, accounts (`getLinkedAccounts`), owners
-     (`householdMembers` + `Unassigned`), tags (`core/tags.ts`).
+7. **`tui/FilterPanel.tsx` (new)**, built on the existing `ModalPanel`:
+   - Loads universes via `getFilterOptions()` (`core/queries.ts`): categories,
+     accounts (id/name/owner), owners derived from accounts (`Unassigned` bucket),
+     tags.
    - State: focused section, per-section selection `Set` (+ tag tri-state map),
-     per-section cursor, inline-search string.
+     per-section cursor.
    - Init from current `filter` (absent dim → all checked; array → those; `[]` → none).
-   - Keys (captured while open): `f`/`Esc` close (`Esc` restores prior state),
-     `←/→` section, `↑/↓` row, `x` toggle (tags cycle), `a` select-all, `i` invert,
-     `/` inline search within section (narrows list, selections persist), `Enter`
-     apply → serialize → `setFilter` → close.
+   - Keys (captured while open): `Esc` close (discards the draft), `←/→` section,
+     `↑/↓` row, `Space` toggle (tags cycle), `a` select-all, `n` select-none,
+     `i` invert (set dims complement; tags swap has↔lacks), `c` clear all sections,
+     `Enter` apply → serialize → `setFilter` → close.
+   - **Deferred** (not in the shipped panel): `/` inline search within a section
+     (narrows list, selections persist) and `f` to close the panel — `f` only
+     opens it today. Both are follow-up candidates; inline search matters most
+     once a category universe outgrows the visible window.
 
 8. **Wire into the three screens:** local `panelOpen` state, render `<FilterPanel>`,
    `f` toggles it, and gate the host `useInput` while open (same pattern as
@@ -127,7 +132,18 @@ The only change: Dashboard's separate search-recompute path
 
 ## Out of scope (possible later)
 
+- **`/` inline section search and `f`-to-close in the panel** — deferred from
+  PR 2's key map (see item 7).
+- **Live preview of filter on dashboard** - as I make decisions on the filter panel
+  update the numbers on the dashboard above. 
 - **Omnisearch** (`tag:happyhour`, `!tag:x`, `owner:Mark`) as a power-user
   accelerator that mutates the same `FilterContext` — a possible PR 3.
 - Configurable AND/OR logic.
 - Cross-restart filter persistence.
+
+
+## Live preview plan:
+1. FilterContext.tsx — add a preview: Filter | null state alongside the history. Have the filter value that useFilter() returns become preview ?? current. Every view instantly gains live preview with zero changes, because they all just read filter. Expose setPreview, and expose the committed value separately for the panel's hydration.
+2. FilterPanel.tsx — the serialization block inside apply() (the selectionToDim calls building next) gets extracted into a draftFilter memo. A useEffect publishes it via setPreview(draftFilter) as the draft changes, and clears it (setPreview(null)) on unmount. Enter commits via setFilter as today — one history push, so the Esc step-back behavior we just built stays clean. Esc just clears the preview, so cancel restores the original view for free.
+
+That last point is the nice part of the design: because preview bypasses pushFilter, toggling 15 checkboxes while previewing doesn't pollute the filter history — only the final Enter does.

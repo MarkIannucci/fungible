@@ -66,6 +66,90 @@ export function mergeFilters(base: Filter | undefined, extra: Filter | undefined
 }
 
 /**
+ * Panel serialization helpers for the select-from-universe dimensions
+ * (categories/accounts/owners). The panel holds the *selected* members as a Set;
+ * these convert to/from the Filter representation, where a fully-selected
+ * universe means "no constraint" (undefined) and a partial selection is the
+ * explicit member list (an empty Set serializes to [] = match-nothing).
+ */
+export function selectionToDim(selected: Set<string>, universe: string[]): string[] | undefined {
+  return selected.size === universe.length && universe.every((v) => selected.has(v))
+    ? undefined
+    : [...selected];
+}
+
+export function selectionFromDim(dim: string[] | undefined, universe: string[]): Set<string> {
+  return dim === undefined ? new Set(universe) : new Set(dim);
+}
+
+/** Complement of a selection against its universe. */
+export function invertSelection(selected: Set<string>, universe: string[]): Set<string> {
+  return new Set(universe.filter((v) => !selected.has(v)));
+}
+
+/**
+ * Invert tag predicates: has↔lacks for tags that are set; off tags stay off.
+ * Tags are predicates rather than a membership set, so inverting means negating
+ * each predicate — turning untouched (off) tags into constraints would AND a
+ * 'lacks' for every tag in the universe, which is never what's wanted. This
+ * definition is also its own inverse.
+ */
+export function invertTagModes(
+  modes: Map<string, 'has' | 'lacks'>,
+): Map<string, 'has' | 'lacks'> {
+  return new Map([...modes].map(([name, m]) => [name, m === 'has' ? 'lacks' : 'has']));
+}
+
+/**
+ * Deep, order-insensitive filter equality. An undefined dimension is NOT equal
+ * to an empty array — unconstrained vs match-nothing (see header comment).
+ */
+export function filtersEqual(a: Filter | undefined, b: Filter | undefined): boolean {
+  const fa = a ?? EMPTY_FILTER;
+  const fb = b ?? EMPTY_FILTER;
+  const setEq = (x: string[] | undefined, y: string[] | undefined) => {
+    if (x === undefined || y === undefined) return x === y;
+    if (x.length !== y.length) return false;
+    const sy = new Set(y);
+    return x.every((v) => sy.has(v));
+  };
+  for (const dim of ['categories', 'accounts', 'owners'] as const) {
+    if (!setEq(fa[dim], fb[dim])) return false;
+  }
+  const tagKeys = (tags: TagPredicate[] | undefined) =>
+    (tags ?? []).map((t) => `${t.name}\0${t.mode}`);
+  return setEq(tagKeys(fa.tags), tagKeys(fb.tags));
+}
+
+/**
+ * History of shared-filter values so Esc can step back one level at a time
+ * instead of clearing everything. `current` is the live filter; `stack` holds
+ * prior values, oldest first.
+ */
+export type FilterHistory = { current: Filter; stack: Filter[] };
+
+export const MAX_FILTER_HISTORY = 20;
+
+/** Set a new current filter, pushing the previous one. No-op when equal. */
+export function pushFilter(h: FilterHistory, next: Filter): FilterHistory {
+  if (filtersEqual(h.current, next)) return h;
+  return { current: next, stack: [...h.stack, h.current].slice(-MAX_FILTER_HISTORY) };
+}
+
+/**
+ * Step back one level: restore the top of the stack. With an empty stack an
+ * active filter clears (so Esc always makes progress, even after the history
+ * cap evicted entries); an inactive one is a no-op.
+ */
+export function popFilter(h: FilterHistory): FilterHistory {
+  if (h.stack.length) {
+    return { current: h.stack[h.stack.length - 1], stack: h.stack.slice(0, -1) };
+  }
+  if (isFilterActive(h.current)) return { current: EMPTY_FILTER, stack: [] };
+  return h;
+}
+
+/**
  * Builds the SQL condition fragments + bound args that restrict rows by the
  * filter. `alias` is the alias (or table name) of the transactions row the
  * conditions reference — 't' in aliased queries, 'transactions' in unaliased

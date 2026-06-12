@@ -56,7 +56,7 @@ const FLEX_TIERS: Array<{ key: keyof FlexSummary; label: string; color: string }
 
 export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { onNavigate: (s: Screen, filter?: TxFilter) => void; isActive?: boolean; initialFilter?: TxFilter; showHints: boolean }) {
   const refreshKey = useRefreshKey();
-  const { filter: sharedFilter } = useFilter();
+  const { filter: sharedFilter, setFilter } = useFilter();
   const now = new Date();
   const [range, setRange] = useState<Range>(() => {
     const r = initialFilter?.range;
@@ -111,8 +111,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
 
   function load(r: Range, a: Date, qf: Filter) {
     const { from, to } = getPeriodDates(r, a);
-    void getAccountRows(from, to).then(setAccountRows);
-    void getOwnerRows(from, to).then(setOwnerRows);
+    void getAccountRows(from, to, qf).then(setAccountRows);
+    void getOwnerRows(from, to, qf).then(setOwnerRows);
     setAcctCursor(0);
     void getRangeSummary(from, to, qf).then(setSummary);
     void getFlexSummary(from, to, qf).then(setFlexData);
@@ -223,12 +223,12 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       if (key.return) {
         const row = merchantRows[merchantCursor];
         if (row && merchantDrill) {
+          setFilter({ ...sharedFilter, categories: [merchantDrill.category], ...(selectedAccount ? { accounts: [selectedAccount.id] } : {}) });
           onNavigate('transactions', {
-            category: merchantDrill.category,
             from: merchantDrill.from,
             to: merchantDrill.to,
             search: row.merchant,
-            ...(selectedAccount ? { account: selectedAccount.id, accountName: selectedAccount.name } : {}),
+            drillFrom: 'dashboard',
           });
         }
         return;
@@ -295,7 +295,10 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         const cat = displayCats[catCursor];
         if (cat) {
           const { from, to } = getPeriodDates(range, anchor);
-          onNavigate('transactions', { category: cat.category, from, to, ...(selectedAccount ? { account: selectedAccount.id, accountName: selectedAccount.name } : {}), ...(search ? { search } : {}) });
+          // Drill-in writes the sticky shared filter (replace those dimensions),
+          // keeping the date range / search as transient nav params.
+          setFilter({ ...sharedFilter, categories: [cat.category], ...(selectedAccount ? { accounts: [selectedAccount.id] } : {}) });
+          onNavigate('transactions', { from, to, ...(search ? { search } : {}), drillFrom: 'dashboard' });
         }
         return;
       }
@@ -304,7 +307,10 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     if (view === 'flex') {
       if (key.return) {
         const { from, to } = getPeriodDates(range, anchor);
-        onNavigate('transactions', { from, to, ...(selectedAccount ? { account: selectedAccount.id, accountName: selectedAccount.name } : {}) });
+        // drillFrom only when a filter level was actually pushed, so Esc's
+        // pop doesn't eat an unrelated level.
+        if (selectedAccount) setFilter({ ...sharedFilter, accounts: [selectedAccount.id] });
+        onNavigate('transactions', { from, to, ...(selectedAccount ? { drillFrom: 'dashboard' as const } : {}) });
         return;
       }
     }
@@ -316,7 +322,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         const acct = accountRows[acctCursor];
         if (acct) {
           const { from, to } = getPeriodDates(range, anchor);
-          onNavigate('transactions', { account: acct.id, accountName: acct.name, from, to });
+          setFilter({ ...sharedFilter, accounts: [acct.id] });
+          onNavigate('transactions', { from, to, drillFrom: 'dashboard' });
         }
         return;
       }
@@ -357,9 +364,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     // Intercept '2' to carry search + period filter into Transactions
     if (input === '2') {
       const { from, to } = getPeriodDates(range, anchor);
+      if (selectedAccount) setFilter({ ...sharedFilter, accounts: [selectedAccount.id] });
       onNavigate('transactions', {
         from, to,
-        ...(selectedAccount ? { account: selectedAccount.id, accountName: selectedAccount.name } : {}),
         ...(search ? { search } : {}),
       });
       return;

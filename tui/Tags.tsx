@@ -9,11 +9,13 @@ import { useTerminalWidth, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from '.
 import { StatCard, ModalPanel, SectionHeader, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
+import { useFilter } from './FilterContext.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
 
 export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean; initialFilter?: TxFilter }) {
   const refreshKey = useRefreshKey();
+  const { filter, setFilter } = useFilter();
   const [tags, setTags] = useState<Tag[]>([]);
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
@@ -31,7 +33,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
       setTags(loaded);
       if (!initialNavDone.current) {
         initialNavDone.current = true;
-        const target = initialFilter?.tag;
+        const target = initialFilter?.focusTag;
         if (target) {
           const idx = loaded.findIndex((t) => t.name.toLowerCase() === target.toLowerCase());
           if (idx >= 0) { setCursor(idx); openDetail(loaded[idx]); }
@@ -119,11 +121,15 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
       if (key.return) {
         const tag = visibleTags[cursor];
         const cat = tagSummary?.byCategory[catCursor];
-        if (tag) onNavigate('transactions', { tag: tag.name, category: cat?.category });
+        if (tag) {
+          setFilter({ ...filter, tags: [{ name: tag.name, mode: 'has' }], ...(cat ? { categories: [cat.category] } : {}) });
+          onNavigate('transactions', { drillFrom: 'tags' });
+        }
         return;
       }
       if (input === 't' && visibleTags[cursor]) {
-        onNavigate('transactions', { tag: visibleTags[cursor].name });
+        setFilter({ ...filter, tags: [{ name: visibleTags[cursor].name, mode: 'has' }] });
+        onNavigate('transactions', { drillFrom: 'tags' });
         return;
       }
       if (handleNavKey(input, 'tags', onNavigate)) return;
@@ -154,7 +160,8 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
       return;
     }
     if (input === 't' && visibleTags[cursor]) {
-      onNavigate('transactions', { tag: visibleTags[cursor].name });
+      setFilter({ ...filter, tags: [{ name: visibleTags[cursor].name, mode: 'has' }] });
+      onNavigate('transactions', { drillFrom: 'tags' });
       return;
     }
   }, { isActive: isActive !== false });

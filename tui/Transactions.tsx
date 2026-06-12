@@ -14,7 +14,7 @@ import {
 import { applyCategoriesToAll } from '../core/categorize.js';
 import { countPatternMatches } from '../core/rule-utils.js';
 import { getTransactions, getAllCategories, getDataBounds, type TxRow, type SortMode } from '../core/queries.js';
-import { mergeFilters } from '../core/filters.js';
+import { isFilterActive, filterSummary } from '../core/filters.js';
 import type { Screen, TxFilter } from './App.js';
 import { useFilter } from './FilterContext.js';
 import { handleNavKey } from './nav.js';
@@ -51,13 +51,9 @@ function truncate(s: string, n: number) {
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();
-  const { filter: sharedFilter } = useFilter();
-  const [category, setCategory] = useState<string | null>(initialFilter?.category ?? null);
+  const { filter: sharedFilter, setFilter, popFilter, canPop } = useFilter();
   const [from, setFrom] = useState<string | null>(initialFilter?.from ?? null);
   const [to, setTo] = useState<string | null>(initialFilter?.to ?? null);
-  const [tag, setTag] = useState<string | null>(initialFilter?.tag ?? null);
-  const [account, setAccount] = useState<string | null>(initialFilter?.account ?? null);
-  const [accountName, setAccountName] = useState<string | null>(initialFilter?.accountName ?? null);
   const [txType] = useState<'income' | 'expenses' | null>(initialFilter?.txType ?? null);
   const [flex] = useState<'fixed' | 'flexible' | 'discretionary' | null>(initialFilter?.flex ?? null);
   const [sort, setSort] = useState<SortMode>('date-desc');
@@ -84,12 +80,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [tagInput, setTagInput] = useState('');
 
   function load(s = search, keepCursor = false) {
-    const queryFilter = mergeFilters(sharedFilter, {
-      categories: category ? [category] : undefined,
-      accounts: account ? [account] : undefined,
-      tags: tag ? [{ name: tag, mode: 'has' }] : undefined,
-    });
-    void getTransactions({ filter: queryFilter, from, to, search: s, sort, txType, flex }).then((rows) => {
+    void getTransactions({ filter: sharedFilter, from, to, search: s, sort, txType, flex }).then((rows) => {
       setTxs(rows);
       if (!keepCursor) setCursor(0);
       else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
@@ -97,7 +88,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   }
 
   useEffect(() => { void getDataBounds().then(setBounds); void getAllCategories().then(setCategories); }, []);
-  useEffect(() => { load(); }, [category, from, to, search, tag, account, sort, txType, flex, sharedFilter, refreshKey]);
+  useEffect(() => { load(); }, [from, to, search, sort, txType, flex, sharedFilter, refreshKey]);
 
   const setTyping = useSetTyping();
   useEffect(() => {
@@ -323,10 +314,15 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === '3') { onNavigate('trends', search ? { search } : undefined); return; }
       if (handleNavKey(input, 'transactions', onNavigate)) return;
       if (key.escape) {
+        // Arriving via a drill-in is reversed as a unit: pop the filter level
+        // the drill pushed and return to its screen — date range, search and
+        // all — rather than peeling those layers one keypress at a time.
+        if (initialFilter?.drillFrom) { popFilter(); onNavigate(initialFilter.drillFrom); return; }
         if (search) { setSearch(''); setSearchInput(''); return; }
         if (from) { setFrom(null); setTo(null); return; }
-        if (tag) { setTag(null); return; }
-        if (account) { setAccount(null); setAccountName(null); return; }
+        // Step back one filter level per press rather than clearing all at once;
+        // popFilter clears when the history is exhausted but a filter is active.
+        if (canPop || isFilterActive(sharedFilter)) { popFilter(); return; }
         onNavigate('dashboard', search ? { search } : undefined);
         return;
       }
@@ -349,8 +345,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === '/') { setMode('search'); return; }
       if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
       if (key.downArrow) setCursor((c) => Math.min(txs.length - 1, c + 1));
-      if (input === 'u') { setSearch(''); setSearchInput(''); setCategory('Uncategorized'); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
-      if (input === 'a') { setSearch(''); setSearchInput(''); setCategory(null); setFrom(null); setTo(null); setTag(null); setAccount(null); setAccountName(null); }
+      if (input === 'u') { setSearch(''); setSearchInput(''); setFrom(null); setTo(null); setFilter({ ...sharedFilter, categories: ['Uncategorized'] }); }
+      if (input === 'a') { setSearch(''); setSearchInput(''); setFrom(null); setTo(null); setFilter({}); }
       if (key.return && selected) openEdit();
       if (input === 'E' && txs.length > 0) {
         void getAllCategories().then((cats) => {
@@ -416,10 +412,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   const dl = dateLabel();
   const filterLabel = [
-    accountName,
-    tag ? `#${tag}` : null,
+    filterSummary(sharedFilter) || null,
     search ? `"${search}"` : null,
-    category,
     txType ? txType.charAt(0).toUpperCase() + txType.slice(1) : null,
     flex ? flex.charAt(0).toUpperCase() + flex.slice(1) : null,
   ].filter(Boolean).join(' · ');
@@ -456,7 +450,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `[/] search  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  [x] delete`
+          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  [x] delete`
           : '[/] search'}
       </Text>
 
