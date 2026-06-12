@@ -31,11 +31,15 @@ npm install
 npm run gui
 ```
 
-For demo mode against an isolated dataset:
+## Demo mode
 
-```bash
-npm run gui:demo   # uses ~/.fungible-demo/
-```
+Demo mode runs against an isolated, pre-seeded dataset at `~/.fungible-demo/` — your real data is untouched. Three ways in:
+
+- **In the app** — fungible menu (macOS) or Help menu (Windows/Linux) → "Try Demo Mode". The app relaunches with demo data; "Leave Demo Mode" switches back.
+- **Packaged binary** — pass `--demo`, e.g. `/Applications/Fungible.app/Contents/MacOS/Fungible --demo`.
+- **From source** — `npm run gui:demo`.
+
+The demo database is seeded with fake accounts and transactions on first launch. Background sync and backups are disabled in demo mode.
 
 ## Packaging locally
 

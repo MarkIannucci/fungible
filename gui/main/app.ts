@@ -13,6 +13,7 @@ import { cancelActivePlaidLink } from './plaid-link.js';
 import { buildMenu } from './menu.js';
 
 const isDev = !!process.env.ELECTRON_RENDERER_URL;
+const isDemo = !!process.env.FUNGIBLE_DEMO;
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -28,7 +29,12 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     try {
       await initDb();
-      backupDb().catch(() => {});
+      if (isDemo) {
+        const { seedDemo } = await import('../../scripts/seed-demo.js');
+        await seedDemo();
+      } else {
+        backupDb().catch(() => {});
+      }
       // Fire-and-forget: a full-table display-name rebuild must not block first paint.
       rebuildDisplayNames().catch((err) => console.error('[gui] display-name rebuild failed:', err));
     } catch (err) {
@@ -47,7 +53,7 @@ if (!app.requestSingleInstanceLock()) {
     buildMenu();
     createWindow();
 
-    syncAll().catch((err) => console.error('[gui] background sync failed:', err));
+    if (!isDemo) syncAll().catch((err) => console.error('[gui] background sync failed:', err));
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

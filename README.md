@@ -4,10 +4,14 @@
 
 Personal finance, keyboard-first. Available as a **terminal UI** or a **desktop app** — both running over the same local data: Plaid sync, CSV import, categorize, tag, search, analyze. Plus an MCP server so Claude can read and manage it for you.
 
-<img src="docs/screenshots/demo.gif" alt="fungible demo" width="720" />
+<img src="docs/screenshots/demo.gif" alt="fungible TUI demo" width="720" />
+
+<img src="docs/screenshots/demo-gui.gif" alt="fungible GUI demo" width="720" />
 
 <details>
 <summary>Screenshots</summary>
+
+### Terminal UI
 
 | | |
 |---|---|
@@ -15,6 +19,15 @@ Personal finance, keyboard-first. Available as a **terminal UI** or a **desktop 
 | ![Trends](docs/screenshots/trends.png) | ![Net Worth](docs/screenshots/net-worth.png) |
 | ![Tags](docs/screenshots/tags.png) | ![Financial Health](docs/screenshots/financial-health.png) |
 | ![Rules](docs/screenshots/rules.png) | ![Accounts](docs/screenshots/accounts.png) |
+
+### Desktop GUI
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/gui/dashboard.png) | ![Transactions](docs/screenshots/gui/transactions.png) |
+| ![Trends](docs/screenshots/gui/trends.png) | ![Net Worth](docs/screenshots/gui/networth.png) |
+| ![Tags](docs/screenshots/gui/tags.png) | ![Financial Health](docs/screenshots/gui/health.png) |
+| ![Rules](docs/screenshots/gui/rules.png) | ![Accounts](docs/screenshots/gui/accounts.png) |
 
 </details>
 
@@ -42,6 +55,8 @@ fungible --demo
 ```
 
 Spins up a fully pre-loaded instance with fake accounts, transactions, tags, and rules — completely isolated from any real data. Good for exploring before connecting a bank.
+
+In the desktop app, pick **"Try Demo Mode"** from the app menu (macOS) or Help menu (Windows/Linux) — the app relaunches with the same isolated demo dataset.
 
 ## Install
 

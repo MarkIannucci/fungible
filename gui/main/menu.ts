@@ -86,12 +86,29 @@ async function checkForUpdates() {
   }
 }
 
+function relaunch(demo: boolean) {
+  const args = process.argv.slice(1).filter((a) => a !== '--demo');
+  if (demo) args.push('--demo');
+  // The relaunched process inherits our env, so demo state set by the
+  // bootstrap (gui/main/index.ts) must be stripped explicitly.
+  if (!demo) {
+    delete process.env.FUNGIBLE_DEMO;
+    delete process.env.FUNGIBLE_DATA_DIR;
+  }
+  app.relaunch({ args });
+  app.quit();
+}
+
 export function buildMenu() {
   const isMac = process.platform === 'darwin';
+  const isDemo = !!process.env.FUNGIBLE_DEMO;
   const checkForUpdatesItem: MenuItemConstructorOptions = {
     label: 'Check for Updates…',
     click: () => checkForUpdates(),
   };
+  const demoItem: MenuItemConstructorOptions = isDemo
+    ? { label: 'Leave Demo Mode', click: () => relaunch(false) }
+    : { label: 'Try Demo Mode', click: () => relaunch(true) };
   const githubItem: MenuItemConstructorOptions = {
     label: 'GitHub Repository',
     click: () => shell.openExternal(`https://github.com/${REPO}`),
@@ -105,6 +122,8 @@ export function buildMenu() {
             submenu: [
               { role: 'about' },
               checkForUpdatesItem,
+              { type: 'separator' },
+              demoItem,
               { type: 'separator' },
               { role: 'services' },
               { type: 'separator' },
@@ -123,7 +142,7 @@ export function buildMenu() {
     {
       role: 'help',
       submenu: [
-        ...(isMac ? [] : [checkForUpdatesItem, { type: 'separator' } as const]),
+        ...(isMac ? [] : [checkForUpdatesItem, demoItem, { type: 'separator' } as const]),
         githubItem,
       ],
     },

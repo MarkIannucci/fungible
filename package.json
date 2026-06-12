@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "node --import tsx/esm tui/index.tsx",
     "gui": "electron-vite dev",
-    "gui:demo": "FUNGIBLE_DATA_DIR=$HOME/.fungible-demo electron-vite dev",
+    "gui:demo": "FUNGIBLE_DEMO=1 electron-vite dev",
     "gui:build": "electron-vite build",
     "gui:dist": "electron-vite build && electron-builder",
     "gui:dist:mac": "electron-vite build && electron-builder --mac",
