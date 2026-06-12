@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getFilterOptions, type FilterOptions } from '../core/queries.js';
 import { useFilter } from './FilterContext.js';
 import {
-  selectionToDim, selectionFromDim, invertSelection, invertTagModes,
+  selectionToDim, selectionFromDim, invertSelection, invertTagModes, filtersEqual,
   type Filter, type TagPredicate,
 } from '../core/filters.js';
 import { ModalPanel } from './components/index.js';
@@ -27,7 +27,7 @@ type Item = { key: string; label: string; sub?: string };
 const WINDOW = 16;
 
 export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose: () => void }) {
-  const { filter, setFilter } = useFilter();
+  const { committed, setFilter, setPreview } = useFilter();
   const [opts, setOpts] = useState<FilterOptions | null>(null);
 
   // Draft selection state. Sets hold the *selected* members of each universe;
@@ -47,10 +47,10 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
   useEffect(() => {
     void getFilterOptions().then((o) => {
       setOpts(o);
-      setCatSel(selectionFromDim(filter.categories, o.categories));
-      setAcctSel(selectionFromDim(filter.accounts, o.accounts.map((a) => a.id)));
-      setOwnerSel(selectionFromDim(filter.owners, o.owners));
-      setTagModes(new Map((filter.tags ?? []).map((t) => [t.name, t.mode])));
+      setCatSel(selectionFromDim(committed.categories, o.categories));
+      setAcctSel(selectionFromDim(committed.accounts, o.accounts.map((a) => a.id)));
+      setOwnerSel(selectionFromDim(committed.owners, o.owners));
+      setTagModes(new Map((committed.tags ?? []).map((t) => [t.name, t.mode])));
       setSection(0);
       setCursors({ categories: 0, accounts: 0, owners: 0, tags: 0 });
     });
@@ -134,8 +134,10 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
     setTagModes(new Map());
   }
 
-  function apply() {
-    if (!opts) { onClose(); return; }
+  // Serialized draft, recomputed as the user adjusts selections. Published as
+  // a live preview below, and committed verbatim by apply() on Enter.
+  const draftFilter = useMemo<Filter | null>(() => {
+    if (!opts) return null;
     const tags: TagPredicate[] = [...tagModes.entries()].map(([name, mode]) => ({ name, mode }));
     const next: Filter = {};
     const cats = selectionToDim(catSel, opts.categories);
@@ -145,7 +147,27 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
     if (accts !== undefined) next.accounts = accts;
     if (owners !== undefined) next.owners = owners;
     if (tags.length) next.tags = tags;
-    setFilter(next);
+    return next;
+  }, [opts, catSel, acctSel, ownerSel, tagModes]);
+
+  // Publish the draft as a live preview (debounced so bulk ops like a/n/i
+  // collapse into one query round-trip), collapsing back to "no preview"
+  // once the draft matches the committed filter.
+  useEffect(() => {
+    if (!draftFilter) return;
+    const id = setTimeout(() => {
+      setPreview(filtersEqual(draftFilter, committed) ? null : draftFilter);
+    }, 120);
+    return () => clearTimeout(id);
+  }, [draftFilter, committed, setPreview]);
+
+  // Clear the preview when the panel closes (Esc or Enter) so screens fall
+  // back to the committed filter.
+  useEffect(() => () => setPreview(null), [setPreview]);
+
+  function apply() {
+    if (!opts || !draftFilter) { onClose(); return; }
+    setFilter(draftFilter);
     onClose();
   }
 

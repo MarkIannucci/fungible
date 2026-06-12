@@ -1688,3 +1688,60 @@ describe('FilterPanel', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 });
+
+// ── FilterPanel live preview ───────────────────────────────────────────────
+describe('FilterPanel live preview', () => {
+  const MAY_DATE_FILTER = { from: '2026-05-01', to: '2026-05-31' };
+
+  function Harness() {
+    const [open, setOpen] = React.useState(true);
+    return (
+      <FilterProvider>
+        <Transactions onNavigate={noop} showHints={false} initialFilter={MAY_DATE_FILTER} isActive={!open} />
+        {open && <FilterPanel isActive={open} onClose={() => setOpen(false)} />}
+      </FilterProvider>
+    );
+  }
+
+  function harness() {
+    return render(<W><Harness /></W>);
+  }
+
+  it('toggling categories updates the transaction list before Enter is pressed', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('n'); // deselect all categories → matches nothing
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+  });
+
+  it('Esc reverts the preview, leaving the committed filter untouched', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    expect(frame(r)).not.toContain('0 categories');
+  });
+
+  it('Enter commits the preview and updates the filter summary', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Whole Foods');
+      expect(f).toContain('0 categories');
+    });
+  });
+
+  it('opening and closing without changes leaves the view unchanged', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).not.toContain('Filter'));
+    expect(frame(r)).toContain('Whole Foods');
+  });
+});
