@@ -40,6 +40,14 @@ jobs:
 
       - run: npm ci
 
+      # npm ci on the arm64 mac runner only installs the arm64 libsql binding;
+      # the x64 build needs @libsql/darwin-x64 in node_modules too. --force
+      # overrides npm's wrong-platform (EBADPLATFORM) refusal.
+      - name: Install x64 libsql binding for mac cross-build
+        if: matrix.target == 'mac'
+        # fs read because libsql's exports field blocks require('libsql/package.json')
+        run: npm install --no-save --force @libsql/darwin-x64@$(node -p "JSON.parse(require('fs').readFileSync('node_modules/libsql/package.json','utf8')).version")
+
       # package.json version is cosmetic, but electron-builder bakes it into
       # installer filenames — set it to the new tag so artifacts read e.g.
       # fungible-1.6.3-mac-arm64.dmg instead of -0.0.0-nobumpnecessary-.
