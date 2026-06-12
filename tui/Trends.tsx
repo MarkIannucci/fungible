@@ -148,6 +148,8 @@ export function Trends({
           ...(!search && view.mode === 'flex' && view.flex ? { flex: view.flex } : {}),
           from: row.from, to: row.to,
           ...(search ? { search } : {}),
+          // drillFrom only when a filter level was actually pushed
+          ...(!search && view.category ? { drillFrom: 'trends' as const } : {}),
         });
       }
     }

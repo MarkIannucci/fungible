@@ -123,13 +123,13 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
         const cat = tagSummary?.byCategory[catCursor];
         if (tag) {
           setFilter({ ...filter, tags: [{ name: tag.name, mode: 'has' }], ...(cat ? { categories: [cat.category] } : {}) });
-          onNavigate('transactions');
+          onNavigate('transactions', { drillFrom: 'tags' });
         }
         return;
       }
       if (input === 't' && visibleTags[cursor]) {
         setFilter({ ...filter, tags: [{ name: visibleTags[cursor].name, mode: 'has' }] });
-        onNavigate('transactions');
+        onNavigate('transactions', { drillFrom: 'tags' });
         return;
       }
       if (handleNavKey(input, 'tags', onNavigate)) return;
@@ -161,7 +161,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
     }
     if (input === 't' && visibleTags[cursor]) {
       setFilter({ ...filter, tags: [{ name: visibleTags[cursor].name, mode: 'has' }] });
-      onNavigate('transactions');
+      onNavigate('transactions', { drillFrom: 'tags' });
       return;
     }
   }, { isActive: isActive !== false });

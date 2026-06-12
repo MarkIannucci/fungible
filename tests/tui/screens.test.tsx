@@ -377,17 +377,18 @@ describe('Transactions', () => {
     await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined));
   });
 
+  // Pushes filter levels into the shared context on mount, simulating a
+  // panel apply and/or a drill-in.
+  function PushFilters({ filters }: { filters: Filter[] }) {
+    const { setFilter } = useFilter();
+    React.useEffect(() => {
+      for (const f of filters) setFilter(f);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return null;
+  }
+
   it('Escape steps back one filter level at a time through history', async () => {
-    // Pushes filter levels into the shared context on mount, simulating a
-    // panel apply followed by a drill-in.
-    function PushFilters({ filters }: { filters: Filter[] }) {
-      const { setFilter } = useFilter();
-      React.useEffect(() => {
-        for (const f of filters) setFilter(f);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, []);
-      return null;
-    }
     const onNavigate = vi.fn();
     const r = render(
       <W>
@@ -412,6 +413,32 @@ describe('Transactions', () => {
     expect(onNavigate).not.toHaveBeenCalled();
     r.stdin.write('\x1b'); // nothing left → navigate
     await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined));
+  });
+
+  it('Escape reverses a drill-in in one press: pops the filter and returns to its screen', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <PushFilters filters={[{ categories: ['Grocery'] }]} />
+          <Transactions
+            onNavigate={onNavigate}
+            showHints={false}
+            initialFilter={{ ...MAY_DATE_FILTER, drillFrom: 'dashboard' }}
+          />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('1 category');
+      expect(f).toMatch(/May 2026/);
+    });
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard'));
+    // The drill's filter level was popped, not merely navigated away from
+    await waitFor(() => expect(frame(r)).not.toContain('1 category'));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 
   it('shows a filter-summary label when the shared filter is active', async () => {

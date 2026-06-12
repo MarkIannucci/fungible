@@ -314,6 +314,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === '3') { onNavigate('trends', search ? { search } : undefined); return; }
       if (handleNavKey(input, 'transactions', onNavigate)) return;
       if (key.escape) {
+        // Arriving via a drill-in is reversed as a unit: pop the filter level
+        // the drill pushed and return to its screen — date range, search and
+        // all — rather than peeling those layers one keypress at a time.
+        if (initialFilter?.drillFrom) { popFilter(); onNavigate(initialFilter.drillFrom); return; }
         if (search) { setSearch(''); setSearchInput(''); return; }
         if (from) { setFrom(null); setTo(null); return; }
         // Step back one filter level per press rather than clearing all at once;
