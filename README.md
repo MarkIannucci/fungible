@@ -108,7 +108,8 @@ The `FUNGIBLE_MCP_PORT` and `FUNGIBLE_API_PORT` env vars (in `~/.fungible/.env`)
 | `8` | Accounts |
 | `9` | Canvas |
 | `q` | Quit |
-| `Esc` | Back / clear filter |
+| `f` | Filter panel (Dashboard, Transactions, Trends) |
+| `Esc` | Back / step back one filter level |
 
 ## Key bindings
 
@@ -136,6 +137,7 @@ Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse 
 | `Space` | Toggle account filter (Account view) |
 | `c` | Clear account filter |
 | `d` | Toggle delta mode (spending vs prior period / same period last year / 12-month avg) |
+| `f` | Open filter panel |
 | `/` | Search transactions by name (regex); filters category totals live |
 
 In **Categories** view, spending is broken down by category with bar charts. In **Flex** view, spending is grouped by flexibility tier (fixed / flexible / discretionary / untagged). In **Account** view, select an account to filter all dashboard data to that account.
@@ -150,15 +152,16 @@ In **delta mode**, the bar chart is replaced by three delta columns — vs prev 
 | `← →` | Previous / next month (when date filter active) |
 | `s` | Cycle sort: Date ↓↑ → Description ↑↓ → Amount ↓↑ → Category ↑↓ |
 | `/` | Search by name (regex); inherited from Dashboard if navigated with an active search |
-| `a` | Show all transactions |
-| `u` | Show uncategorized only |
+| `f` | Open filter panel |
+| `a` | Show all transactions (clears the shared filter, search, and dates) |
+| `u` | Filter to Uncategorized (keeps other filter dimensions) |
 | `Enter` | Edit selected transaction |
 | `g` | Tag panel: add/remove tags on selected transaction |
 | `G` | Tag all visible transactions at once (use `/` to filter first) |
 | `c` | Undo manual category override |
 | `i` | Ignore / un-ignore selected transaction |
 | `x` | Delete selected transaction (CSV-imported only) |
-| `Esc` | Clear active filter (peels off one at a time) |
+| `Esc` | Step back one filter level at a time; after a drill-in, reverses it and returns to the originating screen |
 
 The **edit panel** has four fields navigated with `↑ ↓`: **Name** (display name override), **Category** (cycle with `← →`), **Pattern**, and **Match type**. Leave Pattern empty and `Enter` saves the change to just this transaction. Fill in Pattern and `Enter` creates a category rule (and/or name rule) that applies to all matching transactions.
 
@@ -170,8 +173,27 @@ The **edit panel** has four fields navigated with `↑ ↓`: **Name** (display n
 | `↑ ↓` | Navigate periods |
 | `r` | Cycle aggregation range (Week / Month / Quarter / Year) |
 | `Enter` | Drill into transactions for selected period |
+| `f` | Open filter panel |
 | `/` | Search transactions by name; hides view selector and shows net-style bars for matches |
 | `Esc` | Clear active search (or navigate back) |
+
+### Filter panel `[f]`
+
+Press `f` on Dashboard, Transactions, or Trends to open the session-wide filter panel. The filter has four dimensions — categories, accounts, owners, and tags — and applies to all three screens at once. Drill-ins (e.g. `Enter` on a Dashboard category) write to the same filter, and every change pushes one level of history so `Esc` can step back through it.
+
+| Key | Action |
+|-----|--------|
+| `← →` | Switch section (Categories / Accounts / Owners / Tags) |
+| `↑ ↓` | Move within section |
+| `Space` | Toggle selected item (tags cycle: off → has → lacks) |
+| `a` | Select all in section |
+| `n` | Select none in section |
+| `i` | Invert section (tags swap has ↔ lacks) |
+| `c` | Clear all sections |
+| `Enter` | Apply and close |
+| `Esc` | Cancel without applying |
+
+Everything selected in a section means "no constraint" for that dimension. The filter is session-only — it resets on restart.
 
 ### Net Worth `[4]`
 
