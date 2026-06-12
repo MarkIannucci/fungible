@@ -51,7 +51,7 @@ function truncate(s: string, n: number) {
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();
-  const { filter: sharedFilter, setFilter } = useFilter();
+  const { filter: sharedFilter, setFilter, popFilter, canPop } = useFilter();
   const [from, setFrom] = useState<string | null>(initialFilter?.from ?? null);
   const [to, setTo] = useState<string | null>(initialFilter?.to ?? null);
   const [txType] = useState<'income' | 'expenses' | null>(initialFilter?.txType ?? null);
@@ -316,7 +316,9 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (key.escape) {
         if (search) { setSearch(''); setSearchInput(''); return; }
         if (from) { setFrom(null); setTo(null); return; }
-        if (isFilterActive(sharedFilter)) { setFilter({}); return; }
+        // Step back one filter level per press rather than clearing all at once;
+        // popFilter clears when the history is exhausted but a filter is active.
+        if (canPop || isFilterActive(sharedFilter)) { popFilter(); return; }
         onNavigate('dashboard', search ? { search } : undefined);
         return;
       }
