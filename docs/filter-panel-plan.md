@@ -134,7 +134,16 @@ The only change: Dashboard's separate search-recompute path
 
 - **`/` inline section search and `f`-to-close in the panel** — deferred from
   PR 2's key map (see item 7).
+- **Live preview of filter on dashboard** - as I make decisions on the filter panel
+  update the numbers on the dashboard above. 
 - **Omnisearch** (`tag:happyhour`, `!tag:x`, `owner:Mark`) as a power-user
   accelerator that mutates the same `FilterContext` — a possible PR 3.
 - Configurable AND/OR logic.
 - Cross-restart filter persistence.
+
+
+## Live preview plan:
+1. FilterContext.tsx — add a preview: Filter | null state alongside the history. Have the filter value that useFilter() returns become preview ?? current. Every view instantly gains live preview with zero changes, because they all just read filter. Expose setPreview, and expose the committed value separately for the panel's hydration.
+2. FilterPanel.tsx — the serialization block inside apply() (the selectionToDim calls building next) gets extracted into a draftFilter memo. A useEffect publishes it via setPreview(draftFilter) as the draft changes, and clears it (setPreview(null)) on unmount. Enter commits via setFilter as today — one history push, so the Esc step-back behavior we just built stays clean. Esc just clears the preview, so cancel restores the original view for free.
+
+That last point is the nice part of the design: because preview bypasses pushFilter, toggling 15 checkboxes while previewing doesn't pollute the filter history — only the final Enter does.
