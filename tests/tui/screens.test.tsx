@@ -8,6 +8,7 @@ vi.mock('../../core/db.js', async () => {
 });
 
 import { db } from '../../core/db.js';
+import * as queries from '../../core/queries.js';
 import { seedTuiData } from '../helpers/seedTuiData.js';
 import { App } from '../../tui/App.js';
 import { Dashboard } from '../../tui/Dashboard.js';
@@ -1744,4 +1745,78 @@ describe('FilterPanel live preview', () => {
     await waitFor(() => expect(frame(r)).not.toContain('Filter'));
     expect(frame(r)).toContain('Whole Foods');
   });
+
+  it('a burst of draft changes collapses into a single preview query (debounce)', async () => {
+    // The keystrokes all land within one tick — far under the debounce window —
+    // so every intermediate draft is coalesced and only the final state queries.
+    const spy = vi.spyOn(queries, 'getTransactions');
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    const baseline = spy.mock.calls.length;
+    r.stdin.write('n'); // none
+    r.stdin.write('a'); // all (== committed)
+    r.stdin.write('n'); // none again
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    expect(spy.mock.calls.length - baseline).toBe(1);
+    spy.mockRestore();
+  });
 });
+
+// ── FilterPanel live preview — propagation & history ───────────────────────
+describe('FilterPanel live preview — propagation & history', () => {
+  it('previews on the Dashboard, the screen the panel was opened from', async () => {
+    // The panel lists category *names*, so assert on a Dashboard-only signal:
+    // the Expenses total ($388.99 for seeded May), which no panel row renders.
+    function DashHarness() {
+      const [open, setOpen] = React.useState(true);
+      return (
+        <FilterProvider>
+          <Dashboard onNavigate={noop} showHints={false} initialFilter={MAY_FILTER} isActive={!open} />
+          {open && <FilterPanel isActive={open} onClose={() => setOpen(false)} />}
+        </FilterProvider>
+      );
+    }
+    const r = render(<W><DashHarness /></W>);
+    await waitFor(() => expect(frame(r)).toContain('$388.99'));
+    r.stdin.write('n'); // deselect all categories → nothing matches
+    await waitFor(() => expect(frame(r)).not.toContain('$388.99'));
+    expect(frame(r)).toContain('$0.00'); // expenses fall to zero live
+  });
+
+  it('previewing many toggles never pushes history; commit pushes exactly one level', async () => {
+    // Undated filter so Esc in Transactions pops the filter rather than first
+    // clearing a date range (the from/search short-circuits run ahead of pop).
+    const probe = { canPop: false };
+    function Probe() {
+      const { canPop } = useFilter();
+      probe.canPop = canPop;
+      return null;
+    }
+    function H() {
+      const [open, setOpen] = React.useState(true);
+      return (
+        <FilterProvider>
+          <Probe />
+          <Transactions onNavigate={noop} showHints={false} isActive={!open} />
+          {open && <FilterPanel isActive={open} onClose={() => setOpen(false)} />}
+        </FilterProvider>
+      );
+    }
+    const r = render(<W><H /></W>);
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    // A flurry of draft changes — each would be a history push if preview
+    // wrongly committed via setFilter instead of setPreview.
+    for (const k of ['n', 'a', 'i', ' ', ' ', 'i', 'n']) r.stdin.write(k);
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    expect(probe.canPop).toBe(false); // preview bypassed history entirely
+    r.stdin.write('\r'); // Enter commits exactly one level
+    await waitFor(() => expect(probe.canPop).toBe(true));
+    // One Esc in Transactions steps straight back to the original view.
+    r.stdin.write('\x1b');
+    await waitFor(() => {
+      expect(frame(r)).toContain('Whole Foods');
+      expect(probe.canPop).toBe(false);
+    });
+  });
+});
+
