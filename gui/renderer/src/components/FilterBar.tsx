@@ -47,6 +47,7 @@ function FilterPanel({
   const [accounts, setAccounts] = useState<Array<{ id: string; label: string }> | null>(null);
   const [owners, setOwners] = useState<string[] | null>(null);
   const [tagNames, setTagNames] = useState<string[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [selCats, setSelCats] = useState<Set<string>>(new Set());
   const [selAccts, setSelAccts] = useState<Set<string>>(new Set());
@@ -73,6 +74,8 @@ function FilterPanel({
       setSelAccts(new Set(filter.accounts ?? acctOptions.map((a) => a.id)));
       setSelOwners(new Set(filter.owners ?? ownerOptions));
       setTagModes(new Map((filter.tags ?? []).map((t: TagPredicate) => [t.name, t.mode])));
+    }).catch((e: unknown) => {
+      setLoadError(e instanceof Error ? e.message : String(e));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -134,7 +137,9 @@ function FilterPanel({
 
   return (
     <Modal title="Filter" onClose={onClose}>
-      {!loaded ? (
+      {loadError ? (
+        <p className="warn">Failed to load filter options: {loadError}</p>
+      ) : !loaded ? (
         <p className="dim">Loading…</p>
       ) : (
         <>

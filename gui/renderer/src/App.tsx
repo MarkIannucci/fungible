@@ -9,6 +9,7 @@ import { UiPrefsProvider } from './hooks/useUiPrefs.js';
 import { useScreenKeys, type KeyHandlers } from './hooks/useScreenKeys.js';
 import { SideNav } from './components/SideNav.js';
 import { ChatDrawer } from './components/ChatDrawer.js';
+import { ErrorBoundary } from './components/ErrorBoundary.js';
 import { FilterBar } from './components/FilterBar.js';
 import { Dashboard } from './screens/Dashboard.js';
 import { Transactions } from './screens/Transactions.js';
@@ -89,7 +90,9 @@ function AppInner() {
         <SideNav active={screen} onSelect={navigate} />
         <div className={styles.main}>
           {filterableScreens.includes(screen) && <FilterBar />}
-          <main className={styles.content}>{current}</main>
+          <main className={styles.content}>
+            <ErrorBoundary key={`${screen}:${navKey}`}>{current}</ErrorBoundary>
+          </main>
           <ChatDrawer />
         </div>
       </div>

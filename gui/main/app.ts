@@ -9,6 +9,7 @@ import { syncAll } from '../../core/sync.js';
 import { registerBridge } from './bridge.js';
 import { registerRefreshPush } from './refresh-ipc.js';
 import { registerAgentIpc, rejectPendingConfirms } from './agent-ipc.js';
+import { cancelActivePlaidLink } from './plaid-link.js';
 import { buildMenu } from './menu.js';
 
 const isDev = !!process.env.ELECTRON_RENDERER_URL;
@@ -28,7 +29,8 @@ if (!app.requestSingleInstanceLock()) {
     try {
       await initDb();
       backupDb().catch(() => {});
-      await rebuildDisplayNames();
+      // Fire-and-forget: a full-table display-name rebuild must not block first paint.
+      rebuildDisplayNames().catch((err) => console.error('[gui] display-name rebuild failed:', err));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const hint = /hrana|stream/i.test(msg)
@@ -97,7 +99,10 @@ function createWindow() {
       /* non-fatal */
     }
   });
-  win.on('closed', rejectPendingConfirms);
+  win.on('closed', () => {
+    rejectPendingConfirms();
+    cancelActivePlaidLink();
+  });
 
   if (isDev) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL!);

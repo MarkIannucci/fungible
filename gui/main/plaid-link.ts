@@ -103,6 +103,15 @@ function successPage() {
 }
 
 let activeLink: Promise<{ institutionName: string | null }> | null = null;
+let cancelActive: (() => void) | null = null;
+
+const MAX_CALLBACK_BODY = 1_000_000;
+
+/** Abort an in-progress link flow (e.g. window closed): closes the callback
+ *  server, rejects the pending promise, and allows a fresh retry. */
+export function cancelActivePlaidLink() {
+  cancelActive?.();
+}
 
 /** Starts the link flow in the system browser. Resolves when a bank is
  *  connected, rejects on timeout (10 min) or server failure. */
@@ -127,8 +136,18 @@ export function runPlaidLink(daysRequested?: number): Promise<{ institutionName:
 
         if (req.method === 'POST' && req.url === '/callback') {
           let body = '';
-          req.on('data', (chunk) => (body += chunk));
+          let overflow = false;
+          req.on('data', (chunk) => {
+            body += chunk;
+            if (body.length > MAX_CALLBACK_BODY && !overflow) {
+              overflow = true;
+              res.writeHead(413);
+              res.end();
+              req.destroy();
+            }
+          });
           req.on('end', async () => {
+            if (overflow) return;
             try {
               const { public_token, institution } = JSON.parse(body);
               const { accessToken, itemId } = await exchangePublicToken(public_token);
@@ -149,6 +168,8 @@ export function runPlaidLink(daysRequested?: number): Promise<{ institutionName:
             } catch (e) {
               res.writeHead(500, { 'Content-Type': 'text/plain' });
               res.end(e instanceof Error ? e.message : String(e));
+              finish();
+              reject(e instanceof Error ? e : new Error(String(e)));
             }
           });
           return;
@@ -167,7 +188,13 @@ export function runPlaidLink(daysRequested?: number): Promise<{ institutionName:
         clearTimeout(timeout);
         setTimeout(() => server.close(), 1000);
         activeLink = null;
+        cancelActive = null;
       }
+
+      cancelActive = () => {
+        finish();
+        reject(new Error('Plaid link cancelled'));
+      };
 
       server.listen(0, '127.0.0.1', () => {
         const addr = server.address();
@@ -181,6 +208,7 @@ export function runPlaidLink(daysRequested?: number): Promise<{ institutionName:
       });
     })().catch((err) => {
       activeLink = null;
+      cancelActive = null;
       reject(err);
     });
   });

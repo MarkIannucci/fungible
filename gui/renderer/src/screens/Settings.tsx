@@ -180,6 +180,8 @@ function ConfigPanel({ showStatus }: { showStatus: (msg: string) => void }) {
           ? 'Nothing to save'
           : `Saved ${written.length} value${written.length === 1 ? '' : 's'} · restart to apply`,
       );
+    } catch (e) {
+      showStatus(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
     }

@@ -14,7 +14,11 @@ export type EnvUpdates = Record<string, string>;
 export function writeEnvFile(updates: EnvUpdates): { written: string[]; path: string } {
   const filtered: EnvUpdates = {};
   for (const [k, v] of Object.entries(updates)) {
-    if (typeof v === 'string' && v.trim() !== '') filtered[k] = v.trim();
+    if (typeof v !== 'string' || v.trim() === '') continue;
+    if (!/^[A-Z][A-Z0-9_]*$/.test(k)) throw new Error(`Invalid env key: ${JSON.stringify(k)}`);
+    const value = v.trim();
+    if (/[\r\n]/.test(value)) throw new Error(`Value for ${k} must not contain line breaks`);
+    filtered[k] = value;
   }
   const written = Object.keys(filtered);
   if (written.length === 0) return { written, path: ENV_PATH };
@@ -41,5 +45,7 @@ export function writeEnvFile(updates: EnvUpdates): { written: string[]; path: st
   }
 
   fs.writeFileSync(ENV_PATH, out.join('\n') + '\n', { encoding: 'utf8', mode: 0o600 });
+  // writeFileSync only applies mode on creation; tighten pre-existing files too
+  fs.chmodSync(ENV_PATH, 0o600);
   return { written, path: ENV_PATH };
 }

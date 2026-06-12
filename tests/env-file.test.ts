@@ -66,4 +66,22 @@ describe('writeEnvFile', () => {
     const mode = fs.statSync(ENV_PATH).mode & 0o777;
     expect(mode).toBe(0o600);
   });
+
+  it('tightens perms to 0600 on a pre-existing world-readable file', () => {
+    fs.writeFileSync(ENV_PATH, 'PLAID_CLIENT_ID=old\n', { mode: 0o644 });
+    writeEnvFile({ PLAID_CLIENT_ID: 'new' });
+    const mode = fs.statSync(ENV_PATH).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it('rejects values containing newlines (env injection)', () => {
+    expect(() => writeEnvFile({ PLAID_SECRET: 'sk-live-abc\nANTHROPIC_API_KEY=BAD' })).toThrow(/line breaks/);
+    expect(() => writeEnvFile({ PLAID_SECRET: 'sk-live-abc\rX=Y' })).toThrow(/line breaks/);
+    expect(fs.existsSync(ENV_PATH)).toBe(false);
+  });
+
+  it('rejects invalid key names', () => {
+    expect(() => writeEnvFile({ 'bad key': 'x' })).toThrow(/Invalid env key/);
+    expect(() => writeEnvFile({ 'X=Y\nZ': 'x' })).toThrow(/Invalid env key/);
+  });
 });

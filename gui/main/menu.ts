@@ -12,16 +12,18 @@ async function fetchLatestTag(): Promise<string> {
     req.setHeader('User-Agent', `fungible/${app.getVersion()}`);
     req.setHeader('Accept', 'application/vnd.github+json');
 
-    let body = '';
+    const chunks: Buffer[] = [];
     req.on('response', (res) => {
       if (res.statusCode !== 200) {
         reject(new Error(`GitHub API returned ${res.statusCode}`));
         return;
       }
-      res.on('data', (chunk) => (body += chunk.toString()));
+      // Buffer and decode once at the end — per-chunk toString() corrupts
+      // multi-byte UTF-8 sequences split across chunk boundaries.
+      res.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
       res.on('end', () => {
         try {
-          const json = JSON.parse(body) as { tag_name?: string };
+          const json = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { tag_name?: string };
           resolve(String(json.tag_name ?? ''));
         } catch (e) {
           reject(e);

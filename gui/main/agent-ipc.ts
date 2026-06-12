@@ -8,6 +8,7 @@ import { detectProvider, getProviderModel } from '../../core/llm-provider.js';
 const history: Message[] = [];
 const pendingConfirms = new Map<number, (yes: boolean) => void>();
 let nextConfirmId = 1;
+let inflight = false;
 
 export function registerAgentIpc() {
   ipcMain.handle('agent:provider', () => {
@@ -20,10 +21,13 @@ export function registerAgentIpc() {
   });
 
   ipcMain.handle('agent:reset', () => {
+    if (inflight) return; // clearing mid-turn would corrupt the streaming turn's history
     history.length = 0;
   });
 
   ipcMain.handle('agent:run', async (e, userMessage: string) => {
+    if (inflight) throw new Error('The agent is already responding — wait for the current turn to finish');
+    inflight = true;
     const send = (channel: string, ...args: unknown[]) => {
       if (!e.sender.isDestroyed()) e.sender.send(channel, ...args);
     };
@@ -43,6 +47,9 @@ export function registerAgentIpc() {
     } catch (err) {
       history.splice(historyLenBefore); // roll back the partial turn
       throw err;
+    } finally {
+      inflight = false;
+      rejectPendingConfirms(); // any confirm still pending belongs to a failed turn
     }
   });
 
