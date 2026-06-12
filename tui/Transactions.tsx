@@ -345,7 +345,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === '/') { setMode('search'); return; }
       if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
       if (key.downArrow) setCursor((c) => Math.min(txs.length - 1, c + 1));
-      if (input === 'u') { setSearch(''); setSearchInput(''); setFrom(null); setTo(null); setFilter({ categories: ['Uncategorized'] }); }
+      if (input === 'u') { setSearch(''); setSearchInput(''); setFrom(null); setTo(null); setFilter({ ...sharedFilter, categories: ['Uncategorized'] }); }
       if (input === 'a') { setSearch(''); setSearchInput(''); setFrom(null); setTo(null); setFilter({}); }
       if (key.return && selected) openEdit();
       if (input === 'E' && txs.length > 0) {

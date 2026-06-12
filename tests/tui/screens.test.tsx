@@ -415,6 +415,19 @@ describe('Transactions', () => {
     await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined));
   });
 
+  it('u narrows to Uncategorized while keeping the other filter dimensions', async () => {
+    const r = render(
+      <W>
+        <FilterProvider initial={{ accounts: ['test-credit'] }}>
+          <Transactions onNavigate={noop} showHints={false} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('1 account'));
+    r.stdin.write('u');
+    await waitFor(() => expect(frame(r)).toContain('1 account, 1 category'));
+  });
+
   it('Escape reverses a drill-in in one press: pops the filter and returns to its screen', async () => {
     const onNavigate = vi.fn();
     const r = render(
