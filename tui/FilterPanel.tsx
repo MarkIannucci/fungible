@@ -25,6 +25,10 @@ const SECTION_LABEL: Record<Section, string> = {
 type Item = { key: string; label: string; sub?: string };
 
 const WINDOW = 16;
+// Debounce window for publishing the live preview. Bulk ops (a/n/i) mutate the
+// draft several times within a single tick; coalescing them past this delay
+// collapses the burst into one query round-trip instead of one per keystroke.
+const PREVIEW_DEBOUNCE_MS = 120;
 
 export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose: () => void }) {
   const { committed, setFilter, setPreview } = useFilter();
@@ -43,7 +47,10 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
     categories: 0, accounts: 0, owners: 0, tags: 0,
   });
 
-  // Load options + hydrate the draft from the current shared filter on open.
+  // Load options + hydrate the draft on open. We hydrate from `committed`, not
+  // from `filter` (== preview ?? committed): the panel is the thing publishing
+  // the preview, so reading `filter` here would re-seed the draft from our own
+  // preview — a feedback loop. `committed` is the stable source of truth.
   useEffect(() => {
     void getFilterOptions().then((o) => {
       setOpts(o);
@@ -150,19 +157,22 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
     return next;
   }, [opts, catSel, acctSel, ownerSel, tagModes]);
 
-  // Publish the draft as a live preview (debounced so bulk ops like a/n/i
-  // collapse into one query round-trip), collapsing back to "no preview"
-  // once the draft matches the committed filter.
+  // Publish the draft as a live preview (debounced), collapsing back to "no
+  // preview" once the draft matches the committed filter. `committed` is a dep
+  // but cannot change while the panel is open — the modal gates host input, so
+  // nothing can call setFilter/popFilter underneath us.
   useEffect(() => {
     if (!draftFilter) return;
     const id = setTimeout(() => {
       setPreview(filtersEqual(draftFilter, committed) ? null : draftFilter);
-    }, 120);
+    }, PREVIEW_DEBOUNCE_MS);
     return () => clearTimeout(id);
   }, [draftFilter, committed, setPreview]);
 
-  // Clear the preview when the panel closes (Esc or Enter) so screens fall
-  // back to the committed filter.
+  // On unmount (Esc or Enter), force the preview back to null so screens fall
+  // back to the committed filter. This is distinct from the debounce cleanup
+  // above: that only cancels a pending timer, which would otherwise strand a
+  // previously-published (non-null) preview if we close before it fires.
   useEffect(() => () => setPreview(null), [setPreview]);
 
   function apply() {
