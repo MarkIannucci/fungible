@@ -82,11 +82,12 @@ describe('GUI Tags', () => {
     await waitFor(() => expect(screen.getByText('# travel')).toBeTruthy());
     await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'all transactions →' }));
-    expect(navigate).toHaveBeenCalledWith('transactions', { tag: 'travel' });
+    // Drill-ins write the tag into the shared filter; nav only carries drillFrom.
+    expect(navigate).toHaveBeenCalledWith('transactions', { drillFrom: 'tags' });
   });
 
   it('opens detail directly from a tag nav filter', async () => {
-    renderScreen(<Tags />, { txFilter: { tag: 'travel' } });
+    renderScreen(<Tags />, { txFilter: { focusTag: 'travel' } });
     await waitFor(() => expect(screen.getByText('# travel')).toBeTruthy());
   });
 });

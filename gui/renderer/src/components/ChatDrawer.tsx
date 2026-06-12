@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNav } from '../hooks/useNav.js';
+import { useFilter } from '../hooks/useFilter.js';
 import type { Screen, TxFilter } from '../../../shared/nav.js';
 import styles from './ChatDrawer.module.css';
 
@@ -14,6 +15,7 @@ const MAX_DISPLAY = 200;
 
 export function ChatDrawer() {
   const { navigate } = useNav();
+  const { filter: sharedFilter, setFilter } = useFilter();
   const [open, setOpen] = useState(false);
   const [provider, setProvider] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<DisplayMsg[]>([]);
@@ -27,6 +29,8 @@ export function ChatDrawer() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
+  const filterRef = useRef({ sharedFilter, setFilter });
+  filterRef.current = { sharedFilter, setFilter };
 
   function addMsg(msg: DisplayMsg) {
     setMsgs((prev) => {
@@ -52,7 +56,27 @@ export function ChatDrawer() {
       window.__bridge.on('agent:navigate', (...args) => {
         const screen = args[0] as Screen;
         const filter = args[1] as Record<string, string> | undefined;
-        navigateRef.current(screen, filter as TxFilter | undefined);
+        // Filtering dimensions drive the sticky shared filter (replace those
+        // dims); category/tag focus targets ride along as transient nav params.
+        // Same translation as tui/Chat.tsx.
+        if (screen === 'transactions' && (filter?.category || filter?.account || filter?.tag)) {
+          filterRef.current.setFilter({
+            ...filterRef.current.sharedFilter,
+            ...(filter.category ? { categories: [filter.category] } : {}),
+            ...(filter.account ? { accounts: [filter.account] } : {}),
+            ...(filter.tag ? { tags: [{ name: filter.tag, mode: 'has' as const }] } : {}),
+          });
+        }
+        const txFilter: TxFilter = {};
+        if (filter?.from)   txFilter.from   = filter.from;
+        if (filter?.to)     txFilter.to     = filter.to;
+        if (filter?.search) txFilter.search = filter.search;
+        if (filter?.range)  txFilter.range  = filter.range;
+        if (filter?.anchor) txFilter.anchor = filter.anchor;
+        if (filter?.canvasSpec) txFilter.canvasSpec = filter.canvasSpec;
+        if (screen === 'trends' && filter?.category) txFilter.focusCategory = filter.category;
+        if (screen === 'tags'   && filter?.tag)      txFilter.focusTag      = filter.tag;
+        navigateRef.current(screen, Object.keys(txFilter).length ? txFilter : undefined);
       }),
     ];
     return () => offs.forEach((off) => off());

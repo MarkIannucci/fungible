@@ -77,7 +77,7 @@ describe('GUI Trends', () => {
   });
 
   it('honors an initial category filter by selecting that view', async () => {
-    renderScreen(<Trends />, { txFilter: { category: 'Grocery' } });
+    renderScreen(<Trends />, { txFilter: { focusCategory: 'Grocery' } });
     const select = await screen.findByRole('combobox');
     await waitFor(() => {
       const selected = (select as HTMLSelectElement).selectedOptions[0]?.textContent;

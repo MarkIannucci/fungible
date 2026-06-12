@@ -11,19 +11,22 @@ export type Screen =
   | 'canvas'
   | 'settings';
 
+// Transient, per-navigation params. The persistent transaction-filtering
+// dimensions (categories/accounts/owners/tags) live in the shared FilterContext
+// (useFilter); what remains here is screen-scoped navigation state.
 export type TxFilter = {
-  category?: string;
   from?: string;
   to?: string;
-  tag?: string;
-  account?: string;
-  accountName?: string;
   search?: string;
   range?: string; // 'week' | 'month' | 'quarter' | 'year' | 'alltime'
   anchor?: string; // YYYY-MM-DD — which specific period to land on
   canvasSpec?: string; // JSON-encoded CanvasSpec, used when navigating to 'canvas'
   txType?: 'income' | 'expenses';
   flex?: 'fixed' | 'flexible' | 'discretionary';
+  focusCategory?: string; // land on this category's trend (Trends focus, not a filter)
+  focusTag?: string;      // land on this tag's detail (Tags focus, not a filter)
+  drillFrom?: Screen;     // set when a drill-in pushed a shared-filter level; Esc reverses
+                          // the drill as a unit (pop + return here) instead of peeling state
 };
 
 export const SCREEN_LABELS: Record<Screen, string> = {

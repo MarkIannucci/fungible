@@ -35,13 +35,22 @@ describe('GUI Transactions', () => {
     expect(screen.getAllByText('Direct Deposit')).toHaveLength(2);
   });
 
-  it('respects a category nav filter and shows a removable chip', async () => {
-    renderScreen(<Transactions />, { txFilter: { category: 'Grocery' } });
+  it('respects a category shared filter and shows a removable chip', async () => {
+    renderScreen(<Transactions />, { initialFilter: { categories: ['Grocery'] } });
     await waitFor(() => expect(screen.getByText('3 transactions')).toBeTruthy());
     const chip = screen.getByText('Grocery', { selector: 'span' });
     expect(chip).toBeTruthy();
     await userEvent.click(chip.querySelector('button')!);
     await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+  });
+
+  it('Escape steps the shared filter back (clears when history is empty)', async () => {
+    localStorage.setItem('fungible-keys', 'on');
+    renderScreen(<Transactions />, { initialFilter: { categories: ['Grocery'] } });
+    await waitFor(() => expect(screen.getByText('3 transactions')).toBeTruthy());
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());
+    localStorage.removeItem('fungible-keys');
   });
 
   it('search filters rows live', async () => {
@@ -122,7 +131,7 @@ describe('GUI Transactions', () => {
   });
 
   it('bulk categorize-all applies to every visible transaction', async () => {
-    renderScreen(<Transactions />, { txFilter: { category: 'Grocery' } });
+    renderScreen(<Transactions />, { initialFilter: { categories: ['Grocery'] } });
     await waitFor(() => expect(screen.getByText('3 transactions')).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Categorize all' }));
     await waitFor(() => expect(screen.getByText(/Set category for 3/)).toBeTruthy());

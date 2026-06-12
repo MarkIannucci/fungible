@@ -7,6 +7,7 @@ import { FilterProvider } from '../../../gui/renderer/src/hooks/useFilter.js';
 import { UiPrefsProvider } from '../../../gui/renderer/src/hooks/useUiPrefs.js';
 import { NavContext } from '../../../gui/renderer/src/hooks/useNav.js';
 import type { Screen, TxFilter } from '../../../gui/shared/nav.js';
+import type { Filter } from '../../../core/filters.js';
 
 // Electron-side bridge namespaces (gui/main/bridge.ts) stubbed for tests.
 const STUBS: Record<string, Record<string, (...args: unknown[]) => unknown>> = {
@@ -54,16 +55,18 @@ export function Providers({
   children,
   screen = 'dashboard',
   txFilter = {},
+  initialFilter,
   navigate = vi.fn(),
 }: {
   children: React.ReactNode;
   screen?: Screen;
   txFilter?: TxFilter;
+  initialFilter?: Filter;
   navigate?: (s: Screen, f?: TxFilter) => void;
 }) {
   return (
     <RefreshProvider>
-      <FilterProvider>
+      <FilterProvider initial={initialFilter}>
         <UiPrefsProvider>
           <NavContext.Provider value={{ screen, txFilter, navigate }}>{children}</NavContext.Provider>
         </UiPrefsProvider>
@@ -73,13 +76,19 @@ export function Providers({
 }
 
 /** Render a single screen inside all app providers, with a controllable
- *  txFilter (nav payload) and a spyable navigate. */
+ *  txFilter (nav payload), an optional initial shared filter, and a spyable
+ *  navigate. */
 export function renderScreen(
   ui: React.ReactElement,
-  opts: { screen?: Screen; txFilter?: TxFilter; navigate?: (s: Screen, f?: TxFilter) => void } = {},
+  opts: {
+    screen?: Screen;
+    txFilter?: TxFilter;
+    initialFilter?: Filter;
+    navigate?: (s: Screen, f?: TxFilter) => void;
+  } = {},
 ) {
   return render(
-    <Providers screen={opts.screen} txFilter={opts.txFilter} navigate={opts.navigate}>
+    <Providers screen={opts.screen} txFilter={opts.txFilter} initialFilter={opts.initialFilter} navigate={opts.navigate}>
       {ui}
     </Providers>,
   );

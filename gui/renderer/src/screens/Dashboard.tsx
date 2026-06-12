@@ -18,6 +18,7 @@ import {
 import type { AccountRow, CategoryDrift, FlexSummary } from '../../../../core/queries.js';
 import { mergeFilters, type Filter } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
+import type { TxFilter } from '../../../shared/nav.js';
 import styles from './Dashboard.module.css';
 
 type DashView = 'categories' | 'flex' | 'account' | 'owner';
@@ -81,16 +82,27 @@ export function Dashboard() {
   const [driftSort, setDriftSort] = useState<{ col: DriftSortCol; desc: boolean }>({ col: 'current', desc: true });
 
   const { from, to } = getPeriodDates(range, anchor);
-  const { filter: sharedFilter } = useFilter();
+  const { filter: sharedFilter, setFilter } = useFilter();
   const acctId = selectedAccount?.id;
   const filter: Filter = mergeFilters(sharedFilter, acctId ? { accounts: [acctId] } : undefined);
+
+  // Drill-in writes the sticky shared filter (replace those dimensions),
+  // keeping the date range / search as transient nav params.
+  function drillToTransactions(dims: Partial<Filter>, nav: Partial<TxFilter> = {}) {
+    setFilter({
+      ...sharedFilter,
+      ...(selectedAccount ? { accounts: [selectedAccount.id] } : {}),
+      ...dims,
+    });
+    navigate('transactions', { from, to, drillFrom: 'dashboard', ...nav });
+  }
 
   const bounds = useQuery(() => api.queries.getDataBounds(), []);
   const summary = useQuery(() => api.queries.getRangeSummary(from, to, filter), [from, to, acctId, sharedFilter]);
   const flexData = useQuery(() => api.queries.getFlexSummary(from, to, filter), [from, to, acctId, sharedFilter]);
   const uncategorized = useQuery(() => api.queries.getUncategorizedCount(from, to, filter), [from, to, acctId, sharedFilter]);
-  const accountRows = useQuery(() => api.queries.getAccountRows(from, to), [from, to]);
-  const ownerRows = useQuery(() => api.queries.getOwnerRows(from, to), [from, to]);
+  const accountRows = useQuery(() => api.queries.getAccountRows(from, to, filter), [from, to, acctId, sharedFilter]);
+  const ownerRows = useQuery(() => api.queries.getOwnerRows(from, to, filter), [from, to, acctId, sharedFilter]);
 
   const driftWindows = driftMode ? getDriftWindows(range, anchor, new Date()) : null;
   const catDrift = useQuery(
@@ -159,14 +171,6 @@ export function Dashboard() {
   function pickRange(r: Range) {
     setRange(r);
     setAnchor(getPeriodStart(r, now));
-  }
-
-  function txFilterBase() {
-    return {
-      from,
-      to,
-      ...(selectedAccount ? { account: selectedAccount.id, accountName: selectedAccount.name } : {}),
-    };
   }
 
   function driftHeader(col: DriftSortCol, label: string) {
@@ -317,7 +321,7 @@ export function Dashboard() {
           {!search && (uncategorized ?? 0) > 0 && (
             <button
               className={`${styles.card} ${styles.cardClickable}`}
-              onClick={() => navigate('transactions', { category: 'Uncategorized', from, to })}
+              onClick={() => drillToTransactions({ categories: ['Uncategorized'] })}
               title="Review uncategorized transactions"
             >
               <div className={styles.cardLabel}>Uncategorized</div>
@@ -345,13 +349,7 @@ export function Dashboard() {
                   <tr
                     key={`${row.merchant}-${i}`}
                     className={styles.rowClickable}
-                    onClick={() =>
-                      navigate('transactions', {
-                        category: merchantDrill,
-                        ...txFilterBase(),
-                        search: row.merchant,
-                      })
-                    }
+                    onClick={() => drillToTransactions({ categories: [merchantDrill] }, { search: row.merchant })}
                   >
                     <td className={styles.tdName}>{row.merchant}</td>
                     <td className="num warn">{fmt(row.total)}</td>
@@ -391,7 +389,7 @@ export function Dashboard() {
                       <tr
                         key={row.category}
                         className={styles.rowClickable}
-                        onClick={() => navigate('transactions', { category: row.category, ...txFilterBase() })}
+                        onClick={() => drillToTransactions({ categories: [row.category] })}
                       >
                         <td className={`${styles.tdName} ${cls}`}>{row.category}</td>
                         <td className="num">{fmt(row.current)}</td>
@@ -413,13 +411,7 @@ export function Dashboard() {
                   <tr
                     key={row.category}
                     className={styles.rowClickable}
-                    onClick={() =>
-                      navigate('transactions', {
-                        category: row.category,
-                        ...txFilterBase(),
-                        ...(search ? { search } : {}),
-                      })
-                    }
+                    onClick={() => drillToTransactions({ categories: [row.category] }, search ? { search } : {})}
                   >
                     <td className={styles.tdName}>{row.category}</td>
                     <td className="num">{fmt(row.total)}</td>
@@ -497,7 +489,13 @@ export function Dashboard() {
                         className={clickable ? styles.rowClickable : undefined}
                         onClick={
                           clickable
-                            ? () => navigate('transactions', { ...txFilterBase(), flex: key as 'fixed' | 'flexible' | 'discretionary' })
+                            ? () => {
+                                const flexKey = key as 'fixed' | 'flexible' | 'discretionary';
+                                // drillFrom only when a filter level was actually
+                                // pushed, so Esc's pop doesn't eat an unrelated level.
+                                if (selectedAccount) drillToTransactions({}, { flex: flexKey });
+                                else navigate('transactions', { from, to, flex: flexKey });
+                              }
                             : undefined
                         }
                       >
@@ -550,7 +548,7 @@ export function Dashboard() {
                     <tr
                       key={acct.id}
                       className={styles.rowClickable}
-                      onClick={() => navigate('transactions', { account: acct.id, accountName: acct.name, from, to })}
+                      onClick={() => drillToTransactions({ accounts: [acct.id] })}
                     >
                       <td className={styles.tdName} style={isFiltered ? { color: 'var(--warning)' } : undefined}>
                         {acct.name}

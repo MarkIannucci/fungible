@@ -8,7 +8,7 @@ import { KeyHints } from '../components/KeyHints.js';
 import { Modal } from '../components/Modal.js';
 import { MONTHS } from '../../../../core/dateUtils.js';
 import type { SortMode, TxRow } from '../../../../core/queries.js';
-import { mergeFilters, type Filter } from '../../../../core/filters.js';
+import { isFilterActive } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
 import type { TagOption } from '../../../../core/tags.js';
 import styles from './Transactions.module.css';
@@ -31,12 +31,8 @@ export function Transactions() {
   const { txFilter, navigate } = useNav();
   const { showStatus, statusEl } = useStatus();
 
-  const [category, setCategory] = useState<string | null>(txFilter.category ?? null);
   const [from, setFrom] = useState<string | null>(txFilter.from ?? null);
   const [to, setTo] = useState<string | null>(txFilter.to ?? null);
-  const [tag, setTag] = useState<string | null>(txFilter.tag ?? null);
-  const [account, setAccount] = useState<string | null>(txFilter.account ?? null);
-  const [accountName, setAccountName] = useState<string | null>(txFilter.accountName ?? null);
   const [txType, setTxType] = useState<'income' | 'expenses' | null>(txFilter.txType ?? null);
   const [flex, setFlex] = useState<'fixed' | 'flexible' | 'discretionary' | null>(txFilter.flex ?? null);
   const [search, setSearch] = useState(txFilter.search ?? '');
@@ -46,20 +42,12 @@ export function Transactions() {
 
   const bounds = useQuery(() => api.queries.getDataBounds(), []);
   const categories = useQuery(() => api.queries.getAllCategories(), [reloadKey]) ?? [];
-  const { filter: sharedFilter } = useFilter();
-  const localFilter: Filter | undefined =
-    category || account || tag
-      ? {
-          ...(category ? { categories: [category] } : {}),
-          ...(account ? { accounts: [account] } : {}),
-          ...(tag ? { tags: [{ name: tag, mode: 'has' as const }] } : {}),
-        }
-      : undefined;
-  const filter = mergeFilters(sharedFilter, localFilter);
+  const filterOptions = useQuery(() => api.queries.getFilterOptions(), [reloadKey]);
+  const { filter: sharedFilter, setFilter, popFilter, canPop } = useFilter();
   const txs =
     useQuery(
-      () => api.queries.getTransactions({ filter, from, to, search, sort, txType, flex }),
-      [category, from, to, search, tag, account, sort, txType, flex, sharedFilter, reloadKey],
+      () => api.queries.getTransactions({ filter: sharedFilter, from, to, search, sort, txType, flex }),
+      [from, to, search, sort, txType, flex, sharedFilter, reloadKey],
     ) ?? [];
 
   // ── Modals ──
@@ -109,14 +97,11 @@ export function Transactions() {
 
   function clearAll() {
     setSearch('');
-    setCategory(null);
     setFrom(null);
     setTo(null);
-    setTag(null);
-    setAccount(null);
-    setAccountName(null);
     setTxType(null);
     setFlex(null);
+    setFilter({});
   }
 
   const searchRef = useRef<HTMLInputElement>(null);
@@ -128,31 +113,61 @@ export function Transactions() {
     '/': () => searchRef.current?.focus(),
     s: () => setSort((s) => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length]),
     u: () => {
-      clearAll();
-      setCategory('Uncategorized');
+      setSearch('');
+      setFrom(null);
+      setTo(null);
+      setFilter({ ...sharedFilter, categories: ['Uncategorized'] });
     },
     a: () => clearAll(),
     ArrowLeft: () => navMonth(-1),
     ArrowRight: () => navMonth(1),
     Escape: () => {
+      // Arriving via a drill-in is reversed as a unit: pop the filter level
+      // the drill pushed and return to its screen (same semantics as the TUI).
+      if (txFilter.drillFrom) {
+        popFilter();
+        navigate(txFilter.drillFrom);
+        return;
+      }
       if (search) setSearch('');
       else if (from) {
         setFrom(null);
         setTo(null);
-      } else if (tag) setTag(null);
-      else if (account) {
-        setAccount(null);
-        setAccountName(null);
-      } else if (category) setCategory(null);
+      } else if (canPop || isFilterActive(sharedFilter)) popFilter();
       else navigate('dashboard');
     },
   });
 
-  const chips: Array<{ label: string; remove: () => void; nav?: boolean }> = [];
-  if (accountName ?? account)
-    chips.push({ label: accountName ?? account!, remove: () => { setAccount(null); setAccountName(null); } });
-  if (tag) chips.push({ label: `#${tag}`, remove: () => setTag(null) });
-  if (category) chips.push({ label: category, remove: () => setCategory(null) });
+  // One chip per active shared-filter dimension (removal drops just that
+  // dimension), plus the screen-local txType/flex chips.
+  function dropDim(dim: 'categories' | 'accounts' | 'owners' | 'tags') {
+    const next = { ...sharedFilter };
+    delete next[dim];
+    setFilter(next);
+  }
+  const acctName = (id: string) => filterOptions?.accounts.find((a) => a.id === id)?.name ?? id;
+  const chips: Array<{ label: string; remove: () => void }> = [];
+  if (sharedFilter.accounts) {
+    const a = sharedFilter.accounts;
+    chips.push({ label: a.length === 1 ? acctName(a[0]) : `${a.length} accounts`, remove: () => dropDim('accounts') });
+  }
+  if (sharedFilter.owners) {
+    const o = sharedFilter.owners;
+    chips.push({ label: o.length === 1 ? o[0] : `${o.length} owners`, remove: () => dropDim('owners') });
+  }
+  for (const t of sharedFilter.tags ?? []) {
+    chips.push({
+      label: `${t.mode === 'lacks' ? '✗' : ''}#${t.name}`,
+      remove: () => {
+        const rest = (sharedFilter.tags ?? []).filter((p) => p.name !== t.name);
+        setFilter({ ...sharedFilter, ...(rest.length ? { tags: rest } : { tags: undefined }) });
+      },
+    });
+  }
+  if (sharedFilter.categories) {
+    const c = sharedFilter.categories;
+    chips.push({ label: c.length === 1 ? c[0] : `${c.length} categories`, remove: () => dropDim('categories') });
+  }
   if (txType) chips.push({ label: txType, remove: () => setTxType(null) });
   if (flex) chips.push({ label: flex, remove: () => setFlex(null) });
   const dl = dateLabel();
@@ -176,7 +191,15 @@ export function Transactions() {
           }}
         />
         <div className={styles.quickFilters}>
-          <button className={category === 'Uncategorized' ? styles.qfActive : styles.qf} onClick={() => { clearAll(); setCategory('Uncategorized'); }}>
+          <button
+            className={sharedFilter.categories?.length === 1 && sharedFilter.categories[0] === 'Uncategorized' ? styles.qfActive : styles.qf}
+            onClick={() => {
+              setSearch('');
+              setFrom(null);
+              setTo(null);
+              setFilter({ ...sharedFilter, categories: ['Uncategorized'] });
+            }}
+          >
             Uncategorized
           </button>
           <button className={styles.qf} onClick={clearAll}>

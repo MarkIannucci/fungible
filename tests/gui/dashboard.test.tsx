@@ -40,9 +40,10 @@ describe('GUI Dashboard', () => {
     renderScreen(<Dashboard />, { txFilter: MAY_FILTER, navigate });
     await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
     await userEvent.click(screen.getByText('Grocery'));
+    // The category lands in the shared filter; nav carries period + drillFrom.
     expect(navigate).toHaveBeenCalledWith(
       'transactions',
-      expect.objectContaining({ category: 'Grocery', from: '2026-05-01', to: '2026-05-31' }),
+      expect.objectContaining({ from: '2026-05-01', to: '2026-05-31', drillFrom: 'dashboard' }),
     );
   });
 

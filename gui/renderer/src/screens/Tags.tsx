@@ -8,17 +8,30 @@ import { KeyHints } from '../components/KeyHints.js';
 import { Modal } from '../components/Modal.js';
 import { fmt, fmtSigned } from '../../../../core/fmt.js';
 import type { Tag } from '../../../../core/queries.js';
+import { useFilter } from '../hooks/useFilter.js';
 import styles from './Tags.module.css';
 
 export function Tags() {
   const { txFilter, navigate } = useNav();
+  const { filter: sharedFilter, setFilter } = useFilter();
+
+  // Drill-in: tag (and optionally category) write the shared filter; the
+  // navigation itself carries only drillFrom so Esc reverses it as a unit.
+  function drillToTransactions(tagName: string, category?: string) {
+    setFilter({
+      ...sharedFilter,
+      tags: [{ name: tagName, mode: 'has' }],
+      ...(category ? { categories: [category] } : {}),
+    });
+    navigate('transactions', { drillFrom: 'tags' });
+  }
   const { showStatus, statusEl } = useStatus();
   const [search, setSearch] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const reload = () => setReloadKey((k) => k + 1);
 
   const tags = useQuery(() => api.queries.getAllTags(), [reloadKey]) ?? [];
-  const [selectedName, setSelectedName] = useState<string | null>(txFilter.tag ?? null);
+  const [selectedName, setSelectedName] = useState<string | null>(txFilter.focusTag ?? null);
   const [addOpen, setAddOpen] = useState(false);
   const [renameTag, setRenameTag] = useState<Tag | null>(null);
 
@@ -35,7 +48,7 @@ export function Tags() {
     '/': () => searchRef.current?.focus(),
     a: () => setAddOpen(true),
     t: () => {
-      if (selected) navigate('transactions', { tag: selected.name });
+      if (selected) drillToTransactions(selected.name);
     },
     Escape: () => {
       if (search) setSearch('');
@@ -133,7 +146,7 @@ export function Tags() {
                 <h2>
                   <span className="accent"># {selected.name}</span>
                 </h2>
-                <button className={styles.rowBtnVisible} onClick={() => navigate('transactions', { tag: selected.name })}>
+                <button className={styles.rowBtnVisible} onClick={() => drillToTransactions(selected.name)}>
                   all transactions →
                 </button>
               </div>
@@ -167,7 +180,7 @@ export function Tags() {
                           <tr
                             key={row.category}
                             className={styles.row}
-                            onClick={() => navigate('transactions', { tag: selected.name, category: row.category })}
+                            onClick={() => drillToTransactions(selected.name, row.category)}
                           >
                             <td className={styles.tdName}>{row.category}</td>
                             <td className="num warn">{fmt(row.total)}</td>

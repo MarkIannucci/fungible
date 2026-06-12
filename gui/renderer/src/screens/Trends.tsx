@@ -47,8 +47,8 @@ export function Trends() {
   useEffect(() => {
     void api.trends.buildTrendViews().then((loaded) => {
       setViews(loaded);
-      if (txFilter.category) {
-        const idx = loaded.findIndex((v) => v.category === txFilter.category);
+      if (txFilter.focusCategory) {
+        const idx = loaded.findIndex((v) => v.category === txFilter.focusCategory);
         if (idx >= 0) setViewIdx(idx);
       }
     });
@@ -57,7 +57,7 @@ export function Trends() {
 
   const view = views[viewIdx] as View | undefined;
 
-  const { filter: sharedFilter } = useFilter();
+  const { filter: sharedFilter, setFilter } = useFilter();
   const rows = useQuery(
     () => (view ? api.trends.getPeriodTotals(view, range, sharedFilter) : Promise.resolve([])),
     [viewIdx, range, views, sharedFilter],
@@ -88,13 +88,16 @@ export function Trends() {
   );
 
   function navToPeriod(row: PeriodRow | undefined) {
+    // A category view drills in by writing the shared filter; drillFrom only
+    // when a filter level was actually pushed, so Esc's pop stays balanced.
+    if (!search && view?.category) setFilter({ ...sharedFilter, categories: [view.category] });
     navigate('transactions', {
       ...(row ? { from: row.from, to: row.to } : {}),
-      ...(!search && view?.category ? { category: view.category } : {}),
       ...(!search && view?.mode === 'income' ? { txType: 'income' as const } : {}),
       ...(!search && view?.mode === 'expenses' ? { txType: 'expenses' as const } : {}),
       ...(!search && view?.mode === 'flex' && view.flex ? { flex: view.flex } : {}),
       ...(search ? { search } : {}),
+      ...(!search && view?.category ? { drillFrom: 'trends' as const } : {}),
     });
   }
 

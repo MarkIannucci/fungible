@@ -6,9 +6,14 @@ import {
   EMPTY_FILTER,
   isFilterActive,
   filterSummary,
+  selectionToDim,
+  selectionFromDim,
+  invertSelection,
+  invertTagModes,
   type Filter,
   type TagPredicate,
 } from '../../../../core/filters.js';
+import type { FilterOptions } from '../../../../core/queries.js';
 import styles from './FilterBar.module.css';
 
 export function FilterBar() {
@@ -43,10 +48,7 @@ function FilterPanel({
   onApply: (f: Filter) => void;
   onClose: () => void;
 }) {
-  const [categories, setCategories] = useState<string[] | null>(null);
-  const [accounts, setAccounts] = useState<Array<{ id: string; label: string }> | null>(null);
-  const [owners, setOwners] = useState<string[] | null>(null);
-  const [tagNames, setTagNames] = useState<string[] | null>(null);
+  const [opts, setOpts] = useState<FilterOptions | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [selCats, setSelCats] = useState<Set<string>>(new Set());
@@ -54,25 +56,15 @@ function FilterPanel({
   const [selOwners, setSelOwners] = useState<Set<string>>(new Set());
   const [tagModes, setTagModes] = useState<Map<string, TagMode>>(new Map());
 
-  // Load universes, then initialize drafts: an absent dimension means
-  // "everything selected" (no constraint) per core/filters.ts semantics.
+  // Load universes via getFilterOptions (same source as the TUI panel), then
+  // hydrate drafts: an absent dimension means "everything selected" (no
+  // constraint) per core/filters.ts semantics.
   useEffect(() => {
-    void Promise.all([
-      api.queries.getAllCategories(),
-      api.queries.getLinkedAccounts(),
-      api.profile.getHouseholdMembers(),
-      api.tags.getTagOptions(),
-    ]).then(([cats, accts, members, tags]) => {
-      const acctOptions = accts.map((a) => ({ id: a.id, label: a.nickname ?? a.name }));
-      const ownerOptions = [...members, 'Unassigned'];
-      setCategories(cats);
-      setAccounts(acctOptions);
-      setOwners(ownerOptions);
-      setTagNames(tags.map((t) => t.name));
-
-      setSelCats(new Set(filter.categories ?? cats));
-      setSelAccts(new Set(filter.accounts ?? acctOptions.map((a) => a.id)));
-      setSelOwners(new Set(filter.owners ?? ownerOptions));
+    void api.queries.getFilterOptions().then((o) => {
+      setOpts(o);
+      setSelCats(selectionFromDim(filter.categories, o.categories));
+      setSelAccts(selectionFromDim(filter.accounts, o.accounts.map((a) => a.id)));
+      setSelOwners(selectionFromDim(filter.owners, o.owners));
       setTagModes(new Map((filter.tags ?? []).map((t: TagPredicate) => [t.name, t.mode])));
     }).catch((e: unknown) => {
       setLoadError(e instanceof Error ? e.message : String(e));
@@ -81,18 +73,17 @@ function FilterPanel({
   }, []);
 
   function apply() {
-    if (!categories || !accounts || !owners) return;
-    const dim = <T,>(selected: Set<T>, universe: T[]): T[] | undefined =>
-      selected.size === universe.length ? undefined : [...selected];
+    if (!opts) return;
     const tags: TagPredicate[] = [...tagModes.entries()]
       .filter(([, mode]) => mode !== null)
       .map(([name, mode]) => ({ name, mode: mode as 'has' | 'lacks' }));
+    const cats = selectionToDim(selCats, opts.categories);
+    const accts = selectionToDim(selAccts, opts.accounts.map((a) => a.id));
+    const owners = selectionToDim(selOwners, opts.owners);
     onApply({
-      ...(dim(selCats, categories) !== undefined ? { categories: dim(selCats, categories) } : {}),
-      ...(dim(selAccts, accounts.map((a) => a.id)) !== undefined
-        ? { accounts: dim(selAccts, accounts.map((a) => a.id)) }
-        : {}),
-      ...(dim(selOwners, owners) !== undefined ? { owners: dim(selOwners, owners) } : {}),
+      ...(cats !== undefined ? { categories: cats } : {}),
+      ...(accts !== undefined ? { accounts: accts } : {}),
+      ...(owners !== undefined ? { owners } : {}),
       ...(tags.length ? { tags } : {}),
     });
   }
@@ -104,13 +95,12 @@ function FilterPanel({
     update(next);
   }
 
-  function section<T>(
+  function section(
     title: string,
-    universe: T[],
-    selected: Set<T>,
-    update: (s: Set<T>) => void,
-    label: (v: T) => string,
-    key: (v: T) => string,
+    universe: string[],
+    selected: Set<string>,
+    update: (s: Set<string>) => void,
+    label: (v: string) => string,
   ) {
     return (
       <div className={styles.section}>
@@ -119,11 +109,12 @@ function FilterPanel({
           <span className={styles.sectionBtns}>
             <button onClick={() => update(new Set(universe))}>all</button>
             <button onClick={() => update(new Set())}>none</button>
+            <button onClick={() => update(invertSelection(selected, universe))}>invert</button>
           </span>
         </div>
         <div className={styles.checkGrid}>
           {universe.map((v) => (
-            <label key={key(v)} className={styles.check}>
+            <label key={v} className={styles.check}>
               <input type="checkbox" checked={selected.has(v)} onChange={() => toggle(selected, v, update)} />
               {label(v)}
             </label>
@@ -133,30 +124,33 @@ function FilterPanel({
     );
   }
 
-  const loaded = categories && accounts && owners && tagNames;
-
   return (
     <Modal title="Filter" onClose={onClose}>
       {loadError ? (
         <p className="warn">Failed to load filter options: {loadError}</p>
-      ) : !loaded ? (
+      ) : !opts ? (
         <p className="dim">Loading…</p>
       ) : (
         <>
-          {section('Categories', categories, selCats, setSelCats, (c) => c, (c) => c)}
-          {accounts.length > 0 &&
-            section('Accounts', accounts.map((a) => a.id), selAccts, setSelAccts,
-              (id) => accounts.find((a) => a.id === id)?.label ?? id, (id) => id)}
-          {owners.length > 1 && section('Owners', owners, selOwners, setSelOwners, (o) => o, (o) => o)}
+          {section('Categories', opts.categories, selCats, setSelCats, (c) => c)}
+          {opts.accounts.length > 0 &&
+            section('Accounts', opts.accounts.map((a) => a.id), selAccts, setSelAccts,
+              (id) => opts.accounts.find((a) => a.id === id)?.name ?? id)}
+          {opts.owners.length > 1 && section('Owners', opts.owners, selOwners, setSelOwners, (o) => o)}
 
-          {tagNames.length > 0 && (
+          {opts.tags.length > 0 && (
             <div className={styles.section}>
               <div className={styles.sectionHeader}>
                 <h3>Tags</h3>
+                <span className={styles.sectionBtns}>
+                  <button onClick={() => setTagModes((m) => invertTagModes(new Map([...m].filter((e): e is [string, 'has' | 'lacks'] => e[1] !== null))))}>
+                    invert
+                  </button>
+                </span>
                 <span className={`dim ${styles.tagHint}`}>click to cycle: any → has → lacks</span>
               </div>
               <div className={styles.tagRow}>
-                {tagNames.map((name) => {
+                {opts.tags.map((name) => {
                   const mode = tagModes.get(name) ?? null;
                   return (
                     <button
