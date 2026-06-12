@@ -85,16 +85,21 @@ this PR is pure refactor + plumbing and is reviewable on its own.
 
 ## PR 2 — Filter panel UI
 
-7. **`tui/components/FilterPanel.tsx` (new)**, built on the existing `ModalPanel`:
-   - Loads universes: categories, accounts (`getLinkedAccounts`), owners
-     (`householdMembers` + `Unassigned`), tags (`core/tags.ts`).
+7. **`tui/FilterPanel.tsx` (new)**, built on the existing `ModalPanel`:
+   - Loads universes via `getFilterOptions()` (`core/queries.ts`): categories,
+     accounts (id/name/owner), owners derived from accounts (`Unassigned` bucket),
+     tags.
    - State: focused section, per-section selection `Set` (+ tag tri-state map),
-     per-section cursor, inline-search string.
+     per-section cursor.
    - Init from current `filter` (absent dim → all checked; array → those; `[]` → none).
-   - Keys (captured while open): `f`/`Esc` close (`Esc` restores prior state),
-     `←/→` section, `↑/↓` row, `x` toggle (tags cycle), `a` select-all, `i` invert,
-     `/` inline search within section (narrows list, selections persist), `Enter`
-     apply → serialize → `setFilter` → close.
+   - Keys (captured while open): `Esc` close (discards the draft), `←/→` section,
+     `↑/↓` row, `Space` toggle (tags cycle), `a` select-all, `n` select-none,
+     `i` invert (set dims complement; tags swap has↔lacks), `c` clear all sections,
+     `Enter` apply → serialize → `setFilter` → close.
+   - **Deferred** (not in the shipped panel): `/` inline search within a section
+     (narrows list, selections persist) and `f` to close the panel — `f` only
+     opens it today. Both are follow-up candidates; inline search matters most
+     once a category universe outgrows the visible window.
 
 8. **Wire into the three screens:** local `panelOpen` state, render `<FilterPanel>`,
    `f` toggles it, and gate the host `useInput` while open (same pattern as
@@ -127,6 +132,8 @@ The only change: Dashboard's separate search-recompute path
 
 ## Out of scope (possible later)
 
+- **`/` inline section search and `f`-to-close in the panel** — deferred from
+  PR 2's key map (see item 7).
 - **Omnisearch** (`tag:happyhour`, `!tag:x`, `owner:Mark`) as a power-user
   accelerator that mutates the same `FilterContext` — a possible PR 3.
 - Configurable AND/OR logic.
