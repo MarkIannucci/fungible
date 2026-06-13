@@ -39,8 +39,8 @@ describe('GUI NetWorth', () => {
   it('shows a signed big net worth number', async () => {
     renderScreen(<NetWorth />);
     await waitFor(() => expect(screen.getByText('Test Checking')).toBeTruthy());
-    // assets $5,000 minus the visa liability — sign prefix proves fmtSigned path
-    expect(screen.getByText(/^[+-]\$[\d,]+\.\d{2}$/)).toBeTruthy();
+    // sign prefix on the big number span proves fmtSigned path (balance rows are <td>)
+    expect(screen.getByText(/^[+-]\$[\d,]+\.\d{2}$/, { selector: 'span' })).toBeTruthy();
   });
 
   it('group-by-type toggle switches to subtype rollups', async () => {
