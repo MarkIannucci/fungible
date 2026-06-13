@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
 import { createTag, renameTag, deleteTag } from '../core/tags.js';
 import type { Screen, TxFilter } from './App.js';
-import { fmt, bar, truncate, Divider } from './fmt.js';
+import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 import { StatCard, ModalPanel, SectionHeader, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar } from './components/index.js';
@@ -185,7 +185,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
           <Box gap={6} marginY={1}>
             <StatCard label="Income" value={fmt(tagSummary.income)} color={C_POSITIVE} />
             <StatCard label="Expenses" value={fmt(tagSummary.expenses)} color={C_NEGATIVE} />
-            <StatCard label="Net" value={(tagSummary.net >= 0 ? '+' : '-') + fmt(tagSummary.net)} color={tagSummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} />
+            <StatCard label="Net" value={fmtSigned(tagSummary.net)} color={tagSummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} />
             <StatCard label="Transactions" value={String(tag.count)} />
           </Box>
 

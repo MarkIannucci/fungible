@@ -226,7 +226,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Box gap={3} marginTop={1}>
             <Text dimColor>{'Net cash'.padEnd(L)}</Text>
             <Text bold color={netCash >= 0 ? C_POSITIVE : C_NEGATIVE}>
-              {(netCash < 0 ? '-' : '') + fmt(netCash).padStart(V)}
+              {fmt(netCash).padStart(V)}
             </Text>
             <Text dimColor>
               {netCash >= 0
