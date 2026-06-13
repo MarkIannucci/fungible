@@ -1,0 +1,131 @@
+:root {
+  /* Palette — semantic tokens seeded from tui/ui.ts */
+  --bg: #0d1117;
+  --bg-panel: #151b23;
+  --bg-raised: #1c2430;
+  --bg-hover: #222c3a;
+  --border: #2d3a4a;
+  --text: #e6edf3;
+  --text-dim: #8b98a8;
+  --positive: #3fb950; /* income, assets, good */
+  --negative: #f8514f; /* expenses, debt, bad */
+  --warning: #d2a022; /* caution */
+  --manual: #c792ea; /* manual overrides */
+  --accent: #00d4aa; /* brand teal — selection, focus, interactive */
+  --accent-dim: #00d4aa55;
+  --flex-fixed: #f8514f;
+  --flex-flexible: #d2a022;
+  --flex-discretionary: #38bdf8;
+
+  --font-mono: 'SF Mono', ui-monospace, Menlo, monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --radius: 8px;
+}
+
+:root[data-theme='light'] {
+  --bg: #f6f8fa;
+  --bg-panel: #ffffff;
+  --bg-raised: #eef1f4;
+  --bg-hover: #e9edf1;
+  --border: #d0d7de;
+  --text: #1f2328;
+  --text-dim: #59636e;
+  --positive: #1a7f37;
+  --negative: #cf222e;
+  --warning: #9a6700;
+  --manual: #8250df;
+  --accent: #00997d;
+  --accent-dim: #00997d33;
+  --flex-fixed: #cf222e;
+  --flex-flexible: #9a6700;
+  --flex-discretionary: #0969da;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+::selection {
+  background: var(--accent-dim);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+input,
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  outline: none;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.pos {
+  color: var(--positive);
+}
+.neg {
+  color: var(--negative);
+}
+.warn {
+  color: var(--warning);
+}
+.dim {
+  color: var(--text-dim);
+}
+.accent {
+  color: var(--accent);
+}
+.manual {
+  color: var(--manual);
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

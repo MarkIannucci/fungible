@@ -1,0 +1,85 @@
+name: Build GUI
+
+# Reusable workflow shared by:
+#   - release.yml (mode=installer): produces signed-name installers attached to
+#     the GitHub Release
+#   - ci.yml      (mode=dir):       smoke-build the unpacked .app/.exe on PRs
+#     into main to catch packaging regressions before they tag a release
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: 'dir = unpacked app only (fast smoke check); installer = full installers (dmg/nsis/AppImage/deb)'
+        required: true
+        type: string
+      version:
+        description: 'Version to bake into installer filenames (installer mode only)'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: mac
+          - os: windows-latest
+            target: win
+          - os: ubuntu-latest
+            target: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm ci
+
+      # npm ci on the arm64 mac runner only installs the arm64 libsql binding;
+      # the x64 build needs @libsql/darwin-x64 in node_modules too. --force
+      # overrides npm's wrong-platform (EBADPLATFORM) refusal.
+      - name: Install x64 libsql binding for mac cross-build
+        if: matrix.target == 'mac'
+        # fs read because libsql's exports field blocks require('libsql/package.json')
+        run: npm install --no-save --force @libsql/darwin-x64@$(node -p "JSON.parse(require('fs').readFileSync('node_modules/libsql/package.json','utf8')).version")
+
+      # package.json version is cosmetic, but electron-builder bakes it into
+      # installer filenames — set it to the new tag so artifacts read e.g.
+      # fungible-1.6.3-mac-arm64.dmg instead of -0.0.0-nobumpnecessary-.
+      - name: Sync package.json version
+        if: inputs.mode == 'installer' && inputs.version != ''
+        shell: bash
+        run: npm pkg set version=${{ inputs.version }}
+
+      - run: npm run gui:build
+
+      # --dir builds only the unpacked app directory (no dmg/nsis/AppImage).
+      # Exercises file filters, asar packing, and native-binding paths in
+      # ~3 min/platform — enough to catch packaging regressions on PRs.
+      - name: Build unpacked (smoke check)
+        if: inputs.mode == 'dir'
+        run: npx electron-builder --${{ matrix.target }} --dir
+
+      # --publish never: don't let electron-builder upload directly; the
+      # release job aggregates all platforms into a single GitHub Release.
+      - name: Build installer
+        if: inputs.mode == 'installer'
+        run: npx electron-builder --${{ matrix.target }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.mode == 'installer'
+        with:
+          name: installers-${{ matrix.target }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
+          retention-days: 7
