@@ -1,5 +1,5 @@
 export function fmt(n: number, decimals = 2): string {
-  return `$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  return `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
 }
 
 export function fmtSigned(n: number, decimals = 2): string {
