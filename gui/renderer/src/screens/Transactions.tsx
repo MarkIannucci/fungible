@@ -10,6 +10,7 @@ import { MONTHS } from '../../../../core/dateUtils.js';
 import type { SortMode, TxRow } from '../../../../core/queries.js';
 import { isFilterActive } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
+import { useLoadGuard } from '../hooks/useLoadGuard.js';
 import type { TagOption } from '../../../../core/tags.js';
 import styles from './Transactions.module.css';
 
@@ -442,10 +443,13 @@ function EditModal({
   const [pattern, setPattern] = useState('');
   const [matchType, setMatchType] = useState<'name' | 'regex'>('name');
   const [matchCount, setMatchCount] = useState(0);
+  const matchGuard = useLoadGuard();
 
   useEffect(() => {
     if (pattern.trim()) {
-      void api.rules.countPatternMatches(pattern, matchType).then(setMatchCount);
+      const token = matchGuard.begin();
+      void api.rules.countPatternMatches(pattern, matchType)
+        .then((count) => { if (matchGuard.isLatest(token)) setMatchCount(count); });
     } else {
       setMatchCount(0);
     }
