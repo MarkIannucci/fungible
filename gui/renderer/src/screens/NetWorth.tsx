@@ -114,7 +114,7 @@ export function NetWorth() {
                   <Tooltip
                     contentStyle={tooltipStyle}
                     labelStyle={tooltipLabelStyle}
-                    formatter={(value, name) => [fmt(Math.abs(Number(value))), String(name)]}
+                    formatter={(value, name) => [fmt(Number(value)), String(name)]}
                   />
                   <Legend />
                   <ReferenceLine y={0} stroke={CHART.axis} />
