@@ -3,7 +3,7 @@ export function fmt(n: number, decimals = 2): string {
 }
 
 export function fmtSigned(n: number, decimals = 2): string {
-  return `${n >= 0 ? '+' : '-'}${fmt(n, decimals)}`;
+  return `${n >= 0 ? '+' : '-'}${fmt(Math.abs(n), decimals)}`;
 }
 
 export function fmtPct(n: number, decimals = 1): string {
