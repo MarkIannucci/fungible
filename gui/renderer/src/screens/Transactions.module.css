@@ -1,0 +1,313 @@
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1100px;
+}
+
+.topBar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 20px;
+  margin: 0;
+}
+
+.search {
+  width: 260px;
+}
+
+.quickFilters {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.qf,
+.qfActive {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.qf:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.qfActive {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chip,
+.chipDate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-raised);
+  border: 1px solid var(--warning);
+  color: var(--warning);
+  border-radius: 14px;
+  padding: 3px 10px;
+  font-size: 12.5px;
+}
+
+.chipNav {
+  color: var(--warning);
+  font-size: 14px;
+  padding: 0 2px;
+}
+
+.chipNav:hover {
+  color: var(--text);
+}
+
+.chipX {
+  color: var(--warning);
+  font-size: 10.5px;
+  margin-left: 2px;
+}
+
+.chipX:hover {
+  color: var(--text);
+}
+
+.bulkBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.bulkBtns {
+  display: flex;
+  gap: 6px;
+}
+
+.bulkBtn {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.bulkBtn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.table td,
+.table th {
+  padding: 7px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.th,
+.thActive {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.th:hover {
+  color: var(--text);
+}
+
+.thActive {
+  color: var(--accent);
+}
+
+.thRight {
+  text-align: right !important;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--bg-hover);
+}
+
+.row:last-child td {
+  border-bottom: none;
+}
+
+.rowIgnored td {
+  color: var(--text-dim);
+  text-decoration: line-through;
+  text-decoration-color: var(--border);
+}
+
+.tdDate {
+  white-space: nowrap;
+  color: var(--text-dim);
+  width: 1%;
+}
+
+.tdDesc {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tdAmount {
+  text-align: right !important;
+  white-space: nowrap;
+  width: 1%;
+}
+
+.tdCat {
+  white-space: nowrap;
+}
+
+.tdTags {
+  font-size: 12px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tdActions {
+  white-space: nowrap;
+  width: 1%;
+  text-align: right !important;
+}
+
+.rowBtn {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 7px;
+  margin-left: 4px;
+  visibility: hidden;
+}
+
+.row:hover .rowBtn {
+  visibility: visible;
+}
+
+.rowBtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.rowBtnDanger:hover {
+  color: var(--negative);
+  border-color: var(--negative);
+}
+
+/* ── Modal internals ── */
+
+.formGrid {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px 14px;
+  align-items: center;
+}
+
+.formGrid label {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.ruleHint {
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.btnPrimary {
+  background: var(--accent);
+  color: #06281f;
+  font-weight: 600;
+  padding: 7px 16px;
+  border-radius: 6px;
+}
+
+.btnPrimary:hover {
+  filter: brightness(1.1);
+}
+
+.btnSecondary {
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 7px 16px;
+  border-radius: 6px;
+}
+
+.btnSecondary:hover {
+  color: var(--text);
+}
+
+.tagInput {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.tagList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.tagRow,
+.tagRowOn {
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  display: flex;
+  gap: 8px;
+}
+
+.tagRow:hover,
+.tagRowOn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tagRowOn {
+  color: var(--positive);
+}

@@ -2,12 +2,16 @@
 
 [![CI](https://github.com/tomfunk/fungible/actions/workflows/ci.yml/badge.svg)](https://github.com/tomfunk/fungible/actions/workflows/ci.yml)
 
-A terminal UI for personal finance. Syncs transactions from [Plaid](https://plaid.com/docs/quickstart/), imports CSVs, and lets you categorize, search, tag, and analyze spending — all from the keyboard.
+Personal finance, keyboard-first. Available as a **terminal UI** or a **desktop app** — both running over the same local data: Plaid sync, CSV import, categorize, tag, search, analyze. Plus an MCP server so Claude can read and manage it for you.
 
-<img src="docs/screenshots/demo.gif" alt="fungible demo" width="720" />
+<img src="docs/screenshots/demo.gif" alt="fungible TUI demo" width="720" />
+
+<img src="docs/screenshots/demo-gui.gif" alt="fungible GUI demo" width="720" />
 
 <details>
 <summary>Screenshots</summary>
+
+### Terminal UI
 
 | | |
 |---|---|
@@ -16,6 +20,15 @@ A terminal UI for personal finance. Syncs transactions from [Plaid](https://plai
 | ![Tags](docs/screenshots/tags.png) | ![Financial Health](docs/screenshots/financial-health.png) |
 | ![Rules](docs/screenshots/rules.png) | ![Accounts](docs/screenshots/accounts.png) |
 
+### Desktop GUI
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/gui/dashboard.png) | ![Transactions](docs/screenshots/gui/transactions.png) |
+| ![Trends](docs/screenshots/gui/trends.png) | ![Net Worth](docs/screenshots/gui/networth.png) |
+| ![Tags](docs/screenshots/gui/tags.png) | ![Financial Health](docs/screenshots/gui/health.png) |
+| ![Rules](docs/screenshots/gui/rules.png) | ![Accounts](docs/screenshots/gui/accounts.png) |
+
 </details>
 
 ## Features
@@ -23,23 +36,17 @@ A terminal UI for personal finance. Syncs transactions from [Plaid](https://plai
 - **Plaid sync** — connect bank accounts and pull transactions automatically; 15-min debounce with force-sync option
 - **CSV import** — import statement exports from any bank with flexible column mapping
 - **Manual assets** — track a house, car, or other asset by name and value
-- **Category rules** — substring and regex rules that auto-categorize transactions, with optional amount filters
-- **Name rules** — rename how transactions display, with optional amount filters
-- **Spending flexibility** — tag categories as fixed / flexible / discretionary; view breakdown on Dashboard
-- **Manual edits** — pin a category or display name to a specific transaction, or promote to a rule for all matches; survives re-syncs
-- **Ignore** — soft-hide transactions from totals (transfers, reimbursements, etc.)
-- **Hidden categories** — exclude categories like Transfer from all totals and charts
+- **Category & name rules** — substring or regex rules that auto-categorize and rename transactions; survives re-syncs
+- **Spending flexibility** — tag categories as fixed / flexible / discretionary; see breakdown on Dashboard
+- **Delta mode** — per-category spending deltas vs prior period, same period last year, and 12-month rolling average; heat-map coloring
 - **Tags** — label transactions across accounts (trips, projects, events) and view summaries by tag
-- **Net worth** — balance history with asset/liability breakdown; view by account or by type; scroll by week, month, quarter, or year
+- **Net worth** — balance history with asset/liability breakdown; by account or by type
 - **Financial health** — cash and liquid runway, FIRE number and progress, years to retirement with adjustable assumptions
+- **Trends** — bar charts for expenses, income, net, or any category; per-range aggregation
+- **Regex search** — shared across Dashboard, Transactions, and Trends
 - **Dedup review** — review and remove CSV transactions that duplicate Plaid imports
-- **Time ranges** — view Dashboard by week, month, quarter, year, or all time
-- **Trends** — bar charts for expenses, income, net, or any category; per-range aggregation (week / month / quarter / year)
-- **Delta mode** — toggle on Dashboard to see per-category spending deltas vs prior period, same period last year, and 12-month rolling average; heat-map coloring by deviation
-- **Regex search** — `/` on Dashboard or Transactions filters by name using a regular expression; search is shared when navigating between Dashboard, Transactions, and Trends
-- **MCP server** — Claude can read and manage your finances via the Model Context Protocol
-- **HTTP API** — REST-style API server for scripting and automation
-- **Daily backups** — database is backed up to `~/.fungible/backups/` on startup once per day; keeps the last 7 backups by default, configurable via `FUNGIBLE_BACKUP_DAYS`
+- **MCP server + HTTP API** — Claude (or any script) can read and manage your finances
+- **Daily backups** — kept at `~/.fungible/backups/`, last 7 by default (configurable via `FUNGIBLE_BACKUP_DAYS`)
 
 ## Try it (no account needed)
 
@@ -47,11 +54,15 @@ A terminal UI for personal finance. Syncs transactions from [Plaid](https://plai
 fungible --demo
 ```
 
-Spins up a fully pre-loaded instance with fake accounts, transactions, tags, and rules — completely isolated from any real data. Good for exploring all the screens before connecting a bank.
+Spins up a fully pre-loaded instance with fake accounts, transactions, tags, and rules — completely isolated from any real data. Good for exploring before connecting a bank.
+
+In the desktop app, pick **"Try Demo Mode"** from the app menu (macOS) or Help menu (Windows/Linux) — the app relaunches with the same isolated demo dataset.
 
 ## Install
 
-### Homebrew (recommended)
+### Terminal UI
+
+**Homebrew (recommended)**
 
 ```bash
 brew tap tomfunk/fungible
@@ -60,38 +71,43 @@ fungible --setup   # first-time setup wizard
 fungible
 ```
 
-### Linux / WSL
-
-The "from source" instructions below work as-is on Ubuntu/Debian and Windows via WSL (tested on Ubuntu 24.04). Requires Node.js 22+.
-
-### From source
-
-Requires Node.js 22+.
+**From source** (Node.js 22+, also works on Linux/WSL)
 
 ```bash
+git clone https://github.com/tomfunk/fungible
+cd fungible
 npm install
+npm run dev -- --setup   # first-time setup
 npm run dev
 ```
 
-On first run, use `--setup` to configure credentials:
+### Desktop GUI
+
+Download an installer from the [latest release](https://github.com/tomfunk/fungible/releases/latest) (macOS arm64, Windows x64, Linux x64), or run from source:
 
 ```bash
-npm run dev -- --setup
+npm install
+npm run gui
 ```
 
-Data and config are stored at `~/.fungible/`. Plaid access tokens are encrypted at rest using a key file at `~/.fungible/key` — do not delete this file or you will need to re-link your bank accounts. You'll need a free [Plaid](https://plaid.com) developer account to sync bank transactions (sandbox tier works).
+The GUI reads/writes the same `~/.fungible/` database as the TUI — switch freely.
+
+For first-launch caveats on unsigned installers (Gatekeeper, SmartScreen) and packaging details, see [`docs/gui.md`](docs/gui.md).
+
+### Storage
+
+Data and config live at `~/.fungible/` (override with `$FUNGIBLE_DATA_DIR`). Plaid access tokens are encrypted at rest using a key file at `~/.fungible/key` — do not delete this file or you will need to re-link your accounts. A free [Plaid](https://plaid.com) developer account (sandbox tier) is enough.
 
 ## Running
 
 | Command | What starts |
 |---------|-------------|
 | `fungible` | TUI + MCP server (HTTP, port 3741) + REST API (port 3456) |
+| Fungible.app (GUI) | Electron window only — MCP/API not auto-started |
 | `fungible mcp` | stdio MCP server only — use this in your Claude Desktop config |
 | `fungible api` | REST API server only |
 
-When you run the TUI, the MCP server and REST API start automatically in the background on their default ports. They share the same database connection as the TUI, so any changes made through them are reflected the next time you navigate in the UI.
-
-The `FUNGIBLE_MCP_PORT` and `FUNGIBLE_API_PORT` env vars (in `~/.fungible/.env`) override the defaults.
+`FUNGIBLE_MCP_PORT` and `FUNGIBLE_API_PORT` (in `~/.fungible/.env`) override the defaults.
 
 ## Screens
 
@@ -107,327 +123,12 @@ The `FUNGIBLE_MCP_PORT` and `FUNGIBLE_API_PORT` env vars (in `~/.fungible/.env`)
 | `7` | Rules |
 | `8` | Accounts |
 | `9` | Canvas |
-| `q` | Quit |
-| `f` | Filter panel (Dashboard, Transactions, Trends) |
-| `Esc` | Back / step back one filter level |
 
-## Key bindings
+Full per-screen keybindings: [`docs/keybindings.md`](docs/keybindings.md).
 
-### Settings `[0]`
+## Docs
 
-| Key | Action |
-|-----|--------|
-| `↑ ↓` | Navigate fields |
-| `Enter` | Edit selected field |
-| `a` | Add spouse (if none) or add child |
-| `d` | Remove spouse or selected child |
-| `Esc` | Back to Dashboard |
-
-Fields: **Your name**, **Birth year**, and optionally **Spouse name**, **Spouse year**, **Child name/birth year** for each child. Editing is inline — type to update, `Enter` to confirm, `Esc` to cancel.
-
-### Dashboard `[1]`
-
-| Key | Action |
-|-----|--------|
-| `r` | Cycle time range (Week → Month → Quarter → Year → All Time) |
-| `← →` | Previous / next period |
-| `Tab` | Cycle views: Categories → Flex → Account picker |
-| `↑ ↓` | Select category (Categories view) or account (Account view) |
-| `Enter` | Drill into transactions for selected category / account |
-| `Space` | Toggle account filter (Account view) |
-| `c` | Clear account filter |
-| `d` | Toggle delta mode (spending vs prior period / same period last year / 12-month avg) |
-| `f` | Open filter panel |
-| `/` | Search transactions by name (regex); filters category totals live |
-
-In **Categories** view, spending is broken down by category with bar charts. In **Flex** view, spending is grouped by flexibility tier (fixed / flexible / discretionary / untagged). In **Account** view, select an account to filter all dashboard data to that account.
-
-In **delta mode**, the bar chart is replaced by three delta columns — vs prev period, vs same period last year, and vs 12-month rolling average — color-coded green / yellow / red by deviation. Not available for the All Time range. An active search carries through when switching to Transactions (`2`) or Trends (`3`).
-
-### Transactions `[2]`
-
-| Key | Action |
-|-----|--------|
-| `↑ ↓` | Navigate |
-| `← →` | Previous / next month (when date filter active) |
-| `s` | Cycle sort: Date ↓↑ → Description ↑↓ → Amount ↓↑ → Category ↑↓ |
-| `/` | Search by name (regex); inherited from Dashboard if navigated with an active search |
-| `f` | Open filter panel |
-| `a` | Show all transactions (clears the shared filter, search, and dates) |
-| `u` | Filter to Uncategorized (keeps other filter dimensions) |
-| `Enter` | Edit selected transaction |
-| `g` | Tag panel: add/remove tags on selected transaction |
-| `G` | Tag all visible transactions at once (use `/` to filter first) |
-| `c` | Undo manual category override |
-| `i` | Ignore / un-ignore selected transaction |
-| `x` | Delete selected transaction (CSV-imported only) |
-| `Esc` | Step back one filter level at a time; after a drill-in, reverses it and returns to the originating screen |
-
-The **edit panel** has four fields navigated with `↑ ↓`: **Name** (display name override), **Category** (cycle with `← →`), **Pattern**, and **Match type**. Leave Pattern empty and `Enter` saves the change to just this transaction. Fill in Pattern and `Enter` creates a category rule (and/or name rule) that applies to all matching transactions.
-
-### Trends `[3]`
-
-| Key | Action |
-|-----|--------|
-| `← →` | Cycle views: Expenses → Income → Net → Flexibility → Fixed → Flexible → Discretionary → [each category] |
-| `↑ ↓` | Navigate periods |
-| `r` | Cycle aggregation range (Week / Month / Quarter / Year) |
-| `Enter` | Drill into transactions for selected period |
-| `f` | Open filter panel |
-| `/` | Search transactions by name; hides view selector and shows net-style bars for matches |
-| `Esc` | Clear active search (or navigate back) |
-
-### Filter panel `[f]`
-
-Press `f` on Dashboard, Transactions, or Trends to open the session-wide filter panel. The filter has four dimensions — categories, accounts, owners, and tags — and applies to all three screens at once. Drill-ins (e.g. `Enter` on a Dashboard category) write to the same filter, and every change pushes one level of history so `Esc` can step back through it.
-
-| Key | Action |
-|-----|--------|
-| `← →` | Switch section (Categories / Accounts / Owners / Tags) |
-| `↑ ↓` | Move within section |
-| `Space` | Toggle selected item (tags cycle: off → has → lacks) |
-| `a` | Select all in section |
-| `n` | Select none in section |
-| `i` | Invert section (tags swap has ↔ lacks) |
-| `c` | Clear all sections |
-| `Enter` | Apply and close |
-| `Esc` | Cancel without applying |
-
-Everything selected in a section means "no constraint" for that dimension. The filter is session-only — it resets on restart.
-
-### Net Worth `[4]`
-
-| Key | Action |
-|-----|--------|
-| `Tab` | Toggle: by account ↔ by type |
-| `r` | Cycle history range (Week / Month / Quarter / Year) |
-| `↑ ↓` | Scroll history |
-
-Shows assets (depository, investment, manual), liabilities (credit), and net worth. History shows one snapshot per period (last sync within each bucket), scrollable with up/down.
-
-### Tags `[5]`
-
-| Key | Action |
-|-----|--------|
-| `↑ ↓` | Select tag |
-| `/` | Search tags |
-| `Enter` | Open tag detail (income / expenses / category breakdown) |
-| `t` | View all transactions for selected tag |
-| `a` | Add new tag |
-| `n` | Rename selected tag |
-| `x` | Delete selected tag |
-
-In tag detail, `↑ ↓` selects a category and `Enter` drills into transactions for that tag + category. `← →` cycles to the previous/next tag.
-
-### Financial Health `[6]`
-
-Displays a full financial picture across four sections:
-
-- **Snapshot** — savings rate (color-coded) and estimated monthly income
-- **Runway** — months of cash and liquid coverage at current spending
-- **Debt** — net cash position (checking minus credit debt), months to debt-free at current savings rate (hidden if no debt)
-- **Retirement** — net worth, FIRE number with progress bar, Coast FIRE (years until growth alone covers retirement if you stop saving now), estimated years to FIRE
-
-| Key | Action |
-|-----|--------|
-| `↑ ↓` | Select assumption dial |
-| `← →` | Adjust selected dial value |
-| `r` | Reset selected dial to default |
-
-**Dials:** Monthly spending (±$100, default = avg past 12 months), Monthly savings (±$100, default = avg surplus), Withdrawal rate (±0.5%, default = 4%), Growth rate (±1%, default = 7%).
-
-Liquid assets = cash + brokerage (excludes 401k, IRA, pension).
-
-### Rules `[7]`
-
-Three sections, cycle with `Tab`: **Category Rules**, **Name Rules**, **Categories**.
-
-**Category Rules / Name Rules:**
-
-| Key | Action |
-|-----|--------|
-| `/` | Search rules |
-| `a` | Add rule |
-| `Enter` | Edit selected rule |
-| `x` | Delete selected rule |
-
-The **rule form** is a single panel with fields navigated by `↑ ↓`: Pattern, Match type, Min $, Max $, Category (rules) or Replacement (name rules). `← →` cycles/toggles the active field. Category rules support substring and regex matching with optional min/max amount filters. Name rules support the same matching plus a replacement display name.
-
-**Categories:**
-
-| Key | Action |
-|-----|--------|
-| `a` | Add new category |
-| `Enter` | Edit selected category (Name, Flexibility, Hidden — navigated with `↑ ↓`) |
-| `x` | Delete category (resets affected transactions to Uncategorized) |
-| `v` | Toggle hidden from list |
-| `f` | Cycle flexibility tier from list: none → fixed → flexible → discretionary |
-
-### Accounts `[8]`
-
-| Key | Action |
-|-----|--------|
-| `Tab` | Cycle views: Accounts → Add Data → Dupes |
-| `↑ ↓` | Select account |
-| `Enter` | Edit selected account (nickname, type, subtype, APR — navigated with `↑ ↓`, `← →` to cycle) |
-| `v` | Update value (manual assets only) |
-| `r` | Repair Plaid link for selected account |
-| `s` | Force sync (bypasses 15-min cooldown) |
-| `x` | Delete selected account |
-| `l` | Link a new bank account via Plaid |
-
-**Add Data** options: `[l]` link bank via Plaid, `[c]` import CSV, `[m]` add manual asset (house, car, etc.), `[s]` force sync.
-
-**Dupes** tab shows CSV transactions that match Plaid imports. `[x]` deletes the selected CSV duplicate; `[X]` deletes all.
-
-### Canvas `[9]`
-
-An AI-generated financial calculator, built on demand by the agent. Ask the agent (`` ` ``) to generate a canvas — e.g. "make a loan payoff calculator" — and it will appear here with interactive dials.
-
-**View mode** (when a canvas is loaded):
-
-| Key | Action |
-|-----|--------|
-| `↑ ↓` | Select dial |
-| `← →` | Adjust selected dial by its step |
-| `Enter` | Type a value directly for selected dial |
-| `r` | Reset selected dial to default |
-| `/` | Open history browser |
-
-**History mode** (press `/` to enter):
-
-| Key | Action |
-|-----|--------|
-| `↑ ↓` | Select canvas |
-| Type | Filter by title or prompt |
-| `Enter` | Load selected canvas |
-| `ctrl+d` | Delete selected canvas |
-| `Esc` | Back to view |
-
-## Scripts
-
-```bash
-# Link a new bank account via Plaid (also available from Accounts screen)
-npm run link
-
-# Import a CSV file
-npm run import-csv /path/to/file.csv
-
-# Seed default category rules
-npm run seed-rules
-```
-
-## HTTP API
-
-Exposes the same tools as the MCP server over HTTP — useful for scripting and automation. Starts automatically on port 3456 when you run the TUI, or run it standalone:
-
-```bash
-fungible api
-# or: npm run api
-# Listening on http://localhost:3456
-```
-
-**Endpoint:** `POST /tools/:name` with a JSON body.
-
-```bash
-curl -X POST http://localhost:3456/tools/spending_summary \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <key>" \
-  -d '{"year": 2026, "month": 5}'
-```
-
-**Configuration** (in `~/.fungible/.env`):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FUNGIBLE_API_KEY` | _(none)_ | Bearer token required on all requests. If unset, auth is skipped (dev only). |
-| `FUNGIBLE_API_PORT` | `3456` | Port to listen on. |
-
-Available tools: same set as the MCP server below.
-
-## MCP Server
-
-Exposes your financial data to Claude via the [Model Context Protocol](https://modelcontextprotocol.io).
-
-**Two connection modes:**
-
-- **stdio** — Claude Desktop spawns `fungible mcp` as a child process. Always works, even when the TUI isn't open. When the TUI is running, writes notify it automatically so the UI refreshes. Use this if you're not sure which to pick.
-
-- **HTTP** — when the TUI is running, it starts an HTTP MCP server on port 3741 (`FUNGIBLE_MCP_PORT` to override). Point Claude at `http://localhost:3741/mcp` instead of using a command — writes are in-process so the TUI updates instantly. Only works while the TUI is open.
-
-Config file location:
-- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Linux / WSL:** `~/.config/Claude/claude_desktop_config.json`
-
-**stdio — Homebrew (macOS):**
-```json
-{
-  "mcpServers": {
-    "fungible": {
-      "command": "/opt/homebrew/bin/node",
-      "args": ["--no-warnings", "--import", "tsx/esm", "/opt/homebrew/lib/node_modules/fungible/mcp/server.ts"]
-    }
-  }
-}
-```
-
-**stdio — from source (macOS / Linux / WSL):**
-```json
-{
-  "mcpServers": {
-    "fungible": {
-      "command": "node",
-      "args": ["--no-warnings", "--import", "tsx/esm", "/path/to/fungible/mcp/server.ts"]
-    }
-  }
-}
-```
-
-**HTTP (TUI must be running):**
-```json
-{
-  "mcpServers": {
-    "fungible": {
-      "url": "http://localhost:3741/mcp"
-    }
-  }
-}
-```
-
-Available tools:
-
-| Tool | Description |
-|------|-------------|
-| `spending_summary` | Income, expenses, and breakdown by category for a given month |
-| `merchant_summary` | Top merchants for a category in a date range, with totals and share of spend |
-| `list_transactions` | Search and filter transactions |
-| `edit_transaction` | Rename display name or change category |
-| `clear_edit` | Remove a manual category or name override |
-| `ignore_transaction` | Ignore / un-ignore a transaction |
-| `list_rules` | List category rules |
-| `add_rule` | Add a category rule |
-| `delete_rule` | Delete a category rule |
-| `list_name_rules` | List name rules |
-| `add_name_rule` | Add a name rule |
-| `delete_name_rule` | Delete a name rule |
-| `list_hidden_categories` | List hidden categories |
-| `toggle_hidden_category` | Show or hide a category |
-| `list_accounts` | List connected accounts |
-| `sync` | Pull latest transactions from Plaid |
-| `uncategorized_summary` | Most common uncategorized transaction names |
-| `list_tags` | List tags with transaction counts |
-| `tag_summary` | Income / expenses / category breakdown for a tag |
-| `tag_transaction` | Add or remove a tag on a transaction |
-| `get_balances` | Current balances, net worth, total cash and liquid |
-| `get_financial_health` | Runway, FIRE number, years to retirement |
-| `get_drift` | Per-category spending deltas vs prior period, last year, and 12-month avg |
-| `get_trends` | Month-by-month spending trends for the last N months |
-| `get_net_worth_history` | Net worth over time grouped by day, week, month, quarter, or year |
-| `get_finance_guide` | Opinionated personal finance guidance by topic |
-| `get_screen` | Return the current TUI screen content exactly as the user sees it |
-| `generate_canvas` | Prepare context and schema to build a Canvas; call then render with `show_canvas` |
-| `show_canvas` | Render a CanvasSpec on screen 9 and save to history |
-| `list_canvases` | List previously generated canvases, optionally filtered by title or prompt |
-| `load_canvas` | Load a canvas from history and display it on screen 9 |
-| `delete_canvas` | Delete a canvas from history |
-| `calculate_tvm` | Time-value-of-money solver: given 4 of (pv, fv, pmt, n, rate), solve for the fifth |
+- [`docs/keybindings.md`](docs/keybindings.md) — per-screen keyboard reference
+- [`docs/integrations.md`](docs/integrations.md) — HTTP API and MCP server setup, full tool list
+- [`docs/gui.md`](docs/gui.md) — desktop app install, packaging, release flow
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — branching policy, tests, PRs
