@@ -226,7 +226,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
           <Box gap={3} marginTop={1}>
             <Text dimColor>{'Net cash'.padEnd(L)}</Text>
             <Text bold color={netCash >= 0 ? C_POSITIVE : C_NEGATIVE}>
-              {fmt(netCash).padStart(V)}
+              {fmtSigned(netCash).padStart(V)}
             </Text>
             <Text dimColor>
               {netCash >= 0
@@ -258,7 +258,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         <Box gap={3} marginTop={1}>
           <Text dimColor>{'Net worth'.padEnd(L)}</Text>
           <Text bold color={data.netWorth >= 0 ? C_POSITIVE : C_NEGATIVE}>
-            {((data.netWorth < 0 ? '-' : '') + fmtCompact(data.netWorth)).padStart(12)}
+            {fmtCompact(data.netWorth).padStart(12)}
           </Text>
         </Box>
         <Box gap={3}>
