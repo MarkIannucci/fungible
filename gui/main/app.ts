@@ -86,10 +86,10 @@ function createWindow() {
     title: 'fungible',
     backgroundColor: '#0d1117',
     webPreferences: {
-      preload: join(import.meta.dirname, '../preload/index.mjs'),
+      preload: join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // ESM preload (.mjs) requires an unsandboxed renderer
+      sandbox: true,
     },
   });
 

@@ -42,6 +42,9 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       lib: { entry: resolve(import.meta.dirname, 'gui/preload/index.ts') },
+      // CJS so the renderer can run sandboxed — Electron's sandbox can't load
+      // ESM preload scripts.
+      rollupOptions: { output: { format: 'cjs' } },
     },
   },
   renderer: {

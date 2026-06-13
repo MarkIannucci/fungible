@@ -199,7 +199,9 @@ export function runPlaidLink(daysRequested?: number): Promise<{ institutionName:
       server.listen(0, '127.0.0.1', () => {
         const addr = server.address();
         const port = typeof addr === 'object' && addr ? addr.port : 0;
-        void shell.openExternal(`http://localhost:${port}`);
+        // 127.0.0.1, not localhost: the server listens IPv4-only, and on some
+        // systems localhost resolves to ::1 first and the connection fails.
+        void shell.openExternal(`http://127.0.0.1:${port}`);
       });
 
       server.on('error', (err) => {
