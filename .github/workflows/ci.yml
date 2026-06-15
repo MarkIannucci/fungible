@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 jobs:
   test:
@@ -21,3 +21,33 @@ jobs:
       - run: npm run typecheck
 
       - run: node --no-warnings ./node_modules/.bin/vitest run
+
+  # Smoke-build the unpacked Electron app on each platform when something is
+  # about to land on main — catches packaging regressions (missing deps,
+  # broken file filters, native-binding paths) before a release tag is cut.
+  gui-build:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    uses: ./.github/workflows/build-gui.yml
+    with:
+      mode: dir
+
+  # Aggregator: branch protection requires only this one check name instead of
+  # listing every matrix leg of gui-build individually. gui-build is "skipped"
+  # on PRs that don't target main — treat skipped as passing so dev PRs still
+  # merge with just test green.
+  ci-all-passed:
+    needs: [test, gui-build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required jobs succeeded
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "::error::test job failed"
+            exit 1
+          fi
+          if [ "${{ needs.gui-build.result }}" != "success" ] && [ "${{ needs.gui-build.result }}" != "skipped" ]; then
+            echo "::error::gui-build matrix failed"
+            exit 1
+          fi
+          echo "All required jobs passed."

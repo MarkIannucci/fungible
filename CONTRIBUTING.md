@@ -50,6 +50,13 @@ bin/          Entry point for the fungible CLI
 
 ### Branches
 
+The repo uses a two-tier flow:
+
+- `dev` is the integration branch — all feature/fix work merges here.
+- `main` is the release branch. Every merge into `main` cuts a new version tag, builds installers, and updates the Homebrew formula. Only `dev` can PR into `main` (enforced by CI), so `main` only ever advances via `dev → main` release promotions.
+
+**Open your PR against `dev`, not `main`.**
+
 Use a descriptive branch name prefixed by type:
 
 ```
@@ -77,7 +84,7 @@ Before opening an issue, check if one already exists. When filing a bug, include
 ## Submitting a PR
 
 1. Fork the repo and push your branch to your fork
-2. Open a PR against `main`
+2. Open a PR against `dev` (PRs against `main` are rejected by CI — only `dev → main` release promotions land there)
 3. Make sure `npm test` and `npm run typecheck` pass
 4. Include a short description of what changed and why
 

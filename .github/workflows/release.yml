@@ -11,10 +11,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  tag:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      skip: ${{ steps.version.outputs.skip }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      hash: ${{ steps.version.outputs.hash }}
 
     steps:
       - uses: actions/checkout@v4
@@ -98,12 +103,49 @@ jobs:
           git tag -a "$TAG" -m "schema=${{ steps.version.outputs.hash }}" HEAD
           git push origin "$TAG"
 
+  # Build GUI installers in parallel on each target OS via reusable workflow.
+  build:
+    needs: tag
+    if: needs.tag.outputs.skip != 'true'
+    uses: ./.github/workflows/build-gui.yml
+    with:
+      mode: installer
+      version: ${{ needs.tag.outputs.version }}
+
+  release:
+    needs: [tag, build]
+    if: needs.tag.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: installers-*
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag.outputs.tag }}
+          name: ${{ needs.tag.outputs.tag }}
+          generate_release_notes: true
+          files: artifacts/*
+          fail_on_unmatched_files: true
+
+  # Independent of the GUI installer build — Homebrew distributes the TUI from
+  # the source tarball, not the Electron app.
+  homebrew:
+    needs: tag
+    if: needs.tag.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
       - name: Update Homebrew formula
-        if: steps.version.outputs.skip != 'true'
         env:
           TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
-          TAG=${{ steps.version.outputs.tag }}
+          TAG=${{ needs.tag.outputs.tag }}
           TARBALL_URL="https://github.com/${{ github.repository }}/archive/refs/tags/${TAG}.tar.gz"
 
           # Give GitHub a moment to serve the tarball after tagging

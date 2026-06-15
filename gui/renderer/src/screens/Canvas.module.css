@@ -1,0 +1,213 @@
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 760px;
+}
+
+.topBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.title {
+  font-size: 20px;
+  margin: 0;
+}
+
+.historyBtn {
+  font-size: 13px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 14px;
+}
+
+.historyBtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 22px;
+}
+
+.search {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.historyTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.historyTable td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.historyTable tr:last-child td {
+  border-bottom: none;
+}
+
+.historyRow {
+  cursor: pointer;
+}
+
+.historyRow:hover {
+  background: var(--bg-hover);
+}
+
+.historyRow td:nth-child(2) {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tdTitle {
+  font-weight: 600;
+}
+
+.deleteBtn {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 7px;
+  visibility: hidden;
+}
+
+.historyRow:hover .deleteBtn {
+  visibility: visible;
+}
+
+.deleteBtn:hover {
+  color: var(--negative);
+  border-color: var(--negative);
+}
+
+.canvas {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.canvasTitle {
+  font-size: 17px;
+  margin: 0 0 4px;
+}
+
+.sectionLabel {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+  margin: 12px 0 2px;
+}
+
+.text {
+  margin: 0;
+  font-size: 13px;
+}
+
+.dial {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 0;
+}
+
+.dialTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.dialLabel {
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+
+.dialValue {
+  font-weight: 600;
+  font-size: 14.5px;
+}
+
+.dialControls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stepBtn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.stepBtn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.slider {
+  flex: 1;
+  accent-color: var(--accent);
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.numInput {
+  flex: 1;
+  max-width: 160px;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.numInput::-webkit-inner-spin-button {
+  display: none;
+}
+
+.resetBtn {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  text-decoration: underline;
+}
+
+.resetBtn:hover {
+  color: var(--text);
+}
+
+.dialHint {
+  font-size: 12px;
+}
+
+.output {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 4px 0;
+}
+
+.outputLabel {
+  color: var(--text-dim);
+  font-size: 13.5px;
+}
+
+.outputValue {
+  font-size: 16px;
+  font-weight: 700;
+}

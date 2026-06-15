@@ -308,7 +308,7 @@ export function Trends({
                   <SelectableRow key={row.from} selected={isSelected}>
                     <Text color={isSelected ? C_ACCENT : undefined}>{row.label.padEnd(labelWidth)}</Text>
                     <Text color={isSelected ? C_NEUTRAL : undefined} dimColor={!isSelected}>
-                      {fmt(Math.abs(row.total)).padStart(13)}
+                      {fmt(row.total).padStart(13)}
                     </Text>
                     <Text color={searchColor} dimColor={!isSelected}>
                       {bar(Math.abs(row.total), absMax, BAR_WIDTH)}

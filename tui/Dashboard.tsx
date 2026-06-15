@@ -544,7 +544,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           <Box gap={6} marginY={1}>
             <StatCard label="Income" value={fmt(displaySummary.income)} color={C_POSITIVE} />
             <StatCard label="Expenses" value={fmt(displaySummary.expenses)} color={C_NEGATIVE} />
-            <StatCard label="Net" value={(displaySummary.net >= 0 ? '+' : '-') + fmt(displaySummary.net)} color={displaySummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} />
+            <StatCard label="Net" value={fmtSigned(displaySummary.net)} color={displaySummary.net >= 0 ? C_POSITIVE : C_NEGATIVE} />
             {!search && uncategorized > 0 && (
               <StatCard label="Uncategorized" value={`${uncategorized} txns`} color={C_WARNING} />
             )}
