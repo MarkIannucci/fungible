@@ -53,6 +53,25 @@ describe('GUI Transactions', () => {
     localStorage.removeItem('fungible-keys');
   });
 
+  it('Escape reversing a drill-in returns to the dashboard on the same month', async () => {
+    localStorage.setItem('fungible-keys', 'on');
+    const navigate = vi.fn();
+    // Arrived here by drilling Grocery from the dashboard while viewing May 2026.
+    renderScreen(<Transactions />, {
+      txFilter: { from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-15', drillFrom: 'dashboard' },
+      initialFilter: { categories: ['Grocery'] },
+      navigate,
+    });
+    await waitFor(() => expect(screen.getByText(/\d+ transactions/)).toBeTruthy());
+    await userEvent.keyboard('{Escape}');
+    // The month travels back via range + anchor (period start), so the dashboard
+    // reopens on May 2026 instead of snapping to the most recent month.
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith('dashboard', { range: 'month', anchor: '2026-05-01' }),
+    );
+    localStorage.removeItem('fungible-keys');
+  });
+
   it('search filters rows live', async () => {
     renderScreen(<Transactions />);
     await waitFor(() => expect(screen.getByText('9 transactions')).toBeTruthy());

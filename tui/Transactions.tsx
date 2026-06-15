@@ -317,13 +317,17 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         // Arriving via a drill-in is reversed as a unit: pop the filter level
         // the drill pushed and return to its screen — date range, search and
         // all — rather than peeling those layers one keypress at a time.
-        if (initialFilter?.drillFrom) { popFilter(); onNavigate(initialFilter.drillFrom); return; }
+        if (initialFilter?.drillFrom) { popFilter(); onNavigate(initialFilter.drillFrom, { range: initialFilter.range, anchor: from ?? initialFilter.anchor }); return; }
         if (search) { setSearch(''); setSearchInput(''); return; }
         if (from) { setFrom(null); setTo(null); return; }
         // Step back one filter level per press rather than clearing all at once;
         // popFilter clears when the history is exhausted but a filter is active.
         if (canPop || isFilterActive(sharedFilter)) { popFilter(); return; }
-        onNavigate('dashboard', search ? { search } : undefined);
+        // Carry the period back so the dashboard reopens on the month we came
+        // from rather than re-defaulting to the latest one; omit when there's
+        // nothing to restore so a fresh entry still returns a bare navigate.
+        const back: TxFilter = { ...(initialFilter?.range ? { range: initialFilter.range } : {}), ...(initialFilter?.anchor ? { anchor: initialFilter.anchor } : {}) };
+        onNavigate('dashboard', Object.keys(back).length ? back : undefined);
         return;
       }
       if (key.leftArrow && from) {

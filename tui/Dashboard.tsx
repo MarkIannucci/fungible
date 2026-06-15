@@ -227,6 +227,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           onNavigate('transactions', {
             from: merchantDrill.from,
             to: merchantDrill.to,
+            range,
+            anchor: merchantDrill.from,
             search: row.merchant,
             drillFrom: 'dashboard',
           });
@@ -298,7 +300,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           // Drill-in writes the sticky shared filter (replace those dimensions),
           // keeping the date range / search as transient nav params.
           setFilter({ ...sharedFilter, categories: [cat.category], ...(selectedAccount ? { accounts: [selectedAccount.id] } : {}) });
-          onNavigate('transactions', { from, to, ...(search ? { search } : {}), drillFrom: 'dashboard' });
+          onNavigate('transactions', { from, to, range, anchor: from, ...(search ? { search } : {}), drillFrom: 'dashboard' });
         }
         return;
       }
@@ -310,7 +312,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         // drillFrom only when a filter level was actually pushed, so Esc's
         // pop doesn't eat an unrelated level.
         if (selectedAccount) setFilter({ ...sharedFilter, accounts: [selectedAccount.id] });
-        onNavigate('transactions', { from, to, ...(selectedAccount ? { drillFrom: 'dashboard' as const } : {}) });
+        onNavigate('transactions', { from, to, range, anchor: from, ...(selectedAccount ? { drillFrom: 'dashboard' as const } : {}) });
         return;
       }
     }
@@ -323,7 +325,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         if (acct) {
           const { from, to } = getPeriodDates(range, anchor);
           setFilter({ ...sharedFilter, accounts: [acct.id] });
-          onNavigate('transactions', { from, to, drillFrom: 'dashboard' });
+          onNavigate('transactions', { from, to, range, anchor: from, drillFrom: 'dashboard' });
         }
         return;
       }
@@ -367,6 +369,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       if (selectedAccount) setFilter({ ...sharedFilter, accounts: [selectedAccount.id] });
       onNavigate('transactions', {
         from, to,
+        range, anchor: from,
         ...(search ? { search } : {}),
       });
       return;
