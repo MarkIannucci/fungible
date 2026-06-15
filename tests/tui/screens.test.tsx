@@ -450,10 +450,60 @@ describe('Transactions', () => {
       expect(f).toMatch(/May 2026/);
     });
     r.stdin.write('\x1b');
-    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard'));
+    // Returns to the dashboard carrying the month we drilled from (anchor =
+    // the screen's current period start) so it doesn't snap to the latest month.
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', expect.objectContaining({ anchor: '2026-05-01' })));
     // The drill's filter level was popped, not merely navigated away from
     await waitFor(() => expect(frame(r)).not.toContain('1 category'));
     expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('Escape preserves the dashboard month (range + anchor) when reversing a drill-in', async () => {
+    const onNavigate = vi.fn();
+    // Simulates a drill from the dashboard while viewing May 2026 in month range.
+    const r = render(
+      <W>
+        <FilterProvider>
+          <PushFilters filters={[{ categories: ['Grocery'] }]} />
+          <Transactions
+            onNavigate={onNavigate}
+            showHints={false}
+            initialFilter={{ ...MAY_DATE_FILTER, range: 'month', anchor: '2026-05-15', drillFrom: 'dashboard' }}
+          />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toMatch(/May 2026/));
+    r.stdin.write('\x1b');
+    // The month travels back via range + anchor; anchor is the period start the
+    // dashboard will land on (snapped to May 1), not the most recent month.
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('dashboard', { range: 'month', anchor: '2026-05-01' }),
+    );
+  });
+
+  it('Escape after stepping a month forward returns the dashboard to that month', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <PushFilters filters={[{ categories: ['Grocery'] }]} />
+          <Transactions
+            onNavigate={onNavigate}
+            showHints={false}
+            initialFilter={{ from: '2026-04-01', to: '2026-04-30', range: 'month', anchor: '2026-04-15', drillFrom: 'dashboard' }}
+          />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toMatch(/Apr 2026/));
+    r.stdin.write('\x1B[C'); // → step to May within Transactions
+    await waitFor(() => expect(frame(r)).toMatch(/May 2026/));
+    r.stdin.write('\x1b');
+    // "The month you were looking at" is the one on screen at Esc — May, not April.
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('dashboard', expect.objectContaining({ anchor: '2026-05-01' })),
+    );
   });
 
   it('shows a filter-summary label when the shared filter is active', async () => {
