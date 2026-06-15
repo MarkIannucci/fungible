@@ -8,6 +8,8 @@ vi.mock('../../core/db.js', async () => {
 });
 
 import { db } from '../../core/db.js';
+import * as queries from '../../core/queries.js';
+import { useLoadGuard } from '../../tui/useLoadGuard.js';
 import { seedTuiData } from '../helpers/seedTuiData.js';
 import { App } from '../../tui/App.js';
 import { Dashboard } from '../../tui/Dashboard.js';
@@ -1738,3 +1740,238 @@ describe('FilterPanel', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 });
+
+// ── FilterPanel live preview ───────────────────────────────────────────────
+describe('FilterPanel live preview', () => {
+  const MAY_DATE_FILTER = { from: '2026-05-01', to: '2026-05-31' };
+
+  function Harness() {
+    const [open, setOpen] = React.useState(true);
+    return (
+      <FilterProvider>
+        <Transactions onNavigate={noop} showHints={false} initialFilter={MAY_DATE_FILTER} isActive={!open} />
+        {open && <FilterPanel isActive={open} onClose={() => setOpen(false)} />}
+      </FilterProvider>
+    );
+  }
+
+  function harness() {
+    return render(<W><Harness /></W>);
+  }
+
+  it('toggling categories updates the transaction list before Enter is pressed', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('n'); // deselect all categories → matches nothing
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+  });
+
+  it('Esc reverts the preview, leaving the committed filter untouched', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    expect(frame(r)).not.toContain('0 categories');
+  });
+
+  it('Enter commits the preview and updates the filter summary', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Whole Foods');
+      expect(f).toContain('0 categories');
+    });
+  });
+
+  it('opening and closing without changes leaves the view unchanged', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).not.toContain('Filter'));
+    expect(frame(r)).toContain('Whole Foods');
+  });
+
+  it('a burst of draft changes collapses into a single preview query (debounce)', async () => {
+    // The keystrokes all land within one tick — far under the debounce window —
+    // so every intermediate draft is coalesced and only the final state queries.
+    const spy = vi.spyOn(queries, 'getTransactions');
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    const baseline = spy.mock.calls.length;
+    r.stdin.write('n'); // none
+    r.stdin.write('a'); // all (== committed)
+    r.stdin.write('n'); // none again
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    expect(spy.mock.calls.length - baseline).toBe(1);
+    spy.mockRestore();
+  });
+});
+
+// ── FilterPanel live preview — propagation & history ───────────────────────
+describe('FilterPanel live preview — propagation & history', () => {
+  it('previews on the Dashboard, the screen the panel was opened from', async () => {
+    // The panel lists category *names*, so assert on a Dashboard-only signal:
+    // the Expenses total ($388.99 for seeded May), which no panel row renders.
+    function DashHarness() {
+      const [open, setOpen] = React.useState(true);
+      return (
+        <FilterProvider>
+          <Dashboard onNavigate={noop} showHints={false} initialFilter={MAY_FILTER} isActive={!open} />
+          {open && <FilterPanel isActive={open} onClose={() => setOpen(false)} />}
+        </FilterProvider>
+      );
+    }
+    const r = render(<W><DashHarness /></W>);
+    await waitFor(() => expect(frame(r)).toContain('$388.99'));
+    r.stdin.write('n'); // deselect all categories → nothing matches
+    await waitFor(() => expect(frame(r)).not.toContain('$388.99'));
+    expect(frame(r)).toContain('$0.00'); // expenses fall to zero live
+  });
+
+  it('previewing many toggles never pushes history; commit pushes exactly one level', async () => {
+    // Undated filter so Esc in Transactions pops the filter rather than first
+    // clearing a date range (the from/search short-circuits run ahead of pop).
+    const probe = { canPop: false };
+    function Probe() {
+      const { canPop } = useFilter();
+      probe.canPop = canPop;
+      return null;
+    }
+    function H() {
+      const [open, setOpen] = React.useState(true);
+      return (
+        <FilterProvider>
+          <Probe />
+          <Transactions onNavigate={noop} showHints={false} isActive={!open} />
+          {open && <FilterPanel isActive={open} onClose={() => setOpen(false)} />}
+        </FilterProvider>
+      );
+    }
+    const r = render(<W><H /></W>);
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    // A flurry of draft changes — each would be a history push if preview
+    // wrongly committed via setFilter instead of setPreview.
+    for (const k of ['n', 'a', 'i', ' ', ' ', 'i', 'n']) r.stdin.write(k);
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    expect(probe.canPop).toBe(false); // preview bypassed history entirely
+    r.stdin.write('\r'); // Enter commits exactly one level
+    await waitFor(() => expect(probe.canPop).toBe(true));
+    // One Esc in Transactions steps straight back to the original view.
+    r.stdin.write('\x1b');
+    await waitFor(() => {
+      expect(frame(r)).toContain('Whole Foods');
+      expect(probe.canPop).toBe(false);
+    });
+  });
+});
+
+// ── Transactions out-of-order query guard ──────────────────────────────────
+describe('Transactions load() race guard', () => {
+  // Simulates the live-preview hazard: a slow earlier query resolving after a
+  // faster later one. The unfiltered load (no categories) is forced slow; the
+  // category-filtered load is fast, so it lands first — the stale slow result
+  // that follows must not clobber it.
+  function SetFilterOnMount({ filter }: { filter: Filter }) {
+    const { setFilter } = useFilter();
+    React.useEffect(() => { setFilter(filter); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+    return null;
+  }
+
+  it('a slow stale query does not overwrite a faster newer one', async () => {
+    const realGet = queries.getTransactions;
+    const spy = vi.spyOn(queries, 'getTransactions').mockImplementation(async (args) => {
+      const rows = await realGet(args);
+      const isFiltered = Array.isArray((args.filter ?? {}).categories);
+      await new Promise((res) => setTimeout(res, isFiltered ? 10 : 200));
+      return rows;
+    });
+    try {
+      const r = render(
+        <W>
+          <FilterProvider>
+            <SetFilterOnMount filter={{ categories: ['Dining'] }} />
+            <Transactions onNavigate={noop} showHints={false} />
+          </FilterProvider>
+        </W>,
+      );
+      // The fast filtered load settles first: Dining shows, Grocery's merchant doesn't.
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('Sweetgreen');
+        expect(f).not.toContain('Whole Foods');
+      });
+      // Give the slow unfiltered load time to resolve and (incorrectly) repaint.
+      await new Promise((res) => setTimeout(res, 300));
+      expect(frame(r)).toContain('Sweetgreen');
+      expect(frame(r)).not.toContain('Whole Foods'); // stale result was discarded
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// ── useLoadGuard ───────────────────────────────────────────────────────────
+describe('useLoadGuard', () => {
+  it('only the newest token is current; earlier ones are superseded', () => {
+    let guard!: ReturnType<typeof useLoadGuard>;
+    function Probe() { guard = useLoadGuard(); return null; }
+    render(<Probe />);
+    const t1 = guard.begin();
+    expect(guard.isLatest(t1)).toBe(true);
+    const t2 = guard.begin();
+    expect(guard.isLatest(t1)).toBe(false); // t1 superseded by t2
+    expect(guard.isLatest(t2)).toBe(true);
+  });
+});
+
+// ── Dashboard out-of-order query guard ─────────────────────────────────────
+describe('Dashboard load() race guard', () => {
+  // Same hazard as Transactions, on the summary load: the unfiltered summary is
+  // forced slow and the category-filtered one fast, so the stale slow result
+  // arrives last and must not repaint the Expenses total. Trends shares the
+  // identical useLoadGuard pattern (covered above).
+  function SetFilterOnMount({ filter }: { filter: Filter }) {
+    const { setFilter } = useFilter();
+    React.useEffect(() => { setFilter(filter); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+    return null;
+  }
+
+  it('a slow stale summary does not overwrite a faster newer one', async () => {
+    const realSummary = queries.getRangeSummary;
+    const spy = vi.spyOn(queries, 'getRangeSummary').mockImplementation(async (from, to, filter) => {
+      const res = await realSummary(from, to, filter);
+      const isFiltered = Array.isArray((filter ?? {}).categories);
+      await new Promise((res2) => setTimeout(res2, isFiltered ? 10 : 200));
+      return res;
+    });
+    try {
+      const r = render(
+        <W>
+          <FilterProvider>
+            <SetFilterOnMount filter={{ categories: ['Dining'] }} />
+            <Dashboard onNavigate={noop} showHints={false} initialFilter={MAY_FILTER} />
+          </FilterProvider>
+        </W>,
+      );
+      // Fast filtered summary lands first: Dining's $45.00, not the full $388.99.
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('$45.00');
+        expect(f).not.toContain('$388.99');
+      });
+      // Let the slow unfiltered summary resolve and (incorrectly) repaint.
+      await new Promise((res) => setTimeout(res, 300));
+      expect(frame(r)).toContain('$45.00');
+      expect(frame(r)).not.toContain('$388.99'); // stale result was discarded
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+

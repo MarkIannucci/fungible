@@ -19,6 +19,7 @@ import { StatCard, SectionHeader, SelectableRow, TextInput, PageHeader } from '.
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useFilter } from './FilterContext.js';
+import { useLoadGuard } from './useLoadGuard.js';
 import { mergeFilters, type Filter } from '../core/filters.js';
 
 const BAR_WIDTH = 20;
@@ -109,20 +110,34 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     [sharedFilter, selectedAccount?.id ?? null],
   );
 
+  // Drop stale out-of-order results so a slow earlier query can't repaint over
+  // a faster later one as the filter/period change (see useLoadGuard). One
+  // guard per independent load group that fires and resolves together.
+  const summaryGuard = useLoadGuard();
+  const driftGuard = useLoadGuard();
+  const searchStatsGuard = useLoadGuard();
+  const searchDataGuard = useLoadGuard();
+  const merchantGuard = useLoadGuard();
+
   function load(r: Range, a: Date, qf: Filter) {
     const { from, to } = getPeriodDates(r, a);
-    void getAccountRows(from, to, qf).then(setAccountRows);
-    void getOwnerRows(from, to, qf).then(setOwnerRows);
+    const token = summaryGuard.begin();
+    const ok = <T,>(setter: (v: T) => void) => (v: T) => { if (summaryGuard.isLatest(token)) setter(v); };
+    void getAccountRows(from, to, qf).then(ok(setAccountRows));
+    void getOwnerRows(from, to, qf).then(ok(setOwnerRows));
     setAcctCursor(0);
-    void getRangeSummary(from, to, qf).then(setSummary);
-    void getFlexSummary(from, to, qf).then(setFlexData);
-    void getUncategorizedCount(from, to, qf).then(setUncategorized);
+    void getRangeSummary(from, to, qf).then(ok(setSummary));
+    void getFlexSummary(from, to, qf).then(ok(setFlexData));
+    void getUncategorizedCount(from, to, qf).then(ok(setUncategorized));
   }
 
   function openMerchantDrill(category: string, from: string, to: string) {
     setMerchantDrill({ category, from, to });
     setMerchantCursor(0);
-    void getMerchantSummary(category, from, to, queryFilter).then(setMerchantRows);
+    const token = merchantGuard.begin();
+    void getMerchantSummary(category, from, to, queryFilter).then((v) => {
+      if (merchantGuard.isLatest(token)) setMerchantRows(v);
+    });
   }
 
   useEffect(() => {
@@ -135,9 +150,11 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const windows = getDriftWindows(range, anchor, new Date());
     if (!windows) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
     const { current, lastPeriod, lastYear, rolling12 } = windows;
-    void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(setCatDrift);
-    void getFlexDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(setFlexDrift);
-    void getAccountDriftData(current, lastPeriod, lastYear, rolling12).then(setAcctDrift);
+    const token = driftGuard.begin();
+    const ok = <T,>(setter: (v: T) => void) => (v: T) => { if (driftGuard.isLatest(token)) setter(v); };
+    void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(ok(setCatDrift));
+    void getFlexDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(ok(setFlexDrift));
+    void getAccountDriftData(current, lastPeriod, lastYear, rolling12).then(ok(setAcctDrift));
   }, [driftMode, range, anchor.toISOString().slice(0, 10), queryFilter]);
 
   const setTyping = useSetTyping();
@@ -147,14 +164,19 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const term = searchMode ? searchInput : search;
     if (!term) { setSearchStats(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
-    void countSearchMatches(from, to, term, queryFilter).then(setSearchStats);
+    const token = searchStatsGuard.begin();
+    void countSearchMatches(from, to, term, queryFilter).then((v) => {
+      if (searchStatsGuard.isLatest(token)) setSearchStats(v);
+    });
   }, [searchMode ? searchInput : search, range, anchor.toISOString().slice(0, 10), queryFilter]);
 
   // When a search is committed, recompute category + flex data to only show matching transactions
   useEffect(() => {
     if (!search) { setFilteredSummary(null); setFilteredFlex(null); return; }
     const { from, to } = getPeriodDates(range, anchor);
+    const token = searchDataGuard.begin();
     void getSearchFilteredData(from, to, search, queryFilter).then(({ summary: fs, flexData: ff }) => {
+      if (!searchDataGuard.isLatest(token)) return;
       setFilteredSummary(fs);
       setFilteredFlex(ff);
     });
@@ -175,7 +197,10 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     const { category } = merchantDrill;
     setMerchantDrill({ category, from, to });
     setMerchantCursor(0);
-    void getMerchantSummary(category, from, to, queryFilter).then(setMerchantRows);
+    const token = merchantGuard.begin();
+    void getMerchantSummary(category, from, to, queryFilter).then((v) => {
+      if (merchantGuard.isLatest(token)) setMerchantRows(v);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anchor.toISOString().slice(0, 10), range]);
 
