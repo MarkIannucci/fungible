@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getFilterOptions, type FilterOptions } from '../core/queries.js';
 import { useFilter } from './FilterContext.js';
 import {
-  selectionToDim, selectionFromDim, invertSelection, invertTagModes,
+  selectionToDim, selectionFromDim, invertSelection, invertTagModes, filtersEqual,
   type Filter, type TagPredicate,
 } from '../core/filters.js';
 import { ModalPanel } from './components/index.js';
@@ -25,9 +25,13 @@ const SECTION_LABEL: Record<Section, string> = {
 type Item = { key: string; label: string; sub?: string };
 
 const WINDOW = 16;
+// Debounce window for publishing the live preview. Bulk ops (a/n/i) mutate the
+// draft several times within a single tick; coalescing them past this delay
+// collapses the burst into one query round-trip instead of one per keystroke.
+const PREVIEW_DEBOUNCE_MS = 120;
 
 export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose: () => void }) {
-  const { filter, setFilter } = useFilter();
+  const { committed, setFilter, setPreview } = useFilter();
   const [opts, setOpts] = useState<FilterOptions | null>(null);
 
   // Draft selection state. Sets hold the *selected* members of each universe;
@@ -43,14 +47,17 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
     categories: 0, accounts: 0, owners: 0, tags: 0,
   });
 
-  // Load options + hydrate the draft from the current shared filter on open.
+  // Load options + hydrate the draft on open. We hydrate from `committed`, not
+  // from `filter` (== preview ?? committed): the panel is the thing publishing
+  // the preview, so reading `filter` here would re-seed the draft from our own
+  // preview — a feedback loop. `committed` is the stable source of truth.
   useEffect(() => {
     void getFilterOptions().then((o) => {
       setOpts(o);
-      setCatSel(selectionFromDim(filter.categories, o.categories));
-      setAcctSel(selectionFromDim(filter.accounts, o.accounts.map((a) => a.id)));
-      setOwnerSel(selectionFromDim(filter.owners, o.owners));
-      setTagModes(new Map((filter.tags ?? []).map((t) => [t.name, t.mode])));
+      setCatSel(selectionFromDim(committed.categories, o.categories));
+      setAcctSel(selectionFromDim(committed.accounts, o.accounts.map((a) => a.id)));
+      setOwnerSel(selectionFromDim(committed.owners, o.owners));
+      setTagModes(new Map((committed.tags ?? []).map((t) => [t.name, t.mode])));
       setSection(0);
       setCursors({ categories: 0, accounts: 0, owners: 0, tags: 0 });
     });
@@ -134,8 +141,10 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
     setTagModes(new Map());
   }
 
-  function apply() {
-    if (!opts) { onClose(); return; }
+  // Serialized draft, recomputed as the user adjusts selections. Published as
+  // a live preview below, and committed verbatim by apply() on Enter.
+  const draftFilter = useMemo<Filter | null>(() => {
+    if (!opts) return null;
     const tags: TagPredicate[] = [...tagModes.entries()].map(([name, mode]) => ({ name, mode }));
     const next: Filter = {};
     const cats = selectionToDim(catSel, opts.categories);
@@ -145,7 +154,30 @@ export function FilterPanel({ isActive, onClose }: { isActive: boolean; onClose:
     if (accts !== undefined) next.accounts = accts;
     if (owners !== undefined) next.owners = owners;
     if (tags.length) next.tags = tags;
-    setFilter(next);
+    return next;
+  }, [opts, catSel, acctSel, ownerSel, tagModes]);
+
+  // Publish the draft as a live preview (debounced), collapsing back to "no
+  // preview" once the draft matches the committed filter. `committed` is a dep
+  // but cannot change while the panel is open — the modal gates host input, so
+  // nothing can call setFilter/popFilter underneath us.
+  useEffect(() => {
+    if (!draftFilter) return;
+    const id = setTimeout(() => {
+      setPreview(filtersEqual(draftFilter, committed) ? null : draftFilter);
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [draftFilter, committed, setPreview]);
+
+  // On unmount (Esc or Enter), force the preview back to null so screens fall
+  // back to the committed filter. This is distinct from the debounce cleanup
+  // above: that only cancels a pending timer, which would otherwise strand a
+  // previously-published (non-null) preview if we close before it fires.
+  useEffect(() => () => setPreview(null), [setPreview]);
+
+  function apply() {
+    if (!opts || !draftFilter) { onClose(); return; }
+    setFilter(draftFilter);
     onClose();
   }
 
