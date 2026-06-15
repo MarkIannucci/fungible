@@ -94,7 +94,7 @@ export function Dashboard() {
       ...(selectedAccount ? { accounts: [selectedAccount.id] } : {}),
       ...dims,
     });
-    navigate('transactions', { from, to, drillFrom: 'dashboard', ...nav });
+    navigate('transactions', { from, to, range, anchor: from, drillFrom: 'dashboard', ...nav });
   }
 
   const bounds = useQuery(() => api.queries.getDataBounds(), []);
@@ -494,7 +494,7 @@ export function Dashboard() {
                                 // drillFrom only when a filter level was actually
                                 // pushed, so Esc's pop doesn't eat an unrelated level.
                                 if (selectedAccount) drillToTransactions({}, { flex: flexKey });
-                                else navigate('transactions', { from, to, flex: flexKey });
+                                else navigate('transactions', { from, to, range, anchor: from, flex: flexKey });
                               }
                             : undefined
                         }

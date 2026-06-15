@@ -127,7 +127,7 @@ export function Transactions() {
       // the drill pushed and return to its screen (same semantics as the TUI).
       if (txFilter.drillFrom) {
         popFilter();
-        navigate(txFilter.drillFrom);
+        navigate(txFilter.drillFrom, { range: txFilter.range, anchor: from ?? txFilter.anchor });
         return;
       }
       if (search) setSearch('');
@@ -135,7 +135,7 @@ export function Transactions() {
         setFrom(null);
         setTo(null);
       } else if (canPop || isFilterActive(sharedFilter)) popFilter();
-      else navigate('dashboard');
+      else navigate('dashboard', { range: txFilter.range, anchor: from ?? txFilter.anchor });
     },
   });
 
