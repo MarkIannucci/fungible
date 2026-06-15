@@ -109,6 +109,8 @@ export async function initDb() {
     'ALTER TABLE accounts ADD COLUMN nickname TEXT',
     'ALTER TABLE accounts ADD COLUMN owner TEXT',
     'ALTER TABLE accounts ADD COLUMN apr REAL',
+    'ALTER TABLE category_rules ADD COLUMN account_id TEXT',
+    'ALTER TABLE name_rules ADD COLUMN account_id TEXT',
   ];
   for (const sql of migrations) {
     try {

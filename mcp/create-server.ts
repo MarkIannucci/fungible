@@ -116,6 +116,7 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
       priority:   z.number().int().default(10).describe('Higher priority rules run first (default 10)'),
       min_amount: z.number().optional().describe('Minimum transaction amount (optional)'),
       max_amount: z.number().optional().describe('Maximum transaction amount (optional)'),
+      account_id: z.string().optional().describe('Scope the rule to a single account ID (from list_accounts); omit for a global rule'),
     },
     (input) => run('add_rule', input),
   );
@@ -151,6 +152,7 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
       replacement: z.string().describe('Display name to show instead'),
       min_amount:  z.number().optional().describe('Minimum transaction amount (optional)'),
       max_amount:  z.number().optional().describe('Maximum transaction amount (optional)'),
+      account_id:  z.string().optional().describe('Scope the rule to a single account ID (from list_accounts); omit for a global rule'),
     },
     (input) => run('add_name_rule', input),
   );

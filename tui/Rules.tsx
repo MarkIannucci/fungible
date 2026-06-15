@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { getAllRules, getAllNameRules, getAllCategories, getCategoryDetails, getHiddenCategorySet, toggleHiddenCategory, type Rule, type NameRule, type CategoryDetail } from '../core/queries.js';
+import { getAllRules, getAllNameRules, getAllCategories, getCategoryDetails, getHiddenCategorySet, toggleHiddenCategory, getLinkedAccounts, type Rule, type NameRule, type CategoryDetail, type LinkedAccount } from '../core/queries.js';
 import {
   getUncategorizedCount, deleteCategoryRule, deleteNameRule,
   saveCategoryRule, saveNameRule, setCategoryFlexibility,
@@ -18,10 +18,10 @@ type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
 type Mode = 'list' | 'search' | 'rule-form' | 'name-rule-form' | 'add-category-name' | 'edit-category';
 type CatEditField = 'name' | 'flexibility' | 'hidden';
-type RuleField = 'pattern' | 'type' | 'min' | 'max' | 'category';
-type NameRuleField = 'pattern' | 'type' | 'min' | 'max' | 'replacement';
-const RULE_FIELDS: RuleField[] = ['pattern', 'type', 'min', 'max', 'category'];
-const NAME_RULE_FIELDS: NameRuleField[] = ['pattern', 'type', 'min', 'max', 'replacement'];
+type RuleField = 'pattern' | 'type' | 'min' | 'max' | 'category' | 'account';
+type NameRuleField = 'pattern' | 'type' | 'min' | 'max' | 'replacement' | 'account';
+const RULE_FIELDS: RuleField[] = ['pattern', 'type', 'min', 'max', 'category', 'account'];
+const NAME_RULE_FIELDS: NameRuleField[] = ['pattern', 'type', 'min', 'max', 'replacement', 'account'];
 type Section = 'rules' | 'names' | 'categories';
 
 const SECTIONS: Section[] = ['rules', 'names', 'categories'];
@@ -56,6 +56,10 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   const [newNameMinAmount, setNewNameMinAmount] = useState('');
   const [newNameMaxAmount, setNewNameMaxAmount] = useState('');
   const [newReplacement, setNewReplacement] = useState('');
+
+  // Account scoping (shared by both rule forms; only one is active at a time)
+  const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
+  const [accountCursor, setAccountCursor] = useState(0); // 0 = All accounts; i>0 → accounts[i-1]
 
   // Editing
   const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
@@ -96,7 +100,20 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     void getHiddenCategorySet().then(setHiddenSet);
     void getAllCategories().then(setCategories);
     void getCategoryDetails().then(setCatDetails);
+    void getLinkedAccounts().then(setAccounts);
   }
+
+  // Account picker options: index 0 = "All accounts" (global), then one per account.
+  const accountOptions: (string | null)[] = [null, ...accounts.map((a) => a.id)];
+  const accountLabel = (id: string | null): string => {
+    if (id === null) return 'All accounts';
+    const a = accounts.find((x) => x.id === id);
+    return a ? (a.nickname ?? a.name) : id;
+  };
+  const accountCursorFor = (id: string | null): number => {
+    const i = accountOptions.indexOf(id);
+    return i >= 0 ? i : 0;
+  };
 
   useEffect(() => { load(); }, [refreshKey]);
 
@@ -119,6 +136,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     const count = await saveCategoryRule({
       pattern: newPattern, matchType: newType, category,
       minAmount: minAmt, maxAmount: maxAmt,
+      accountId: accountOptions[accountCursor] ?? null,
       editingId: editingRuleId,
     });
     setEditingRuleId(null);
@@ -134,6 +152,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     await saveNameRule({
       pattern: newNamePattern, matchType: newNameType, replacement: newReplacement,
       minAmount: minAmt, maxAmount: maxAmt,
+      accountId: accountOptions[accountCursor] ?? null,
       editingId: editingNameRuleId,
     });
     setEditingNameRuleId(null);
@@ -178,7 +197,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setCursor((c) => Math.min(filteredRules.length - 1, c + 1));
         if (input === 'a') {
-          setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0);
+          setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0); setAccountCursor(0);
           setRuleField('pattern'); setMode('rule-form');
         }
         if (input === 'x' && filteredRules[cursor]) { handleDeleteRule(filteredRules[cursor].id); }
@@ -190,13 +209,14 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           setNewMinAmount(r.min_amount !== null ? String(r.min_amount) : '');
           setNewMaxAmount(r.max_amount !== null ? String(r.max_amount) : '');
           setCatCursor(Math.max(0, categories.indexOf(r.category)));
+          setAccountCursor(accountCursorFor(r.account_id));
           setRuleField('pattern'); setMode('rule-form');
         }
       } else if (section === 'names') {
         if (key.upArrow) setNameCursor((c) => Math.max(0, c - 1));
         if (key.downArrow) setNameCursor((c) => Math.min(filteredNameRules.length - 1, c + 1));
         if (input === 'a') {
-          setEditingNameRuleId(null); setNewNamePattern(''); setNewNameType('name'); setNewNameMinAmount(''); setNewNameMaxAmount(''); setNewReplacement('');
+          setEditingNameRuleId(null); setNewNamePattern(''); setNewNameType('name'); setNewNameMinAmount(''); setNewNameMaxAmount(''); setNewReplacement(''); setAccountCursor(0);
           setNameRuleField('pattern'); setMode('name-rule-form');
         }
         if (input === 'x' && filteredNameRules[nameCursor]) { handleDeleteNameRule(filteredNameRules[nameCursor].id); }
@@ -208,6 +228,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           setNewNameMinAmount(r.min_amount !== null ? String(r.min_amount) : '');
           setNewNameMaxAmount(r.max_amount !== null ? String(r.max_amount) : '');
           setNewReplacement(r.replacement);
+          setAccountCursor(accountCursorFor(r.account_id));
           setNameRuleField('pattern'); setMode('name-rule-form');
         }
       } else if (section === 'categories') {
@@ -305,6 +326,9 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       } else if (ruleField === 'category') {
         if (key.leftArrow) { setCatCursor((c) => Math.max(0, c - 1)); return; }
         if (key.rightArrow) { setCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+      } else if (ruleField === 'account') {
+        if (key.leftArrow) { setAccountCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.rightArrow) { setAccountCursor((c) => Math.min(accountOptions.length - 1, c + 1)); return; }
       }
     } else if (mode === 'name-rule-form') {
       if (key.escape) { setEditingNameRuleId(null); setMode('list'); return; }
@@ -325,6 +349,9 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       } else if (nameRuleField === 'replacement') {
         if (key.backspace || key.delete) { setNewReplacement((p) => p.slice(0, -1)); return; }
         if (input && !key.ctrl && !key.meta) { setNewReplacement((p) => p + input); return; }
+      } else if (nameRuleField === 'account') {
+        if (key.leftArrow) { setAccountCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.rightArrow) { setAccountCursor((c) => Math.min(accountOptions.length - 1, c + 1)); return; }
       }
     } else if (mode === 'add-category-name') {
       if (key.escape) { setMode('list'); return; }
@@ -407,6 +434,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
                 {amtLabel ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amtLabel, 10).padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
                 <Text color={C_ACCENT} dimColor={!isSelected}>{rule.category.length > ruleCatW ? rule.category.slice(0, ruleCatW - 1) + '…' : rule.category.padEnd(ruleCatW)}</Text>
                 <Text dimColor>{rule.priority}</Text>
+                {rule.account_id && <Text color={C_MANUAL} dimColor={!isSelected}>@{accountLabel(rule.account_id)}</Text>}
               </SelectableRow>
             );
           })}
@@ -447,6 +475,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
                       ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amtLabel, 12).padEnd(12)}</Text>
                       : <Text>{' '.repeat(12)}</Text>}
                     <Text color={C_POSITIVE} dimColor={!isSelected}>{rule.replacement.length > nameReplW ? rule.replacement.slice(0, nameReplW - 1) + '…' : rule.replacement}</Text>
+                    {rule.account_id && <Text color={C_MANUAL} dimColor={!isSelected}>@{accountLabel(rule.account_id)}</Text>}
                   </SelectableRow>
                 );
               })}
@@ -519,6 +548,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
             <EditTextField label="Min $" active={ruleField === 'min'} value={newMinAmount} color={C_WARNING} placeholder="optional" />
             <EditTextField label="Max $" active={ruleField === 'max'} value={newMaxAmount} color={C_WARNING} placeholder="optional" />
             <EditToggleField label="Category" active={ruleField === 'category'} value={categories[catCursor] ?? '—'} />
+            <EditToggleField label="Account" active={ruleField === 'account'} value={accountLabel(accountOptions[accountCursor] ?? null)} />
           </Box>
           <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
         </ModalPanel>
@@ -532,6 +562,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
             <EditTextField label="Min $" active={nameRuleField === 'min'} value={newNameMinAmount} color={C_WARNING} placeholder="optional" />
             <EditTextField label="Max $" active={nameRuleField === 'max'} value={newNameMaxAmount} color={C_WARNING} placeholder="optional" />
             <EditTextField label="Replace with" active={nameRuleField === 'replacement'} value={newReplacement} color={C_POSITIVE} placeholder="display name" emptyText="empty" />
+            <EditToggleField label="Account" active={nameRuleField === 'account'} value={accountLabel(accountOptions[accountCursor] ?? null)} />
           </Box>
           <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
         </ModalPanel>

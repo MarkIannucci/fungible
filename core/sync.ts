@@ -64,8 +64,8 @@ export async function syncTransactions(accessToken: string, itemId: string) {
     await db.batch(
       [...added, ...modified].map((tx) => {
         const rawCategory = tx.personal_finance_category?.primary ?? null;
-        const category = categorizeWithRules(catRules, tx.name, tx.merchant_name ?? null, rawCategory, tx.amount);
-        const displayName = applyNameRulesWithRules(nameRules, tx.name, tx.amount);
+        const category = categorizeWithRules(catRules, tx.name, tx.merchant_name ?? null, rawCategory, tx.amount, tx.account_id);
+        const displayName = applyNameRulesWithRules(nameRules, tx.name, tx.amount, tx.account_id);
         return {
           sql: `INSERT INTO transactions (id, account_id, date, name, merchant_name, amount, category, raw_category, pending, display_name)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

@@ -6,7 +6,7 @@ import { Modal } from '../components/Modal.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { fmt } from '../../../../core/fmt.js';
-import type { Rule, NameRule } from '../../../../core/queries.js';
+import type { Rule, NameRule, LinkedAccount } from '../../../../core/queries.js';
 import styles from './Rules.module.css';
 
 type Tab = 'rules' | 'names' | 'categories';
@@ -33,6 +33,12 @@ export function Rules() {
   const catDetails = useQuery(() => api.rules.getCategoryDetails(), [reloadKey]) ?? [];
   const hiddenSet = useQuery(() => api.queries.getHiddenCategorySet(), [reloadKey]);
   const uncategorized = useQuery(() => api.rules.getTotalUncategorizedCount(), [reloadKey]) ?? 0;
+  const accounts = useQuery(() => api.queries.getLinkedAccounts(), [reloadKey]) ?? [];
+  const accountLabel = (id: string | null): string => {
+    if (!id) return '';
+    const a = accounts.find((x) => x.id === id);
+    return a ? (a.nickname ?? a.name) : id;
+  };
 
   const [ruleForm, setRuleForm] = useState<{ editing: Rule | null } | null>(null);
   const [nameRuleForm, setNameRuleForm] = useState<{ editing: NameRule | null } | null>(null);
@@ -120,6 +126,7 @@ export function Rules() {
                   <th className={styles.th}>Amount</th>
                   <th className={styles.th}>Category</th>
                   <th className={styles.th}>Priority</th>
+                  <th className={styles.th}>Scope</th>
                   <th className={styles.th} />
                 </tr>
               </thead>
@@ -131,6 +138,7 @@ export function Rules() {
                     <td className="num dim">{amountLabel(r.min_amount, r.max_amount)}</td>
                     <td className="accent">{r.category}</td>
                     <td className="num dim">{r.priority}</td>
+                    <td className="dim">{r.account_id ? accountLabel(r.account_id) : 'All'}</td>
                     <td className={styles.tdActions}>
                       <button
                         className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
@@ -164,6 +172,7 @@ export function Rules() {
                   <th className={styles.th}>Pattern</th>
                   <th className={styles.th}>Amount</th>
                   <th className={styles.th}>Display name</th>
+                  <th className={styles.th}>Scope</th>
                   <th className={styles.th} />
                 </tr>
               </thead>
@@ -174,6 +183,7 @@ export function Rules() {
                     <td className={styles.tdPattern}>{r.pattern}</td>
                     <td className="num dim">{amountLabel(r.min_amount, r.max_amount)}</td>
                     <td className="warn">{r.replacement}</td>
+                    <td className="dim">{r.account_id ? accountLabel(r.account_id) : 'All'}</td>
                     <td className={styles.tdActions}>
                       <button
                         className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
@@ -281,6 +291,7 @@ export function Rules() {
         <RuleFormModal
           editing={ruleForm.editing}
           categories={categories}
+          accounts={accounts}
           onClose={() => setRuleForm(null)}
           onSaved={(count) => {
             setRuleForm(null);
@@ -293,6 +304,7 @@ export function Rules() {
       {nameRuleForm && (
         <NameRuleFormModal
           editing={nameRuleForm.editing}
+          accounts={accounts}
           onClose={() => setNameRuleForm(null)}
           onSaved={() => {
             setNameRuleForm(null);
@@ -340,11 +352,13 @@ export function Rules() {
 function RuleFormModal({
   editing,
   categories,
+  accounts,
   onClose,
   onSaved,
 }: {
   editing: Rule | null;
   categories: string[];
+  accounts: LinkedAccount[];
   onClose: () => void;
   onSaved: (count: number) => void;
 }) {
@@ -353,6 +367,7 @@ function RuleFormModal({
   const [minAmount, setMinAmount] = useState(editing?.min_amount !== null && editing ? String(editing.min_amount) : '');
   const [maxAmount, setMaxAmount] = useState(editing?.max_amount !== null && editing ? String(editing.max_amount) : '');
   const [category, setCategory] = useState(editing?.category ?? categories[0] ?? '');
+  const [accountId, setAccountId] = useState<string | null>(editing?.account_id ?? null);
   const [matchCount, setMatchCount] = useState(0);
   const [error, setError] = useState('');
 
@@ -376,6 +391,7 @@ function RuleFormModal({
         category,
         minAmount: minAmount.trim() ? parseFloat(minAmount) : null,
         maxAmount: maxAmount.trim() ? parseFloat(maxAmount) : null,
+        accountId,
         editingId: editing?.id ?? null,
       });
       onSaved(count);
@@ -406,6 +422,15 @@ function RuleFormModal({
             </option>
           ))}
         </select>
+        <label>Account</label>
+        <select value={accountId ?? ''} onChange={(e) => setAccountId(e.target.value || null)}>
+          <option value="">All accounts</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.nickname ?? a.name}
+            </option>
+          ))}
+        </select>
       </div>
       {pattern.trim() && (
         <p className={styles.matchHint}>
@@ -430,10 +455,12 @@ function RuleFormModal({
 
 function NameRuleFormModal({
   editing,
+  accounts,
   onClose,
   onSaved,
 }: {
   editing: NameRule | null;
+  accounts: LinkedAccount[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -442,6 +469,7 @@ function NameRuleFormModal({
   const [minAmount, setMinAmount] = useState(editing?.min_amount !== null && editing ? String(editing.min_amount) : '');
   const [maxAmount, setMaxAmount] = useState(editing?.max_amount !== null && editing ? String(editing.max_amount) : '');
   const [replacement, setReplacement] = useState(editing?.replacement ?? '');
+  const [accountId, setAccountId] = useState<string | null>(editing?.account_id ?? null);
   const [matchCount, setMatchCount] = useState(0);
   const [error, setError] = useState('');
 
@@ -465,6 +493,7 @@ function NameRuleFormModal({
         replacement: replacement.trim(),
         minAmount: minAmount.trim() ? parseFloat(minAmount) : null,
         maxAmount: maxAmount.trim() ? parseFloat(maxAmount) : null,
+        accountId,
         editingId: editing?.id ?? null,
       });
       onSaved();
@@ -489,6 +518,15 @@ function NameRuleFormModal({
         <input value={maxAmount} onChange={(e) => setMaxAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
         <label>Display name</label>
         <input value={replacement} onChange={(e) => setReplacement(e.target.value)} placeholder="e.g. Amazon" />
+        <label>Account</label>
+        <select value={accountId ?? ''} onChange={(e) => setAccountId(e.target.value || null)}>
+          <option value="">All accounts</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.nickname ?? a.name}
+            </option>
+          ))}
+        </select>
       </div>
       {pattern.trim() && (
         <p className={styles.matchHint}>

@@ -35,7 +35,8 @@ const SCHEMA = `
     pattern TEXT NOT NULL,
     category TEXT NOT NULL,
     min_amount REAL,
-    max_amount REAL
+    max_amount REAL,
+    account_id TEXT
   );
 
   CREATE TABLE name_rules (
@@ -44,7 +45,8 @@ const SCHEMA = `
     pattern TEXT NOT NULL,
     replacement TEXT NOT NULL,
     min_amount REAL,
-    max_amount REAL
+    max_amount REAL,
+    account_id TEXT
   );
 
   CREATE TABLE hidden_categories (category TEXT PRIMARY KEY);
