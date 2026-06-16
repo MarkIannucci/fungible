@@ -123,6 +123,35 @@ describe('Dashboard', () => {
     await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
   });
 
+  it('SPENDING BY CATEGORY lines sum to the displayed Expenses total', async () => {
+    // Exercise the two cases that used to break reconciliation: a refund inside a
+    // real category (must NET to 200, not show 300) and an income+spend mix inside
+    // Uncategorized (must SPLIT — the $500 spend shows, the $2000 inflow is income).
+    await db.batch([
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel',        'test-credit',   '2026-05-04', 'United',        300.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel-refund', 'test-credit',   '2026-05-05', 'United Refund', -100.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-uncat-spend',   'test-credit',   '2026-05-07', 'Mystery Shop',  500.00, 'Uncategorized', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-uncat-income',  'test-checking', '2026-05-02', 'Side Gig',     -2000.00, 'Uncategorized', 0, 0)`,
+    ], 'write');
+
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Uncategorized'));
+
+    const [statRegion, catRegion] = frame(r).split('SPENDING BY CATEGORY');
+    const money = (s: string) =>
+      [...s.matchAll(/[-+]?\$[\d,]+\.\d{2}/g)].map((m) => parseFloat(m[0].replace(/[$,+]/g, '')));
+    // Stat cards render in order Income · Expenses · Net, so Expenses is the 2nd $ token.
+    const expenses = money(statRegion)[1];
+    const categoryTotal = money(catRegion).reduce((sum, n) => sum + n, 0);
+
+    expect(expenses).toBeCloseTo(1088.99, 2);          // 388.99 seeded + 200 net Travel + 500 uncat
+    expect(categoryTotal).toBeCloseTo(expenses, 2);    // detailed lines reconcile to the total
+  });
+
   it('Tab cycles to flex view', async () => {
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('Income'));

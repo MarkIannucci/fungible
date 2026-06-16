@@ -120,23 +120,35 @@ describe('getRangeSummary', () => {
     expect(s.expenses).toBeCloseTo(100);
   });
 
-  it('nets refunds within a category before classifying as income/expense', async () => {
+  it('nets refunds within a real category before classifying as income/expense', async () => {
     await insertTx({ amount: 1000, category: 'Travel' });
     await insertTx({ amount: -800, category: 'Travel' });
     const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.expenses).toBeCloseTo(200);
     expect(s.income).toBe(0);
-    expect(s.byCategory).toHaveLength(1);
-    expect(s.byCategory[0]).toEqual({ category: 'Travel', total: 200 });
+    expect(s.byCategory).toEqual([{ category: 'Travel', total: 200 }]);
   });
 
-  it('categories with net negative total count as income', async () => {
+  it('real categories with a net negative total count as income (not spending)', async () => {
     await insertTx({ amount: 100, category: 'Rewards' });
     await insertTx({ amount: -200, category: 'Rewards' });
     const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.income).toBeCloseTo(100);
     expect(s.expenses).toBe(0);
     expect(s.byCategory).toHaveLength(0);
+  });
+
+  it('does NOT net Uncategorized: splits its outflows (spending) from inflows (income)', async () => {
+    // Regression: a paycheck landing in the Uncategorized catch-all used to net the
+    // bucket negative, hiding all uncategorized spending from byCategory. Uncategorized
+    // is split by flow; the spending row stays labeled "Uncategorized".
+    await insertTx({ amount: 1850, category: 'Uncategorized', name: 'Rent Payment' });
+    await insertTx({ amount: 63.8, category: 'Uncategorized', name: 'Whole Foods Market' });
+    await insertTx({ amount: -4200, category: 'Uncategorized', name: 'Direct Deposit' });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
+    expect(s.expenses).toBeCloseTo(1913.8);
+    expect(s.income).toBeCloseTo(4200);
+    expect(s.byCategory).toEqual([{ category: 'Uncategorized', total: 1913.8 }]);
   });
 
   it('aggregates multiple categories correctly', async () => {
@@ -190,7 +202,7 @@ describe('getFlexSummary', () => {
     expect(s.untagged).toBeCloseTo(125);
   });
 
-  it('nets out refunds before bucketing — no tier inflation (regression)', async () => {
+  it('nets out refunds in a real category before bucketing — no tier inflation (regression)', async () => {
     await insertCat('Travel', 'discretionary');
     await insertTx({ amount: 10000, category: 'Travel' });
     await insertTx({ amount: -8000, category: 'Travel' });
@@ -200,12 +212,21 @@ describe('getFlexSummary', () => {
     expect(s.flexible).toBe(0);
   });
 
-  it('excludes categories where net is negative (refund-heavy categories)', async () => {
+  it('excludes a real category whose net is negative (refund-heavy)', async () => {
     await insertCat('Travel', 'discretionary');
     await insertTx({ amount: 100, category: 'Travel' });
     await insertTx({ amount: -500, category: 'Travel' });
     const s = await getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.discretionary).toBe(0);
+  });
+
+  it('buckets Uncategorized outflow into untagged even when it holds a larger inflow', async () => {
+    // Uncategorized has no flexibility tag → untagged tier; its spending must show
+    // even though the bucket nets negative from an inflow (e.g. a paycheck).
+    await insertTx({ amount: 200, category: 'Uncategorized' });
+    await insertTx({ amount: -5000, category: 'Uncategorized' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
+    expect(s.untagged).toBeCloseTo(200);
   });
 
   it('fixed + flexible + discretionary + untagged == total expenses', async () => {
