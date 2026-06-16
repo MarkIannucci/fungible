@@ -17,6 +17,7 @@ import { getTransactions, getAllCategories, getDataBounds, type TxRow, type Sort
 import { isFilterActive, filterSummary } from '../core/filters.js';
 import type { Screen, TxFilter } from './App.js';
 import { useFilter } from './FilterContext.js';
+import { useLoadGuard } from './useLoadGuard.js';
 import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
 import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
@@ -79,8 +80,14 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [tagCursor, setTagCursor] = useState(0);
   const [tagInput, setTagInput] = useState('');
 
+  // Filter changes (especially the live preview) can fire queries faster than
+  // they resolve, so a slow earlier query could land after a faster later one
+  // and paint stale rows. The guard drops all but the newest load's result.
+  const loadGuard = useLoadGuard();
   function load(s = search, keepCursor = false) {
+    const token = loadGuard.begin();
     void getTransactions({ filter: sharedFilter, from, to, search: s, sort, txType, flex }).then((rows) => {
+      if (!loadGuard.isLatest(token)) return; // superseded by a newer load
       setTxs(rows);
       if (!keepCursor) setCursor(0);
       else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
@@ -317,13 +324,17 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         // Arriving via a drill-in is reversed as a unit: pop the filter level
         // the drill pushed and return to its screen — date range, search and
         // all — rather than peeling those layers one keypress at a time.
-        if (initialFilter?.drillFrom) { popFilter(); onNavigate(initialFilter.drillFrom); return; }
+        if (initialFilter?.drillFrom) { popFilter(); onNavigate(initialFilter.drillFrom, { range: initialFilter.range, anchor: from ?? initialFilter.anchor }); return; }
         if (search) { setSearch(''); setSearchInput(''); return; }
         if (from) { setFrom(null); setTo(null); return; }
         // Step back one filter level per press rather than clearing all at once;
         // popFilter clears when the history is exhausted but a filter is active.
         if (canPop || isFilterActive(sharedFilter)) { popFilter(); return; }
-        onNavigate('dashboard', search ? { search } : undefined);
+        // Carry the period back so the dashboard reopens on the month we came
+        // from rather than re-defaulting to the latest one; omit when there's
+        // nothing to restore so a fresh entry still returns a bare navigate.
+        const back: TxFilter = { ...(initialFilter?.range ? { range: initialFilter.range } : {}), ...(initialFilter?.anchor ? { anchor: initialFilter.anchor } : {}) };
+        onNavigate('dashboard', Object.keys(back).length ? back : undefined);
         return;
       }
       if (key.leftArrow && from) {
