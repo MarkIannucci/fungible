@@ -355,6 +355,7 @@ export async function getSearchFilteredData(
 
 export type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null; account_id: string | null };
 export type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null; account_id: string | null };
+export type TagRuleRow = { id: number; priority: number; match_type: string; pattern: string; tag_id: number; tag_name: string; min_amount: number | null; max_amount: number | null; account_id: string | null };
 export type CategoryDetail = { name: string; flexibility: 'fixed' | 'flexible' | 'discretionary' | null };
 
 export async function getAllRules(): Promise<Rule[]> {
@@ -365,6 +366,16 @@ export async function getAllRules(): Promise<Rule[]> {
 export async function getAllNameRules(): Promise<NameRule[]> {
   const result = await db.execute('SELECT id, match_type, pattern, replacement, min_amount, max_amount, account_id FROM name_rules ORDER BY (account_id IS NULL) ASC, id ASC');
   return result.rows as unknown as NameRule[];
+}
+
+export async function getAllTagRules(): Promise<TagRuleRow[]> {
+  const result = await db.execute(
+    `SELECT tr.id, tr.priority, tr.match_type, tr.pattern, tr.tag_id, t.name AS tag_name,
+            tr.min_amount, tr.max_amount, tr.account_id
+     FROM tag_rules tr JOIN tags t ON t.id = tr.tag_id
+     ORDER BY tr.priority DESC, (tr.account_id IS NULL) ASC, tr.id ASC`
+  );
+  return result.rows as unknown as TagRuleRow[];
 }
 
 export async function getAllCategories(): Promise<string[]> {

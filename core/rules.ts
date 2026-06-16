@@ -1,6 +1,7 @@
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { rebuildDisplayNames } from './rename.js';
+import { applyTagRules, type TagMatchType } from './tag-rules.js';
 
 async function applyAll(): Promise<number> {
   const rules = await loadCategoryRules();
@@ -99,6 +100,50 @@ export async function saveNameRule(opts: SaveNameRuleOpts): Promise<void> {
     });
   }
   await rebuildDisplayNames();
+}
+
+export async function deleteTagRule(id: number): Promise<void> {
+  // Leaves already-applied tags in place (mirrors category-rule delete).
+  await db.execute({ sql: 'DELETE FROM tag_rules WHERE id = ?', args: [id] });
+}
+
+export type SaveTagRuleOpts = {
+  matchType: TagMatchType;
+  pattern: string;
+  tagId: number;
+  minAmount: number | null;
+  maxAmount: number | null;
+  accountId?: string | null;
+  editingId?: number | null;
+};
+
+export async function saveTagRule(opts: SaveTagRuleOpts): Promise<number> {
+  const { matchType, pattern, tagId, minAmount, maxAmount, accountId = null, editingId } = opts;
+  const normPattern = matchType === 'all' ? '' : pattern;
+  if (editingId != null) {
+    await db.execute({
+      sql: 'UPDATE tag_rules SET match_type = ?, pattern = ?, tag_id = ?, min_amount = ?, max_amount = ?, account_id = ? WHERE id = ?',
+      args: [matchType, normPattern, tagId, minAmount, maxAmount, accountId, editingId],
+    });
+  } else {
+    const existing = await db.execute({
+      sql: 'SELECT id FROM tag_rules WHERE match_type = ? AND pattern = ? AND account_id IS ? AND tag_id = ?',
+      args: [matchType, normPattern, accountId, tagId],
+    });
+    if (existing.rows.length > 0) {
+      const id = (existing.rows[0] as unknown as { id: number }).id;
+      await db.execute({
+        sql: 'UPDATE tag_rules SET min_amount = ?, max_amount = ? WHERE id = ?',
+        args: [minAmount, maxAmount, id],
+      });
+    } else {
+      await db.execute({
+        sql: 'INSERT INTO tag_rules (priority, match_type, pattern, tag_id, min_amount, max_amount, account_id) VALUES (10, ?, ?, ?, ?, ?, ?)',
+        args: [matchType, normPattern, tagId, minAmount, maxAmount, accountId],
+      });
+    }
+  }
+  return applyTagRules();
 }
 
 export async function setCategoryFlexibility(name: string, flexibility: string | null): Promise<void> {

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { getAllRules, getAllNameRules, getAllCategories, getCategoryDetails, getHiddenCategorySet, toggleHiddenCategory, getLinkedAccounts, type Rule, type NameRule, type CategoryDetail, type LinkedAccount } from '../core/queries.js';
+import { getAllRules, getAllNameRules, getAllTagRules, getAllCategories, getCategoryDetails, getHiddenCategorySet, toggleHiddenCategory, getLinkedAccounts, type Rule, type NameRule, type TagRuleRow, type CategoryDetail, type LinkedAccount } from '../core/queries.js';
 import {
   getUncategorizedCount, deleteCategoryRule, deleteNameRule,
-  saveCategoryRule, saveNameRule, setCategoryFlexibility,
+  saveCategoryRule, saveNameRule, saveTagRule, deleteTagRule, setCategoryFlexibility,
   deleteCategory, renameCategory, createCategory,
 } from '../core/rules.js';
+import { getTagOptions, type TagOption } from '../core/tags.js';
+import { countTagRuleMatches, type TagMatchType } from '../core/tag-rules.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
@@ -16,15 +18,17 @@ import { ModalPanel, TextInput, SelectableRow, usePagination, useStatusMessage, 
 
 type Flexibility = 'fixed' | 'flexible' | 'discretionary' | null;
 const FLEX_CYCLE: Flexibility[] = [null, 'fixed', 'flexible', 'discretionary'];
-type Mode = 'list' | 'search' | 'rule-form' | 'name-rule-form' | 'add-category-name' | 'edit-category';
+type Mode = 'list' | 'search' | 'rule-form' | 'name-rule-form' | 'tag-rule-form' | 'add-category-name' | 'edit-category';
 type CatEditField = 'name' | 'flexibility' | 'hidden';
 type RuleField = 'pattern' | 'type' | 'min' | 'max' | 'category' | 'account';
 type NameRuleField = 'pattern' | 'type' | 'min' | 'max' | 'replacement' | 'account';
+type TagRuleField = 'type' | 'pattern' | 'min' | 'max' | 'tag' | 'account';
 const RULE_FIELDS: RuleField[] = ['pattern', 'type', 'min', 'max', 'category', 'account'];
 const NAME_RULE_FIELDS: NameRuleField[] = ['pattern', 'type', 'min', 'max', 'replacement', 'account'];
-type Section = 'rules' | 'names' | 'categories';
+const TAG_MATCH_TYPES: TagMatchType[] = ['all', 'name', 'regex'];
+type Section = 'rules' | 'names' | 'tags' | 'categories';
 
-const SECTIONS: Section[] = ['rules', 'names', 'categories'];
+const SECTIONS: Section[] = ['rules', 'names', 'tags', 'categories'];
 
 export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
   const refreshKey = useRefreshKey();
@@ -57,6 +61,19 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   const [newNameMaxAmount, setNewNameMaxAmount] = useState('');
   const [newReplacement, setNewReplacement] = useState('');
 
+  // Tag rules
+  const [tagRules, setTagRules] = useState<TagRuleRow[]>([]);
+  const [tagRuleCursor, setTagRuleCursor] = useState(0);
+  const [tagOptions, setTagOptions] = useState<TagOption[]>([]);
+  const [newTagType, setNewTagType] = useState<TagMatchType>('all');
+  const [newTagPattern, setNewTagPattern] = useState('');
+  const [newTagMinAmount, setNewTagMinAmount] = useState('');
+  const [newTagMaxAmount, setNewTagMaxAmount] = useState('');
+  const [tagPickCursor, setTagPickCursor] = useState(0);
+  const [editingTagRuleId, setEditingTagRuleId] = useState<number | null>(null);
+  const [tagRuleField, setTagRuleField] = useState<TagRuleField>('type');
+  const [tagMatchCount, setTagMatchCount] = useState(0);
+
   // Account scoping (shared by both rule forms; only one is active at a time)
   const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
   const [accountCursor, setAccountCursor] = useState(0); // 0 = All accounts; i>0 → accounts[i-1]
@@ -76,7 +93,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   const [search, setSearch] = useState('');
 
   const setTyping = useSetTyping();
-  const TEXT_INPUT_MODES_RULES = new Set<Mode>(['search', 'rule-form', 'name-rule-form', 'add-category-name', 'edit-category']);
+  const TEXT_INPUT_MODES_RULES = new Set<Mode>(['search', 'rule-form', 'name-rule-form', 'tag-rule-form', 'add-category-name', 'edit-category']);
   useEffect(() => { setTyping(TEXT_INPUT_MODES_RULES.has(mode)); }, [mode]);
 
   const termW = useTerminalWidth();
@@ -96,12 +113,30 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   function load() {
     void getAllRules().then(setRules);
     void getAllNameRules().then(setNameRules);
+    void getAllTagRules().then(setTagRules);
+    void getTagOptions().then(setTagOptions);
     void getUncategorizedCount().then(setUncategorized);
     void getHiddenCategorySet().then(setHiddenSet);
     void getAllCategories().then(setCategories);
     void getCategoryDetails().then(setCatDetails);
     void getLinkedAccounts().then(setAccounts);
   }
+
+  // Tag-rule form field order (pattern is hidden/ignored for match type 'all').
+  const tagRuleFields: TagRuleField[] = newTagType === 'all'
+    ? ['type', 'min', 'max', 'tag', 'account']
+    : ['type', 'pattern', 'min', 'max', 'tag', 'account'];
+
+  // Live "blast radius" count for the tag-rule editor (esp. match type 'all').
+  useEffect(() => {
+    if (mode !== 'tag-rule-form') return;
+    if (newTagType !== 'all' && !newTagPattern.trim()) { setTagMatchCount(0); return; }
+    let cancelled = false;
+    void countTagRuleMatches(newTagType, newTagPattern, accountOptions[accountCursor] ?? null)
+      .then((n) => { if (!cancelled) setTagMatchCount(n); })
+      .catch(() => { if (!cancelled) setTagMatchCount(0); });
+    return () => { cancelled = true; };
+  }, [mode, newTagType, newTagPattern, accountCursor]);
 
   // Account picker options: index 0 = "All accounts" (global), then one per account.
   const accountOptions: (string | null)[] = [null, ...accounts.map((a) => a.id)];
@@ -165,6 +200,30 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     load();
   }
 
+  async function saveTagRuleForm() {
+    const tag = tagOptions[tagPickCursor];
+    if (!tag) { showStatus('Create a tag first'); return; }
+    const minAmt = newTagMinAmount.trim() ? parseFloat(newTagMinAmount) : null;
+    const maxAmt = newTagMaxAmount.trim() ? parseFloat(newTagMaxAmount) : null;
+    const count = await saveTagRule({
+      matchType: newTagType, pattern: newTagPattern, tagId: tag.id,
+      minAmount: minAmt, maxAmount: maxAmt,
+      accountId: accountOptions[accountCursor] ?? null,
+      editingId: editingTagRuleId,
+    });
+    setEditingTagRuleId(null);
+    showStatus(`Tag rule saved · tagged ${count} transaction${count === 1 ? '' : 's'}`, 3000);
+    setNewTagPattern('');
+    setMode('list');
+    load();
+  }
+
+  function handleDeleteTagRule(id: number) {
+    deleteTagRule(id);
+    showStatus('Tag rule deleted · existing tags left in place');
+    load();
+  }
+
   useInput((input, key) => {
     if (mode === 'search') {
       if (key.escape) { setSearch(''); setMode('list'); return; }
@@ -188,7 +247,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         return;
       }
 
-      if (section === 'rules' || section === 'names') {
+      if (section === 'rules' || section === 'names' || section === 'tags') {
         if (input === '/') { setMode('search'); return; }
       }
 
@@ -230,6 +289,26 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           setNewReplacement(r.replacement);
           setAccountCursor(accountCursorFor(r.account_id));
           setNameRuleField('pattern'); setMode('name-rule-form');
+        }
+      } else if (section === 'tags') {
+        if (key.upArrow) setTagRuleCursor((c) => Math.max(0, c - 1));
+        if (key.downArrow) setTagRuleCursor((c) => Math.min(filteredTagRules.length - 1, c + 1));
+        if (input === 'a') {
+          setEditingTagRuleId(null); setNewTagType('all'); setNewTagPattern(''); setNewTagMinAmount(''); setNewTagMaxAmount('');
+          setTagPickCursor(0); setAccountCursor(0); setTagMatchCount(0);
+          setTagRuleField('type'); setMode('tag-rule-form');
+        }
+        if (input === 'x' && filteredTagRules[tagRuleCursor]) { handleDeleteTagRule(filteredTagRules[tagRuleCursor].id); }
+        if (key.return && filteredTagRules[tagRuleCursor]) {
+          const r = filteredTagRules[tagRuleCursor];
+          setEditingTagRuleId(r.id);
+          setNewTagType(r.match_type as TagMatchType);
+          setNewTagPattern(r.pattern);
+          setNewTagMinAmount(r.min_amount !== null ? String(r.min_amount) : '');
+          setNewTagMaxAmount(r.max_amount !== null ? String(r.max_amount) : '');
+          setTagPickCursor(Math.max(0, tagOptions.findIndex((t) => t.id === r.tag_id)));
+          setAccountCursor(accountCursorFor(r.account_id));
+          setTagRuleField('type'); setMode('tag-rule-form');
         }
       } else if (section === 'categories') {
         if (key.upArrow) setCatListCursor((c) => Math.max(0, c - 1));
@@ -353,6 +432,33 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         if (key.leftArrow) { setAccountCursor((c) => Math.max(0, c - 1)); return; }
         if (key.rightArrow) { setAccountCursor((c) => Math.min(accountOptions.length - 1, c + 1)); return; }
       }
+    } else if (mode === 'tag-rule-form') {
+      if (key.escape) { setEditingTagRuleId(null); setMode('list'); return; }
+      if (key.return) { if (newTagType === 'all' || newTagPattern.trim()) { void saveTagRuleForm(); } return; }
+      if (key.upArrow) { setTagRuleField((f) => tagRuleFields[Math.max(0, tagRuleFields.indexOf(f) - 1)]); return; }
+      if (key.downArrow) { setTagRuleField((f) => tagRuleFields[Math.min(tagRuleFields.length - 1, tagRuleFields.indexOf(f) + 1)]); return; }
+      if (tagRuleField === 'type') {
+        if (key.leftArrow || key.rightArrow) {
+          const dir = key.leftArrow ? -1 : 1;
+          setNewTagType((t) => TAG_MATCH_TYPES[(TAG_MATCH_TYPES.indexOf(t) + dir + TAG_MATCH_TYPES.length) % TAG_MATCH_TYPES.length]);
+          return;
+        }
+      } else if (tagRuleField === 'pattern') {
+        if (key.backspace || key.delete) { setNewTagPattern((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNewTagPattern((p) => p + input); return; }
+      } else if (tagRuleField === 'min') {
+        if (key.backspace || key.delete) { setNewTagMinAmount((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNewTagMinAmount((p) => p + input); return; }
+      } else if (tagRuleField === 'max') {
+        if (key.backspace || key.delete) { setNewTagMaxAmount((p) => p.slice(0, -1)); return; }
+        if (input && !key.ctrl && !key.meta) { setNewTagMaxAmount((p) => p + input); return; }
+      } else if (tagRuleField === 'tag') {
+        if (key.leftArrow) { setTagPickCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.rightArrow) { setTagPickCursor((c) => Math.min(tagOptions.length - 1, c + 1)); return; }
+      } else if (tagRuleField === 'account') {
+        if (key.leftArrow) { setAccountCursor((c) => Math.max(0, c - 1)); return; }
+        if (key.rightArrow) { setAccountCursor((c) => Math.min(accountOptions.length - 1, c + 1)); return; }
+      }
     } else if (mode === 'add-category-name') {
       if (key.escape) { setMode('list'); return; }
       if (key.return && newCategoryName.trim()) {
@@ -375,6 +481,9 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   const filteredNameRules = q
     ? nameRules.filter((r) => r.pattern.toLowerCase().includes(q) || r.replacement.toLowerCase().includes(q))
     : nameRules;
+  const filteredTagRules = q
+    ? tagRules.filter((r) => r.pattern.toLowerCase().includes(q) || r.tag_name.toLowerCase().includes(q))
+    : tagRules;
 
   const PAGE = 20;
   const { visible } = usePagination(filteredRules, cursor, PAGE);
@@ -386,7 +495,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         <Box gap={3}>
           {SECTIONS.map((s) => (
             <Text key={s} bold color={section === s ? C_ACCENT : undefined} dimColor={section !== s}>
-              {s === 'rules' ? 'Category Rules' : s === 'names' ? 'Name Rules' : 'Categories'}
+              {s === 'rules' ? 'Category Rules' : s === 'names' ? 'Name Rules' : s === 'tags' ? 'Tag Rules' : 'Categories'}
             </Text>
           ))}
         </Box>
@@ -484,6 +593,43 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
         </>
       )}
 
+      {section === 'tags' && (
+        <>
+          <ColumnHeader hasCursor columns={[
+            { label: 'TYPE', width: 5 },
+            { label: 'PATTERN', width: rulePatW },
+            { label: 'AMOUNT', width: 10 },
+            { label: 'TAG', width: ruleCatW },
+          ]} />
+          {filteredTagRules.length === 0
+            ? <Box marginTop={1}><Text dimColor>{tagRules.length === 0 ? 'No tag rules yet. [a] to add one (type "all" + an account tags everything in it).' : 'No matches.'}</Text></Box>
+            : filteredTagRules.map((rule, i) => {
+                const isSelected = tagRuleCursor === i;
+                const amtLabel = rule.min_amount !== null && rule.max_amount !== null && rule.min_amount === rule.max_amount
+                  ? `$${rule.min_amount}`
+                  : rule.min_amount !== null && rule.max_amount !== null
+                  ? `$${rule.min_amount}-$${rule.max_amount}`
+                  : rule.min_amount !== null ? `≥$${rule.min_amount}`
+                  : rule.max_amount !== null ? `≤$${rule.max_amount}`
+                  : '';
+                const patLabel = rule.match_type === 'all' ? '— all —' : rule.pattern;
+                return (
+                  <SelectableRow key={rule.id} selected={isSelected}>
+                    <Text color={C_WARNING} dimColor={!isSelected}>{rule.match_type.padEnd(5)}</Text>
+                    <Text dimColor={rule.match_type === 'all' || !isSelected}>
+                      {patLabel.length > rulePatW ? patLabel.slice(0, rulePatW - 1) + '…' : patLabel.padEnd(rulePatW)}
+                    </Text>
+                    {amtLabel ? <Text color={C_MANUAL} dimColor={!isSelected}>{truncate(amtLabel, 10).padEnd(10)}</Text> : <Text>{' '.repeat(10)}</Text>}
+                    <Text color={C_ACCENT} dimColor={!isSelected}>{rule.tag_name.length > ruleCatW ? rule.tag_name.slice(0, ruleCatW - 1) + '…' : rule.tag_name.padEnd(ruleCatW)}</Text>
+                    {rule.account_id && <Text color={C_MANUAL} dimColor={!isSelected}>@{accountLabel(rule.account_id)}</Text>}
+                  </SelectableRow>
+                );
+              })}
+          <Divider />
+          <Text dimColor>{filteredTagRules.length}{search ? `/${tagRules.length}` : ''} tag rule{tagRules.length !== 1 ? 's' : ''}</Text>
+        </>
+      )}
+
       {section === 'categories' && (
         <>
           <ColumnHeader hasCursor marginTop={0} columns={[
@@ -563,6 +709,26 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
             <EditTextField label="Max $" active={nameRuleField === 'max'} value={newNameMaxAmount} color={C_WARNING} placeholder="optional" />
             <EditTextField label="Replace with" active={nameRuleField === 'replacement'} value={newReplacement} color={C_POSITIVE} placeholder="display name" emptyText="empty" />
             <EditToggleField label="Account" active={nameRuleField === 'account'} value={accountLabel(accountOptions[accountCursor] ?? null)} />
+          </Box>
+          <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
+        </ModalPanel>
+      )}
+
+      {mode === 'tag-rule-form' && (
+        <ModalPanel title={`${editingTagRuleId !== null ? 'Edit' : 'New'} Tag Rule`} borderColor={C_ACCENT}>
+          <Box marginTop={1} flexDirection="column" gap={1}>
+            <EditToggleField label="Match type" active={tagRuleField === 'type'} value={newTagType} />
+            {newTagType !== 'all' && (
+              <EditTextField label="Pattern" active={tagRuleField === 'pattern'} value={newTagPattern} color={C_WARNING} placeholder="keyword or /regex/" emptyText="empty" />
+            )}
+            <EditTextField label="Min $" active={tagRuleField === 'min'} value={newTagMinAmount} color={C_WARNING} placeholder="optional" />
+            <EditTextField label="Max $" active={tagRuleField === 'max'} value={newTagMaxAmount} color={C_WARNING} placeholder="optional" />
+            <EditToggleField label="Tag" active={tagRuleField === 'tag'} value={tagOptions[tagPickCursor]?.name ?? '— no tags —'} />
+            <EditToggleField label="Account" active={tagRuleField === 'account'} value={accountLabel(accountOptions[accountCursor] ?? null)} />
+          </Box>
+          <Box marginTop={1}>
+            <Text color={C_WARNING}>{tagMatchCount} transactions match</Text>
+            <Text dimColor> · saving tags them (removed tags stay removed)</Text>
           </Box>
           <Box marginTop={1}><Text dimColor>↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel</Text></Box>
         </ModalPanel>
