@@ -100,9 +100,9 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   useEffect(() => { load(); }, [refreshKey]);
 
-  function handleDeleteRule(id: number) {
-    deleteCategoryRule(id);
-    showStatus('Rule deleted');
+  async function handleDeleteRule(id: number) {
+    const count = await deleteCategoryRule(id);
+    showStatus(`Rule deleted · recategorized ${count} transactions`, 3000);
     load();
   }
 
@@ -181,7 +181,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0);
           setRuleField('pattern'); setMode('rule-form');
         }
-        if (input === 'x' && filteredRules[cursor]) { handleDeleteRule(filteredRules[cursor].id); }
+        if (input === 'x' && filteredRules[cursor]) { void handleDeleteRule(filteredRules[cursor].id); }
         if (key.return && filteredRules[cursor]) {
           const r = filteredRules[cursor];
           setEditingRuleId(r.id);
