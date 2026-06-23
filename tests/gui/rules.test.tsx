@@ -52,7 +52,7 @@ describe('GUI Rules', () => {
     await waitFor(() => expect(screen.getByText('Whole Foods')).toBeTruthy());
     const row = screen.getByText('Whole Foods').closest('tr')!;
     await userEvent.click(Array.from(row.querySelectorAll('button')).find((b) => b.textContent === 'delete')!);
-    await waitFor(() => expect(screen.getByText('Rule deleted')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Rule deleted · recategorized \d+ transactions?/)).toBeTruthy());
     expect(screen.getByRole('button', { name: 'Category rules (0)' })).toBeTruthy();
   });
 
