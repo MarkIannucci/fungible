@@ -12,6 +12,35 @@ export type MerchantSummaryRow = {
   pct: number;
 };
 
+// The catch-all category. Unlike a real category, it legitimately mixes income
+// (e.g. an un-ruled paycheck) with spending, so we never net the two together —
+// see summarizeBuckets.
+const UNCATEGORIZED = 'Uncategorized';
+
+/**
+ * Turn per-category {outflow, inflow} buckets into an income/expense/byCategory
+ * summary. Real categories are NETTED (a refund reduces that category's spending);
+ * `Uncategorized` is SPLIT by flow (its outflows are spending, its inflows income)
+ * so a paycheck landing there can't erase the uncategorized spending total.
+ */
+function summarizeBuckets(rows: { category: string; outflow: number; inflow: number }[]): MonthlySummary {
+  let income = 0, expenses = 0;
+  const byCategory: CategorySummary[] = [];
+  for (const r of rows) {
+    const outflow = Number(r.outflow), inflow = Number(r.inflow);
+    if (r.category === UNCATEGORIZED) {
+      if (outflow > 0) { expenses += outflow; byCategory.push({ category: r.category, total: outflow }); }
+      income += inflow;
+    } else {
+      const net = outflow - inflow;
+      if (net > 0) { expenses += net; byCategory.push({ category: r.category, total: net }); }
+      else income += -net;
+    }
+  }
+  byCategory.sort((a, b) => b.total - a.total);
+  return { income, expenses, net: income - expenses, byCategory };
+}
+
 export async function getHiddenCategories(): Promise<Set<string>> {
   const result = await db.execute('SELECT category FROM hidden_categories');
   return new Set((result.rows as unknown as { category: string }[]).map((r) => r.category));
@@ -26,36 +55,32 @@ export async function getMonthlySummary(year: number, month: number): Promise<Mo
 export async function getRangeSummary(from: string, to: string, filter?: Filter): Promise<MonthlySummary> {
   const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
-    sql: `SELECT category, SUM(amount) as total
+    sql: `SELECT category,
+            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as outflow,
+            SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) as inflow
           FROM transactions
           WHERE date >= ? AND date <= ? AND pending = 0 AND ignored = 0${f.clause}
             AND category NOT IN (SELECT category FROM hidden_categories)
-          GROUP BY category ORDER BY total DESC`,
+          GROUP BY category`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { category: string; total: number }[];
-  const income   = rows.filter((r) => r.total < 0).reduce((s, r) => s + Math.abs(r.total), 0);
-  const expenses = rows.filter((r) => r.total > 0).reduce((s, r) => s + r.total, 0);
-  const byCategory = rows.filter((r) => r.total > 0).map((r) => ({ category: r.category, total: Number(r.total) }));
-  return { income, expenses, net: income - expenses, byCategory };
+  return summarizeBuckets(result.rows as unknown as { category: string; outflow: number; inflow: number }[]);
 }
 
 export async function getTagSummary(tagName: string): Promise<MonthlySummary> {
   const result = await db.execute({
-    sql: `SELECT t.category, SUM(t.amount) as total
+    sql: `SELECT t.category,
+            SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) as outflow,
+            SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) as inflow
           FROM transactions t
           JOIN transaction_tags tt ON tt.transaction_id = t.id
           JOIN tags tg ON tg.id = tt.tag_id
           WHERE tg.name = ? AND t.ignored = 0
             AND t.category NOT IN (SELECT category FROM hidden_categories)
-          GROUP BY t.category ORDER BY total DESC`,
+          GROUP BY t.category`,
     args: [tagName],
   });
-  const rows = result.rows as unknown as { category: string; total: number }[];
-  const income     = rows.filter((r) => r.total < 0).reduce((s, r) => s + Math.abs(r.total), 0);
-  const expenses   = rows.filter((r) => r.total > 0).reduce((s, r) => s + r.total, 0);
-  const byCategory = rows.filter((r) => r.total > 0).map((r) => ({ category: r.category, total: Number(r.total) }));
-  return { income, expenses, net: income - expenses, byCategory };
+  return summarizeBuckets(result.rows as unknown as { category: string; outflow: number; inflow: number }[]);
 }
 
 export async function getMerchantSummary(
@@ -195,40 +220,47 @@ type Window = { from: string; to: string };
 
 async function queryCategoryTotals(from: string, to: string, filter?: Filter): Promise<Map<string, number>> {
   const f = buildFilterClause(filter, 'transactions');
+  // Per-category spending using the same rule as getRangeSummary (net real
+  // categories, split Uncategorized) so delta mode reconciles with the breakdown.
   const result = await db.execute({
-    sql: `SELECT category, SUM(amount) as total
+    sql: `SELECT category,
+            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as outflow,
+            SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) as inflow
           FROM transactions
-          WHERE date >= ? AND date <= ?
-            AND amount > 0 AND pending = 0 AND ignored = 0
+          WHERE date >= ? AND date <= ? AND pending = 0 AND ignored = 0
             AND category NOT IN (SELECT category FROM hidden_categories)${f.clause}
-          GROUP BY category HAVING SUM(amount) > 0`,
+          GROUP BY category`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { category: string; total: number }[];
-  return new Map(rows.map((r) => [r.category, Number(r.total)]));
+  const { byCategory } = summarizeBuckets(result.rows as unknown as { category: string; outflow: number; inflow: number }[]);
+  return new Map(byCategory.map((c) => [c.category, c.total]));
 }
 
 async function queryFlexTotals(from: string, to: string, filter?: Filter): Promise<FlexSummary> {
   const f = buildFilterClause(filter, 't');
+  // Per-category outflow/inflow + its flex tier; spending is netted for real
+  // categories and outflow-only for Uncategorized (same rule as summarizeBuckets),
+  // then summed into tiers. Uncategorized has no flexibility, so it lands in 'untagged'.
   const result = await db.execute({
-    sql: `SELECT COALESCE(c.flexibility, 'untagged') as tier, SUM(cat_totals.total) as total
-          FROM (
-            SELECT t.category, SUM(t.amount) as total
-            FROM transactions t
-            WHERE t.date >= ? AND t.date <= ?
-              AND t.pending = 0 AND t.ignored = 0
-              AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}
-            GROUP BY t.category HAVING SUM(t.amount) > 0
-          ) as cat_totals
-          LEFT JOIN categories c ON c.name = cat_totals.category
-          GROUP BY tier`,
+    sql: `SELECT t.category, COALESCE(c.flexibility, 'untagged') as tier,
+            SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) as outflow,
+            SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) as inflow
+          FROM transactions t
+          LEFT JOIN categories c ON c.name = t.category
+          WHERE t.date >= ? AND t.date <= ?
+            AND t.pending = 0 AND t.ignored = 0
+            AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}
+          GROUP BY t.category, c.flexibility`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { tier: string; total: number }[];
+  const rows = result.rows as unknown as { category: string; tier: string; outflow: number; inflow: number }[];
   const out: FlexSummary = { fixed: 0, flexible: 0, discretionary: 0, untagged: 0 };
   for (const r of rows) {
-    const t = r.tier as keyof FlexSummary;
-    if (t in out) out[t] = Number(r.total);
+    const outflow = Number(r.outflow), inflow = Number(r.inflow);
+    const spend = r.category === UNCATEGORIZED ? outflow : outflow - inflow;
+    if (spend <= 0) continue;
+    const tier = r.tier as keyof FlexSummary;
+    if (tier in out) out[tier] += spend;
   }
   return out;
 }
@@ -326,27 +358,36 @@ export async function getSearchFilteredData(
   const re = buildSearchRe(search);
   const matches = rows.filter((r) => re.test(r.display) || (r.merchant_name ? re.test(r.merchant_name) : false));
 
-  const catMap = new Map<string, { total: number; flex: string }>();
+  // Accumulate per-category outflow/inflow, then apply the hybrid rule: real
+  // categories net (refunds reduce them), Uncategorized splits by flow (outflow =
+  // spending, inflow = income). Mirrors summarizeBuckets / queryFlexTotals.
+  const catMap = new Map<string, { outflow: number; inflow: number; flex: string }>();
   for (const r of matches) {
-    const e = catMap.get(r.category);
-    if (!e) catMap.set(r.category, { total: Number(r.amount), flex: r.flex });
-    else e.total += Number(r.amount);
+    const amt = Number(r.amount);
+    const e = catMap.get(r.category) ?? { outflow: 0, inflow: 0, flex: r.flex };
+    if (amt > 0) e.outflow += amt;
+    else if (amt < 0) e.inflow += -amt;
+    catMap.set(r.category, e);
   }
 
   let income = 0, expenses = 0;
   const byCategory: { category: string; total: number }[] = [];
   const flexData: FlexSummary = { fixed: 0, flexible: 0, discretionary: 0, untagged: 0 };
-
-  for (const [category, { total, flex }] of catMap) {
-    if (total < 0) { income += Math.abs(total); }
-    else if (total > 0) {
-      expenses += total;
-      byCategory.push({ category, total });
-      if (flex === 'fixed') flexData.fixed += total;
-      else if (flex === 'flexible') flexData.flexible += total;
-      else if (flex === 'discretionary') flexData.discretionary += total;
-      else flexData.untagged += total;
+  for (const [category, { outflow, inflow, flex }] of catMap) {
+    let spend: number;
+    if (category === UNCATEGORIZED) { spend = outflow; income += inflow; }
+    else {
+      const net = outflow - inflow;
+      if (net < 0) { income += -net; continue; }
+      spend = net;
     }
+    if (spend <= 0) continue;
+    expenses += spend;
+    byCategory.push({ category, total: spend });
+    if (flex === 'fixed') flexData.fixed += spend;
+    else if (flex === 'flexible') flexData.flexible += spend;
+    else if (flex === 'discretionary') flexData.discretionary += spend;
+    else flexData.untagged += spend;
   }
 
   byCategory.sort((a, b) => b.total - a.total);

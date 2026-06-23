@@ -75,4 +75,39 @@ describe('GUI Dashboard', () => {
       }),
     );
   });
+
+  it('Spending by category rows sum to the displayed Expenses total', async () => {
+    // Exercise the two cases that used to break reconciliation: a refund inside a
+    // real category (must NET to 200) and an income+spend mix inside Uncategorized
+    // (must SPLIT — the $500 spend shows, the $2000 inflow is income, not netted away).
+    await db.batch([
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel',        'test-credit',   '2026-05-04', 'United',        300.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel-refund', 'test-credit',   '2026-05-05', 'United Refund', -100.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-uncat-spend',   'test-credit',   '2026-05-07', 'Mystery Shop',  500.00, 'Uncategorized', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-uncat-income',  'test-checking', '2026-05-02', 'Side Gig',     -2000.00, 'Uncategorized', 0, 0)`,
+    ], 'write');
+
+    renderScreen(<Dashboard />, { txFilter: MAY_FILTER });
+    await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
+
+    const parse = (t: string | null) => parseFloat((t ?? '').replace(/[^0-9.-]/g, ''));
+
+    // Expenses card: its label's card holds the value in a `.num` element.
+    const expensesCard = screen.getByText('Expenses').parentElement!;
+    const expenses = parse(expensesCard.querySelector('.num')!.textContent);
+
+    // Category rows: each row's amount cell is the global `td.num`.
+    const section = screen.getByText('Spending by category').closest('section')!;
+    expect(section.textContent).toContain('Uncategorized'); // the spend row must be present
+    const categoryTotal = [...section.querySelectorAll('tbody tr')]
+      .map((tr) => parse(tr.querySelector('td.num')!.textContent))
+      .reduce((sum, n) => sum + n, 0);
+
+    expect(expenses).toBeCloseTo(1088.99, 2);          // 388.99 seeded + 200 net Travel + 500 uncat
+    expect(categoryTotal).toBeCloseTo(expenses, 2);    // detailed lines reconcile to the total
+  });
 });
