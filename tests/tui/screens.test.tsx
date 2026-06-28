@@ -8,6 +8,8 @@ vi.mock('../../core/db.js', async () => {
 });
 
 import { db } from '../../core/db.js';
+import * as queries from '../../core/queries.js';
+import { useLoadGuard } from '../../tui/useLoadGuard.js';
 import { seedTuiData } from '../helpers/seedTuiData.js';
 import { App } from '../../tui/App.js';
 import { Dashboard } from '../../tui/Dashboard.js';
@@ -119,6 +121,35 @@ describe('Dashboard', () => {
   it('shows SPENDING BY CATEGORY heading', async () => {
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
+  });
+
+  it('SPENDING BY CATEGORY lines sum to the displayed Expenses total', async () => {
+    // Exercise the two cases that used to break reconciliation: a refund inside a
+    // real category (must NET to 200, not show 300) and an income+spend mix inside
+    // Uncategorized (must SPLIT — the $500 spend shows, the $2000 inflow is income).
+    await db.batch([
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel',        'test-credit',   '2026-05-04', 'United',        300.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel-refund', 'test-credit',   '2026-05-05', 'United Refund', -100.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-uncat-spend',   'test-credit',   '2026-05-07', 'Mystery Shop',  500.00, 'Uncategorized', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-uncat-income',  'test-checking', '2026-05-02', 'Side Gig',     -2000.00, 'Uncategorized', 0, 0)`,
+    ], 'write');
+
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Uncategorized'));
+
+    const [statRegion, catRegion] = frame(r).split('SPENDING BY CATEGORY');
+    const money = (s: string) =>
+      [...s.matchAll(/[-+]?\$[\d,]+\.\d{2}/g)].map((m) => parseFloat(m[0].replace(/[$,+]/g, '')));
+    // Stat cards render in order Income · Expenses · Net, so Expenses is the 2nd $ token.
+    const expenses = money(statRegion)[1];
+    const categoryTotal = money(catRegion).reduce((sum, n) => sum + n, 0);
+
+    expect(expenses).toBeCloseTo(1088.99, 2);          // 388.99 seeded + 200 net Travel + 500 uncat
+    expect(categoryTotal).toBeCloseTo(expenses, 2);    // detailed lines reconcile to the total
   });
 
   it('Tab cycles to flex view', async () => {
@@ -265,6 +296,110 @@ describe('Dashboard', () => {
     await waitFor(() => expect(frame(r)).toContain('Income'));
     r.stdin.write('3'); // trends
     expect(onNavigate).toHaveBeenCalledWith('trends');
+  });
+
+  // Outbound drill payloads carry the period (range + anchor=from) so the
+  // dashboard can restore the same month when Esc reverses the drill. The
+  // Transactions-side tests check the return trip; these pin the originating
+  // payloads so a regression on the Dashboard side can't pass silently.
+  it('category drill outbound payload carries range + anchor', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\r'); // Enter on top category (Grocery)
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
+        from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01', drillFrom: 'dashboard',
+      })),
+    );
+  });
+
+  it('flex drill outbound payload carries range + anchor', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\t'); // → flex view
+    await waitFor(() => expect(frame(r)).toContain('SPENDING BY FLEXIBILITY'));
+    r.stdin.write('\r');
+    // No selectedAccount → no drillFrom, but range/anchor still travel.
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
+        from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01',
+      })),
+    );
+  });
+
+  it('account drill outbound payload carries range + anchor', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('\t'); // flex
+    r.stdin.write('\t'); // account
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('\r');
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
+        from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01', drillFrom: 'dashboard',
+      })),
+    );
+  });
+
+  it('merchant drill outbound payload carries range + anchor=merchantDrill.from', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('m');
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('\r');
+    // The merchant drill site uniquely sources `anchor` from merchantDrill.from
+    // (the captured drill date) rather than the dashboard's current `from` —
+    // both land on '2026-05-01' here, but the variant is exercised.
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
+        from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01',
+        search: 'Whole Foods', drillFrom: 'dashboard',
+      })),
+    );
+  });
+
+  it("'2' shortcut outbound payload carries range + anchor", async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Grocery'));
+    r.stdin.write('2');
+    expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
+      from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01',
+    }));
   });
 
   it('shows period label for the anchored month', async () => {
@@ -448,10 +583,60 @@ describe('Transactions', () => {
       expect(f).toMatch(/May 2026/);
     });
     r.stdin.write('\x1b');
-    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard'));
+    // Returns to the dashboard carrying the month we drilled from (anchor =
+    // the screen's current period start) so it doesn't snap to the latest month.
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', expect.objectContaining({ anchor: '2026-05-01' })));
     // The drill's filter level was popped, not merely navigated away from
     await waitFor(() => expect(frame(r)).not.toContain('1 category'));
     expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('Escape preserves the dashboard month (range + anchor) when reversing a drill-in', async () => {
+    const onNavigate = vi.fn();
+    // Simulates a drill from the dashboard while viewing May 2026 in month range.
+    const r = render(
+      <W>
+        <FilterProvider>
+          <PushFilters filters={[{ categories: ['Grocery'] }]} />
+          <Transactions
+            onNavigate={onNavigate}
+            showHints={false}
+            initialFilter={{ ...MAY_DATE_FILTER, range: 'month', anchor: '2026-05-15', drillFrom: 'dashboard' }}
+          />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toMatch(/May 2026/));
+    r.stdin.write('\x1b');
+    // The month travels back via range + anchor; anchor is the period start the
+    // dashboard will land on (snapped to May 1), not the most recent month.
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('dashboard', { range: 'month', anchor: '2026-05-01' }),
+    );
+  });
+
+  it('Escape after stepping a month forward returns the dashboard to that month', async () => {
+    const onNavigate = vi.fn();
+    const r = render(
+      <W>
+        <FilterProvider>
+          <PushFilters filters={[{ categories: ['Grocery'] }]} />
+          <Transactions
+            onNavigate={onNavigate}
+            showHints={false}
+            initialFilter={{ from: '2026-04-01', to: '2026-04-30', range: 'month', anchor: '2026-04-15', drillFrom: 'dashboard' }}
+          />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toMatch(/Apr 2026/));
+    r.stdin.write('\x1B[C'); // → step to May within Transactions
+    await waitFor(() => expect(frame(r)).toMatch(/May 2026/));
+    r.stdin.write('\x1b');
+    // "The month you were looking at" is the one on screen at Esc — May, not April.
+    await waitFor(() =>
+      expect(onNavigate).toHaveBeenCalledWith('dashboard', expect.objectContaining({ anchor: '2026-05-01' })),
+    );
   });
 
   it('shows a filter-summary label when the shared filter is active', async () => {
@@ -998,6 +1183,25 @@ describe('NetWorth', () => {
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
+
+  it('shows an excluded account in a carved-out section, out of Total assets', async () => {
+    await db.execute("INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('acct-529', 'College 529', 'investment', '529', 1)");
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('acct-529', 12345.00, '2026-05-20')");
+    const r = networth();
+    await waitFor(() => expect(frame(r)).toContain('Excluded (not in net worth)'));
+    const f = frame(r);
+    expect(f).toContain('College 529');
+    expect(f).toContain('Excluded total');
+    // The 529 is an investment asset; were it counted, Total assets would read
+    // $17,345.00 (5,000 + 12,345). It must stay out of the headline.
+    expect(f).not.toContain('17,345');
+  });
+
+  it('omits the excluded section when no account is excluded', async () => {
+    const r = networth();
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    expect(frame(r)).not.toContain('Excluded (not in net worth)');
+  });
 });
 
 // ── Tags ──────────────────────────────────────────────────────────────────────
@@ -1174,6 +1378,61 @@ describe('Rules', () => {
     });
   });
 
+  it('Esc from search preserves cursor on the highlighted rule (not the unfiltered top)', async () => {
+    // Regression: pressing Esc in search used to reset cursor to its pre-search
+    // numeric index, so the highlighted (filtered) rule could differ from what
+    // 'x' then deleted. Now the cursor re-anchors to that rule by id.
+    await db.execute('DELETE FROM category_rules');
+    await db.batch([
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Aaa Coffee', 'Dining')",
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Bbb Diner',  'Dining')",
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Zzz Lounge', 'Dining')",
+    ], 'write');
+
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Aaa Coffee'));
+    r.stdin.write('/');
+    await waitFor(() => expect(frame(r)).toContain('Esc clear')); // search bar visible
+    for (const ch of 'Zzz') r.stdin.write(ch);
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Zzz Lounge');
+      expect(f).not.toContain('Aaa Coffee'); // filter is active
+    });
+    r.stdin.write('\x1b');         // Esc clears search
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Aaa Coffee'); // full list back
+      // ▶ cursor marker should sit on the Zzz row, not the top.
+      const zzzLine = f.split('\n').find((l) => l.includes('Zzz Lounge'))!;
+      expect(zzzLine.includes('▶')).toBe(true);
+    });
+  });
+
+  it('[x] deletes the rule and surfaces the recategorized count in the status', async () => {
+    // Self-contained: clear seeded transactions/rules so the count pins to exactly 1.
+    // Mirrors the GUI delete test (tests/gui/rules.test.tsx) and locks the singular
+    // pluralization of the status message ("1 transaction", not "1 transactions").
+    await db.execute('DELETE FROM category_rules');
+    await db.execute('DELETE FROM transactions');
+    await db.execute(
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-tj', 'test-credit', '2026-05-15', 'Trader Joes', 50.00, 'Grocery', 0, 0)`,
+    );
+    await db.execute(
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Trader Joes', 'Grocery')",
+    );
+
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('x');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toMatch(/Rule deleted · recategorized 1 transaction\b/); // \b rejects trailing 's'
+      expect(f).not.toContain('Trader Joes'); // rule gone from the list
+    });
+  });
+
   it('[a] in Name Rules section opens new name rule form', async () => {
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Category Rules'));
@@ -1334,6 +1593,28 @@ describe('Accounts', () => {
       expect(f).toContain('Vacation Fund');
       expect(f).not.toContain('Test Checking');
     });
+  });
+
+  it('toggling "exclude from net worth" refreshes the list with the excl marker', async () => {
+    const real = accountsApi.updateAccountExcluded;
+    vi.spyOn(accountsApi, 'updateAccountExcluded').mockImplementation(delayWrite(real));
+
+    const r = accounts();
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('\r');                            // open unified edit panel (cursor on Nickname)
+    await waitFor(() => expect(frame(r)).toContain('Edit: Test Checking'));
+    expect(frame(r)).toContain('Included');         // Net-worth toggle defaults to Included
+    // Fields for a depository with no household members: Nickname, Type, Subtype, Net worth.
+    r.stdin.write('\x1b[B');                         // ↓ Nickname → Type
+    r.stdin.write('\x1b[B');                         // ↓ Type → Subtype
+    r.stdin.write('\x1b[B');                         // ↓ Subtype → Net worth
+    // Let the field-change commit before toggling: the toggle reads editField from
+    // its closure, which is stale if the right-arrow runs in the same input batch.
+    await new Promise((res) => setTimeout(res, 60));
+    r.stdin.write('\x1b[C');                         // → toggle to Excluded
+    await waitFor(() => expect(frame(r)).toContain('Excluded'));
+    r.stdin.write('\r');                             // save
+    await waitFor(() => expect(frame(r)).toContain('excl')); // ⊘ excl row marker after reload
   });
 
   it('deleting an account refreshes the list to drop it', async () => {
@@ -1688,3 +1969,238 @@ describe('FilterPanel', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 });
+
+// ── FilterPanel live preview ───────────────────────────────────────────────
+describe('FilterPanel live preview', () => {
+  const MAY_DATE_FILTER = { from: '2026-05-01', to: '2026-05-31' };
+
+  function Harness() {
+    const [open, setOpen] = React.useState(true);
+    return (
+      <FilterProvider>
+        <Transactions onNavigate={noop} showHints={false} initialFilter={MAY_DATE_FILTER} isActive={!open} />
+        {open && <FilterPanel isActive={open} onClose={() => setOpen(false)} />}
+      </FilterProvider>
+    );
+  }
+
+  function harness() {
+    return render(<W><Harness /></W>);
+  }
+
+  it('toggling categories updates the transaction list before Enter is pressed', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('n'); // deselect all categories → matches nothing
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+  });
+
+  it('Esc reverts the preview, leaving the committed filter untouched', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    expect(frame(r)).not.toContain('0 categories');
+  });
+
+  it('Enter commits the preview and updates the filter summary', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('n');
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Whole Foods');
+      expect(f).toContain('0 categories');
+    });
+  });
+
+  it('opening and closing without changes leaves the view unchanged', async () => {
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('\x1b');
+    await waitFor(() => expect(frame(r)).not.toContain('Filter'));
+    expect(frame(r)).toContain('Whole Foods');
+  });
+
+  it('a burst of draft changes collapses into a single preview query (debounce)', async () => {
+    // The keystrokes all land within one tick — far under the debounce window —
+    // so every intermediate draft is coalesced and only the final state queries.
+    const spy = vi.spyOn(queries, 'getTransactions');
+    const r = harness();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    const baseline = spy.mock.calls.length;
+    r.stdin.write('n'); // none
+    r.stdin.write('a'); // all (== committed)
+    r.stdin.write('n'); // none again
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    expect(spy.mock.calls.length - baseline).toBe(1);
+    spy.mockRestore();
+  });
+});
+
+// ── FilterPanel live preview — propagation & history ───────────────────────
+describe('FilterPanel live preview — propagation & history', () => {
+  it('previews on the Dashboard, the screen the panel was opened from', async () => {
+    // The panel lists category *names*, so assert on a Dashboard-only signal:
+    // the Expenses total ($388.99 for seeded May), which no panel row renders.
+    function DashHarness() {
+      const [open, setOpen] = React.useState(true);
+      return (
+        <FilterProvider>
+          <Dashboard onNavigate={noop} showHints={false} initialFilter={MAY_FILTER} isActive={!open} />
+          {open && <FilterPanel isActive={open} onClose={() => setOpen(false)} />}
+        </FilterProvider>
+      );
+    }
+    const r = render(<W><DashHarness /></W>);
+    await waitFor(() => expect(frame(r)).toContain('$388.99'));
+    r.stdin.write('n'); // deselect all categories → nothing matches
+    await waitFor(() => expect(frame(r)).not.toContain('$388.99'));
+    expect(frame(r)).toContain('$0.00'); // expenses fall to zero live
+  });
+
+  it('previewing many toggles never pushes history; commit pushes exactly one level', async () => {
+    // Undated filter so Esc in Transactions pops the filter rather than first
+    // clearing a date range (the from/search short-circuits run ahead of pop).
+    const probe = { canPop: false };
+    function Probe() {
+      const { canPop } = useFilter();
+      probe.canPop = canPop;
+      return null;
+    }
+    function H() {
+      const [open, setOpen] = React.useState(true);
+      return (
+        <FilterProvider>
+          <Probe />
+          <Transactions onNavigate={noop} showHints={false} isActive={!open} />
+          {open && <FilterPanel isActive={open} onClose={() => setOpen(false)} />}
+        </FilterProvider>
+      );
+    }
+    const r = render(<W><H /></W>);
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    // A flurry of draft changes — each would be a history push if preview
+    // wrongly committed via setFilter instead of setPreview.
+    for (const k of ['n', 'a', 'i', ' ', ' ', 'i', 'n']) r.stdin.write(k);
+    await waitFor(() => expect(frame(r)).not.toContain('Whole Foods'));
+    expect(probe.canPop).toBe(false); // preview bypassed history entirely
+    r.stdin.write('\r'); // Enter commits exactly one level
+    await waitFor(() => expect(probe.canPop).toBe(true));
+    // One Esc in Transactions steps straight back to the original view.
+    r.stdin.write('\x1b');
+    await waitFor(() => {
+      expect(frame(r)).toContain('Whole Foods');
+      expect(probe.canPop).toBe(false);
+    });
+  });
+});
+
+// ── Transactions out-of-order query guard ──────────────────────────────────
+describe('Transactions load() race guard', () => {
+  // Simulates the live-preview hazard: a slow earlier query resolving after a
+  // faster later one. The unfiltered load (no categories) is forced slow; the
+  // category-filtered load is fast, so it lands first — the stale slow result
+  // that follows must not clobber it.
+  function SetFilterOnMount({ filter }: { filter: Filter }) {
+    const { setFilter } = useFilter();
+    React.useEffect(() => { setFilter(filter); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+    return null;
+  }
+
+  it('a slow stale query does not overwrite a faster newer one', async () => {
+    const realGet = queries.getTransactions;
+    const spy = vi.spyOn(queries, 'getTransactions').mockImplementation(async (args) => {
+      const rows = await realGet(args);
+      const isFiltered = Array.isArray((args.filter ?? {}).categories);
+      await new Promise((res) => setTimeout(res, isFiltered ? 10 : 200));
+      return rows;
+    });
+    try {
+      const r = render(
+        <W>
+          <FilterProvider>
+            <SetFilterOnMount filter={{ categories: ['Dining'] }} />
+            <Transactions onNavigate={noop} showHints={false} />
+          </FilterProvider>
+        </W>,
+      );
+      // The fast filtered load settles first: Dining shows, Grocery's merchant doesn't.
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('Sweetgreen');
+        expect(f).not.toContain('Whole Foods');
+      });
+      // Give the slow unfiltered load time to resolve and (incorrectly) repaint.
+      await new Promise((res) => setTimeout(res, 300));
+      expect(frame(r)).toContain('Sweetgreen');
+      expect(frame(r)).not.toContain('Whole Foods'); // stale result was discarded
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// ── useLoadGuard ───────────────────────────────────────────────────────────
+describe('useLoadGuard', () => {
+  it('only the newest token is current; earlier ones are superseded', () => {
+    let guard!: ReturnType<typeof useLoadGuard>;
+    function Probe() { guard = useLoadGuard(); return null; }
+    render(<Probe />);
+    const t1 = guard.begin();
+    expect(guard.isLatest(t1)).toBe(true);
+    const t2 = guard.begin();
+    expect(guard.isLatest(t1)).toBe(false); // t1 superseded by t2
+    expect(guard.isLatest(t2)).toBe(true);
+  });
+});
+
+// ── Dashboard out-of-order query guard ─────────────────────────────────────
+describe('Dashboard load() race guard', () => {
+  // Same hazard as Transactions, on the summary load: the unfiltered summary is
+  // forced slow and the category-filtered one fast, so the stale slow result
+  // arrives last and must not repaint the Expenses total. Trends shares the
+  // identical useLoadGuard pattern (covered above).
+  function SetFilterOnMount({ filter }: { filter: Filter }) {
+    const { setFilter } = useFilter();
+    React.useEffect(() => { setFilter(filter); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+    return null;
+  }
+
+  it('a slow stale summary does not overwrite a faster newer one', async () => {
+    const realSummary = queries.getRangeSummary;
+    const spy = vi.spyOn(queries, 'getRangeSummary').mockImplementation(async (from, to, filter) => {
+      const res = await realSummary(from, to, filter);
+      const isFiltered = Array.isArray((filter ?? {}).categories);
+      await new Promise((res2) => setTimeout(res2, isFiltered ? 10 : 200));
+      return res;
+    });
+    try {
+      const r = render(
+        <W>
+          <FilterProvider>
+            <SetFilterOnMount filter={{ categories: ['Dining'] }} />
+            <Dashboard onNavigate={noop} showHints={false} initialFilter={MAY_FILTER} />
+          </FilterProvider>
+        </W>,
+      );
+      // Fast filtered summary lands first: Dining's $45.00, not the full $388.99.
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('$45.00');
+        expect(f).not.toContain('$388.99');
+      });
+      // Let the slow unfiltered summary resolve and (incorrectly) repaint.
+      await new Promise((res) => setTimeout(res, 300));
+      expect(frame(r)).toContain('$45.00');
+      expect(frame(r)).not.toContain('$388.99'); // stale result was discarded
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+

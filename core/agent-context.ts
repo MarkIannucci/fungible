@@ -6,6 +6,7 @@
 
 import { db } from './db.js';
 import { yearsToFire } from './health.js';
+import { isAssetAccount, isLiabilityAccount } from './account-class.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,7 +23,8 @@ export type AccountWithBalance = {
 };
 
 export type BalanceSummary = {
-  accounts: AccountWithBalance[];
+  accounts: AccountWithBalance[];          // counted toward net worth
+  excludedAccounts: AccountWithBalance[];  // visible but excluded from net worth
   totalAssets: number;
   totalLiabilities: number;
   netWorth: number;
@@ -68,7 +70,7 @@ export async function getBalances(): Promise<BalanceSummary> {
     SELECT
       a.id, COALESCE(a.nickname, a.name) as name, a.type, a.subtype,
       a.institution_name as institution,
-      a.mask,
+      a.mask, a.excluded,
       bh.balance
     FROM accounts a
     JOIN balance_history bh ON bh.account_id = a.id
@@ -83,15 +85,19 @@ export async function getBalances(): Promise<BalanceSummary> {
       END,
       bh.balance DESC
   `);
-  const rows = result.rows as unknown as (Omit<AccountWithBalance, 'isAsset' | 'isLiability'>)[];
+  const rows = result.rows as unknown as (Omit<AccountWithBalance, 'isAsset' | 'isLiability'> & { excluded: number })[];
 
-  const accounts: AccountWithBalance[] = rows.map((r) => ({
+  const toAccount = ({ excluded: _excluded, ...r }: typeof rows[number]): AccountWithBalance => ({
     ...r,
     balance: Number(r.balance),
-    isAsset: r.type === 'depository' || r.type === 'investment'
-      || (r.type === 'other' && Number(r.balance) > 0),
-    isLiability: r.type === 'credit',
-  }));
+    isAsset: isAssetAccount({ type: r.type, balance: Number(r.balance) }),
+    isLiability: isLiabilityAccount(r),
+  });
+
+  // Net-worth totals are computed on the included set; excluded accounts stay
+  // visible (carved-out section in the UI and MCP) but never affect the totals.
+  const accounts = rows.filter((r) => r.excluded !== 1).map(toAccount);
+  const excludedAccounts = rows.filter((r) => r.excluded === 1).map(toAccount);
 
   const totalAssets = accounts
     .filter((a) => a.isAsset)
@@ -125,6 +131,7 @@ export async function getBalances(): Promise<BalanceSummary> {
 
   return {
     accounts,
+    excludedAccounts,
     totalAssets,
     totalLiabilities,
     netWorth: totalAssets - totalLiabilities,

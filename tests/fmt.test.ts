@@ -7,8 +7,8 @@ describe('fmt', () => {
     expect(fmt(1234.56)).toBe('$1,234.56');
   });
 
-  it('formats negative numbers using absolute value', () => {
-    expect(fmt(-50)).toBe('$50.00');
+  it('formats negative numbers with a minus sign', () => {
+    expect(fmt(-50)).toBe('-$50.00');
   });
 
   it('formats zero', () => {

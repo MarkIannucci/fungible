@@ -205,6 +205,22 @@ describe('getCategoryDriftData', () => {
     expect(row.lastPeriodDelta).toBeCloseTo(100);
   });
 
+  it('nets refunds within a real category (consistent with the breakdown)', async () => {
+    await insertTx({ date: '2026-05-15', amount: 300, category: 'Travel' });
+    await insertTx({ date: '2026-05-16', amount: -100, category: 'Travel' });
+    const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
+    const row = result.find((r) => r.category === 'Travel')!;
+    expect(row.current).toBeCloseTo(200);
+  });
+
+  it('uses Uncategorized outflow only, ignoring inflows', async () => {
+    await insertTx({ date: '2026-05-15', amount: 500, category: 'Uncategorized' });
+    await insertTx({ date: '2026-05-16', amount: -2000, category: 'Uncategorized' });
+    const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
+    const row = result.find((r) => r.category === 'Uncategorized')!;
+    expect(row.current).toBeCloseTo(500);
+  });
+
   it('avg12m is average of rolling12 totals', async () => {
     const months = ['2026-04','2026-03','2026-02','2026-01','2025-12','2025-11',
                     '2025-10','2025-09','2025-08','2025-07','2025-06','2025-05'];
