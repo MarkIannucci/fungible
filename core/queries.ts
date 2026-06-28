@@ -463,20 +463,25 @@ export async function toggleHiddenCategory(category: string, hidden: Set<string>
   }
 }
 
-export type Tag = { id: number; name: string; count: number; inflow: number; outflow: number };
+export type Tag = {
+  id: number; name: string; count: number; inflow: number; outflow: number;
+  earliest: string | null; latest: string | null;
+};
 
 export async function getAllTags(): Promise<Tag[]> {
   const result = await db.execute(`
     SELECT t.id, t.name, COUNT(tt.transaction_id) as count,
       COALESCE(SUM(CASE WHEN tx.amount < 0 THEN ABS(tx.amount) ELSE 0 END), 0) as inflow,
-      COALESCE(SUM(CASE WHEN tx.amount > 0 THEN tx.amount ELSE 0 END), 0) as outflow
+      COALESCE(SUM(CASE WHEN tx.amount > 0 THEN tx.amount ELSE 0 END), 0) as outflow,
+      MIN(tx.date) as earliest, MAX(tx.date) as latest
     FROM tags t
     LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
     LEFT JOIN transactions tx ON tx.id = tt.transaction_id
     GROUP BY t.id ORDER BY t.name
   `);
-  return (result.rows as unknown as { id: number; name: string; count: number; inflow: number; outflow: number }[]).map((r) => ({
+  return (result.rows as unknown as Tag[]).map((r) => ({
     id: Number(r.id), name: r.name, count: Number(r.count), inflow: Number(r.inflow), outflow: Number(r.outflow),
+    earliest: r.earliest, latest: r.latest,
   }));
 }
 

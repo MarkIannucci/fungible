@@ -21,7 +21,7 @@ import { deleteCategoryRule } from './rules.js';
 import { rebuildDisplayNames } from './rename.js';
 import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored } from './transactions.js';
 import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
-import { fmt, fmtSigned } from './fmt.js';
+import { fmt, fmtSigned, fmtSpan } from './fmt.js';
 import { syncAll } from './sync.js';
 import { db } from './db.js';
 import { validateRegex } from './rule-utils.js';
@@ -656,13 +656,16 @@ async function executeToolImpl(
 
     case 'list_tags': {
       const result = await db.execute(`
-        SELECT t.name, COUNT(tt.transaction_id) as count
-        FROM tags t LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
+        SELECT t.name, COUNT(tt.transaction_id) as count,
+          MIN(tx.date) as earliest, MAX(tx.date) as latest
+        FROM tags t
+        LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
+        LEFT JOIN transactions tx ON tx.id = tt.transaction_id
         GROUP BY t.id ORDER BY t.name
       `);
-      const rows = result.rows as unknown as { name: string; count: number }[];
+      const rows = result.rows as unknown as { name: string; count: number; earliest: string | null; latest: string | null }[];
       return rows.length
-        ? rows.map((r) => `${r.name.padEnd(30)} ${r.count} txn${r.count !== 1 ? 's' : ''}`).join('\n')
+        ? rows.map((r) => `${r.name.padEnd(30)} ${String(r.count).padStart(4)} txn${r.count !== 1 ? 's' : ' '}  ${fmtSpan(r.earliest, r.latest)}`).join('\n')
         : 'No tags defined.';
     }
 
