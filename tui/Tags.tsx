@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
 import { createTag, renameTag, deleteTag } from '../core/tags.js';
 import type { Screen, TxFilter } from './App.js';
-import { fmt, fmtSigned, bar, truncate, Divider } from './fmt.js';
+import { fmt, fmtSigned, fmtSpan, sortTags, type TagSort, bar, truncate, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
 import { StatCard, ModalPanel, SectionHeader, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar } from './components/index.js';
@@ -12,6 +12,9 @@ import { useRefreshKey } from './RefreshContext.js';
 import { useFilter } from './FilterContext.js';
 
 type Mode = 'list' | 'search' | 'add' | 'detail' | 'rename';
+
+const SORT_ORDER: TagSort[] = ['name', 'recent', 'oldest'];
+const SORT_LABEL: Record<TagSort, string> = { name: 'name', recent: 'most recent', oldest: 'oldest' };
 
 export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean; initialFilter?: TxFilter }) {
   const refreshKey = useRefreshKey();
@@ -22,6 +25,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
   const [newName, setNewName] = useState('');
   const { statusMsg, showStatus } = useStatusMessage();
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<TagSort>('name');
   const [tagSummary, setTagSummary] = useState<MonthlySummary | null>(null);
   const [catCursor, setCatCursor] = useState(0);
 
@@ -51,14 +55,17 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
     setMode('detail');
   }
 
-  const visibleTags = search
-    ? tags.filter((t) => t.name.toLowerCase().includes(search.toLowerCase()))
-    : tags;
+  const q = search.toLowerCase();
+  const visibleTags = sortTags(
+    search ? tags.filter((t) => t.name.toLowerCase().includes(q)) : tags,
+    sort,
+  );
 
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;
-  // [sel=2] gap [name] gap [count=6] gap [inflow=10] gap [outflow=10] — 4 gaps of 2
-  const tagNameW = Math.max(10, inner - 36);
+  // [sel=2] gap [name] gap [count=6] gap [span=17] gap [inflow=10] gap [outflow=10] — 5 gaps of 2
+  const SPAN_W = 17;
+  const tagNameW = Math.max(10, inner - 55);
 
   useInput((input, key) => {
     if (mode === 'search') {
@@ -143,6 +150,11 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
       onNavigate('dashboard'); return;
     }
     if (input === '/') { setMode('search'); return; }
+    if (input === 's') {
+      setSort((s) => SORT_ORDER[(SORT_ORDER.indexOf(s) + 1) % SORT_ORDER.length]);
+      setCursor(0);
+      return;
+    }
     if (key.upArrow) { setCursor((c) => Math.max(0, c - 1)); return; }
     if (key.downArrow) { setCursor((c) => Math.min(visibleTags.length - 1, c + 1)); return; }
     if (input === 'a') { setNewName(''); setMode('add'); return; }
@@ -216,12 +228,15 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
       ) : (
         <>
           <Box marginTop={1}>
-            <Text bold>Tags{search ? <Text color={C_WARNING}>  /{search}</Text> : null}</Text>
+            <Text bold>Tags
+              {search ? <Text color={C_WARNING}>  /{search}</Text> : null}
+              {sort !== 'name' ? <Text dimColor>  ↕ {SORT_LABEL[sort]}</Text> : null}
+            </Text>
           </Box>
           <Text dimColor>
             {showHints
-              ? '[/] search  ·  [a] add  [n] rename  [x] delete  ·  Enter detail  ·  [t] transactions'
-              : '[/] search'}
+              ? '[/] search  ·  [s] sort  ·  [a] add  [n] rename  [x] delete  ·  Enter detail  ·  [t] transactions'
+              : '[/] search  ·  [s] sort'}
           </Text>
           {mode === 'search' && <SearchBar value={search} />}
           <Box marginTop={1}><Divider /></Box>
@@ -238,6 +253,7 @@ export function Tags({ onNavigate, isActive, showHints, initialFilter }: { onNav
                       {t.name.length > tagNameW ? t.name.slice(0, tagNameW - 1) + '…' : t.name.padEnd(tagNameW)}
                     </Text>
                     <Text dimColor>{(t.count + ' tx').padEnd(6)}</Text>
+                    <Text dimColor>{fmtSpan(t.earliest, t.latest).padEnd(SPAN_W)}</Text>
                     <Text color={C_POSITIVE} dimColor={!isSelected}>{fmt(t.inflow).padStart(10)}</Text>
                     <Text color={C_NEGATIVE} dimColor={!isSelected}>{fmt(t.outflow).padStart(10)}</Text>
                   </SelectableRow>
