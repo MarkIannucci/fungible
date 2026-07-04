@@ -117,6 +117,41 @@ describe('getDriftWindows', () => {
     });
   });
 
+  describe('last30 range', () => {
+    const anchor = d(2026, 6, 4);  // trailing window Jun 4 – Jul 3
+    const today  = d(2026, 7, 3);
+
+    it('current window is the full trailing 30 days', () => {
+      const w = getDriftWindows('last30', anchor, today)!;
+      expect(w.current.from).toBe('2026-06-04');
+      expect(w.current.to).toBe('2026-07-03');
+    });
+
+    it('lastPeriod is the contiguous prior 30 days', () => {
+      const w = getDriftWindows('last30', anchor, today)!;
+      expect(w.lastPeriod.from).toBe('2026-05-05');
+      expect(w.lastPeriod.to).toBe('2026-06-03');
+    });
+
+    it('lastYear is the same 30-day window a year earlier', () => {
+      const w = getDriftWindows('last30', anchor, today)!;
+      expect(w.lastYear.from).toBe('2025-06-04');
+      expect(w.lastYear.to).toBe('2025-07-03');
+    });
+
+    it('rolling12 is 12 contiguous 30-day windows', () => {
+      const w = getDriftWindows('last30', anchor, today)!;
+      expect(w.rolling12).toHaveLength(12);
+      expect(w.rolling12[0]).toEqual({ from: '2026-05-05', to: '2026-06-03' });
+      // each window ends the day before the next one starts
+      for (let i = 1; i < 12; i++) {
+        const next = new Date(w.rolling12[i].to + 'T12:00:00');
+        next.setDate(next.getDate() + 1);
+        expect(next.toISOString().slice(0, 10)).toBe(w.rolling12[i - 1].from);
+      }
+    });
+  });
+
   describe('week range', () => {
     const anchor = d(2025, 5, 19);
     const today  = d(2025, 5, 22);
@@ -242,6 +277,36 @@ describe('getCategoryDriftData', () => {
     const row = result.find((r) => r.category === 'BrandNew')!;
     expect(row.avg12m).toBe(0);
     expect(row.avg12mDelta).toBeCloseTo(100);
+  });
+
+  it('median12m resists a one-off spike that inflates the mean', async () => {
+    const months = ['2026-04','2026-03','2026-02','2026-01','2025-12','2025-11',
+                    '2025-10','2025-09','2025-08','2025-07','2025-06'];
+    for (const ym of months) {
+      await insertTx({ date: `${ym}-15`, amount: 100, category: 'Medical' });
+    }
+    await insertTx({ date: '2025-05-15', amount: 5000, category: 'Medical' }); // spike
+    await insertTx({ date: '2026-05-15', amount: 150, category: 'Medical' });
+
+    const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
+    const row = result.find((r) => r.category === 'Medical')!;
+    expect(row.median12m).toBeCloseTo(100);
+    expect(row.medianDelta).toBeCloseTo(50);
+    expect(row.avg12m).toBeGreaterThan(500); // the mean is distorted by the spike
+  });
+
+  it('drops rolling windows that predate the first transaction', async () => {
+    // Only 3 months of history — phantom zero windows must not drag the baseline
+    await insertTx({ date: '2026-04-15', amount: 100, category: 'Food' });
+    await insertTx({ date: '2026-03-15', amount: 100, category: 'Food' });
+    await insertTx({ date: '2026-02-10', amount: 100, category: 'Food' });
+    await insertTx({ date: '2026-05-15', amount: 200, category: 'Food' });
+
+    const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
+    const row = result.find((r) => r.category === 'Food')!;
+    expect(row.avg12m).toBeCloseTo(100);    // not 300/12
+    expect(row.median12m).toBeCloseTo(100);
+    expect(row.medianDelta).toBeCloseTo(100);
   });
 
   it('excludes hidden categories', async () => {

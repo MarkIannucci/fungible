@@ -212,7 +212,13 @@ export async function getOwnerRows(from: string, to: string, filter?: Filter): P
 
 // ── Drift ──────────────────────────────────────────────────────────────────────
 
-export type DriftSlice    = { current: number; lastPeriodDelta: number; lastYearDelta: number; avg12mDelta: number; avg12m: number };
+export type DriftSlice    = {
+  current: number; lastPeriodDelta: number; lastYearDelta: number;
+  avg12mDelta: number; avg12m: number;
+  // Median of the rolling windows — robust to one-off spikes (a single $7K
+  // medical month shouldn't inflate the "typical" baseline the way a mean does).
+  median12m: number; medianDelta: number;
+};
 export type CategoryDrift = { category: string } & DriftSlice;
 export type FlexDriftData = Record<keyof FlexSummary, DriftSlice>;
 export type AccountDrift  = { id: string; name: string; subtype: string | null } & DriftSlice;
@@ -282,17 +288,35 @@ async function queryAccountSpending(from: string, to: string): Promise<Map<strin
 
 function sliceFor(current: number, last: number, year: number, rolling: number[]): DriftSlice {
   const avg12m = rolling.length > 0 ? rolling.reduce((s, v) => s + v, 0) / rolling.length : 0;
-  return { current, lastPeriodDelta: current - last, lastYearDelta: current - year, avg12mDelta: current - avg12m, avg12m };
+  let median12m = 0;
+  if (rolling.length > 0) {
+    const sorted = [...rolling].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    median12m = sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  return {
+    current, lastPeriodDelta: current - last, lastYearDelta: current - year,
+    avg12mDelta: current - avg12m, avg12m,
+    median12m, medianDelta: current - median12m,
+  };
+}
+
+// Rolling windows from before the first transaction contribute phantom zeros
+// that drag baselines down (e.g. 3 months of history averaged over 12 windows).
+async function clampToHistory(windows: Window[]): Promise<Window[]> {
+  const { minDate } = await getDataBounds();
+  return windows.filter((w) => w.to >= minDate);
 }
 
 export async function getCategoryDriftData(
   currentWin: Window, lastPeriodWin: Window, lastYearWin: Window, rolling12: Window[], filter?: Filter,
 ): Promise<CategoryDrift[]> {
+  const rolling = await clampToHistory(rolling12);
   const [cur, last, yr, ...rolls] = await Promise.all([
     queryCategoryTotals(currentWin.from, currentWin.to, filter),
     queryCategoryTotals(lastPeriodWin.from, lastPeriodWin.to, filter),
     queryCategoryTotals(lastYearWin.from, lastYearWin.to, filter),
-    ...rolling12.map((w) => queryCategoryTotals(w.from, w.to, filter)),
+    ...rolling.map((w) => queryCategoryTotals(w.from, w.to, filter)),
   ]);
   return [...cur.entries()]
     .map(([category, currentAmt]) => ({
@@ -305,11 +329,12 @@ export async function getCategoryDriftData(
 export async function getFlexDriftData(
   currentWin: Window, lastPeriodWin: Window, lastYearWin: Window, rolling12: Window[], filter?: Filter,
 ): Promise<FlexDriftData> {
+  const rolling = await clampToHistory(rolling12);
   const [cur, last, yr, ...rolls] = await Promise.all([
     queryFlexTotals(currentWin.from, currentWin.to, filter),
     queryFlexTotals(lastPeriodWin.from, lastPeriodWin.to, filter),
     queryFlexTotals(lastYearWin.from, lastYearWin.to, filter),
-    ...rolling12.map((w) => queryFlexTotals(w.from, w.to, filter)),
+    ...rolling.map((w) => queryFlexTotals(w.from, w.to, filter)),
   ]);
   const tiers: (keyof FlexSummary)[] = ['fixed', 'flexible', 'discretionary', 'untagged'];
   return Object.fromEntries(
@@ -326,11 +351,12 @@ export async function getAccountDriftData(
   );
   const accounts = acctRes.rows as unknown as { id: string; name: string; subtype: string | null }[];
 
+  const rolling = await clampToHistory(rolling12);
   const [cur, last, yr, ...rolls] = await Promise.all([
     queryAccountSpending(currentWin.from, currentWin.to),
     queryAccountSpending(lastPeriodWin.from, lastPeriodWin.to),
     queryAccountSpending(lastYearWin.from, lastYearWin.to),
-    ...rolling12.map((w) => queryAccountSpending(w.from, w.to)),
+    ...rolling.map((w) => queryAccountSpending(w.from, w.to)),
   ]);
 
   return accounts.map((acct) => ({
