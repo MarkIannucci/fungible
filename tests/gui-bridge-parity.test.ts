@@ -37,6 +37,11 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   fmtValue: 'renderer imports pure core/canvas-spec.ts directly',
   fmtDialValue: 'renderer imports pure core/canvas-spec.ts directly',
 
+  // Pure scorecard helpers — renderer imports core/scorecard.ts directly (GUI PR2)
+  bucketDrift: 'renderer imports pure core/scorecard.ts directly',
+  isSignificantDelta: 'renderer imports pure core/scorecard.ts directly',
+  ratioLabel: 'renderer imports pure core/scorecard.ts directly',
+
   // Electron-side bridge namespaces live in gui/main/bridge.ts (not registry.ts)
   getDefaultDaysRequested: 'bridge plaid namespace (gui/main/bridge.ts)',
 };
