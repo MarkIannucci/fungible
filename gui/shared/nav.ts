@@ -18,8 +18,9 @@ export type TxFilter = {
   from?: string;
   to?: string;
   search?: string;
-  range?: string; // 'week' | 'month' | 'quarter' | 'year' | 'alltime'
+  range?: string; // 'week' | 'month' | 'last30' | 'quarter' | 'year' | 'alltime'
   anchor?: string; // YYYY-MM-DD — which specific period to land on
+  scorecard?: boolean; // land on the Dashboard with scorecard mode on
   canvasSpec?: string; // JSON-encoded CanvasSpec, used when navigating to 'canvas'
   txType?: 'income' | 'expenses';
   flex?: 'fixed' | 'flexible' | 'discretionary';
