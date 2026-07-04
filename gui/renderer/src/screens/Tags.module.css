@@ -20,6 +20,15 @@
   width: 220px;
 }
 
+.select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+  background: transparent;
+}
+
 .addBtn {
   margin-left: auto;
   padding: 6px 14px;

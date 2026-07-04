@@ -270,17 +270,18 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
     (input) => run('get_financial_health', input),
   );
 
-  // ── get_drift ───────────────────────────────────────────────────────────────
+  // ── get_scorecard ───────────────────────────────────────────────────────────
 
   server.tool(
-    'get_drift',
-    'Show spending deltas per category: current amount vs prior period, same period last year, and 12-month rolling average. Defaults to current month-to-date.',
+    'get_scorecard',
+    'Spending scorecard: which categories are significantly over/under the typical month (12-month median baseline), with a net verdict. Defaults to the trailing 30 days.',
     {
+      window: z.enum(['last30', 'month']).optional().describe("Comparison window: 'last30' = trailing 30 days ending on the given date (default), 'month' = calendar month-to-date"),
       year:  z.number().int().optional().describe('4-digit year (default: current year)'),
       month: z.number().int().min(1).max(12).optional().describe('Month 1–12 (default: current month)'),
-      day:   z.number().int().min(1).max(31).optional().describe('Day through which to compare (default: today)'),
+      day:   z.number().int().min(1).max(31).optional().describe('Day the window ends on / compares through (default: today)'),
     },
-    (input) => run('get_drift', input),
+    (input) => run('get_scorecard', input),
   );
 
   // ── get_trends ──────────────────────────────────────────────────────────────

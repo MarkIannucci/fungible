@@ -34,3 +34,32 @@ export function fmtCompactSigned(n: number): string {
   if (abs >= 10_000)    return `${sign}$${(abs / 1_000).toFixed(1)}K`;
   return `${sign}${fmt(abs)}`;
 }
+
+// Formats a tag's date span (ISO YYYY-MM-DD bounds) down to month granularity,
+// e.g. "2024-01 → 2025-06", collapsing to a single month when they match.
+export function fmtSpan(earliest: string | null, latest: string | null): string {
+  if (!earliest || !latest) return '—';
+  const from = earliest.slice(0, 7);
+  const to = latest.slice(0, 7);
+  return from === to ? from : `${from} → ${to}`;
+}
+
+export type TagSort = 'name' | 'recent' | 'oldest';
+
+export function sortTags<T extends { earliest: string | null; latest: string | null }>(
+  tags: T[],
+  sort: TagSort,
+): T[] {
+  if (sort === 'name') return tags;
+  const sorted = [...tags];
+  if (sort === 'recent') {
+    sorted.sort((a, b) => (b.latest ?? '').localeCompare(a.latest ?? ''));
+  } else {
+    sorted.sort((a, b) => {
+      if (!a.earliest) return 1;
+      if (!b.earliest) return -1;
+      return a.earliest.localeCompare(b.earliest);
+    });
+  }
+  return sorted;
+}

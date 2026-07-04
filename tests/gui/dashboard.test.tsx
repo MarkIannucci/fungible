@@ -76,6 +76,60 @@ describe('GUI Dashboard', () => {
     );
   });
 
+  it('scorecard mode buckets categories vs the typical-month baseline', async () => {
+    renderScreen(<Dashboard />, { txFilter: MAY_FILTER });
+    await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Δ scorecard' }));
+
+    const section = await waitFor(() => {
+      const s = screen.getByText(/Spending by category · vs typical/).closest('section')!;
+      expect(s.textContent).toContain('Over');
+      return s;
+    });
+    // Grocery: May $205 vs April-only baseline $100 → over by $105.
+    // Bills & Utilities: $95 with no history → over, flagged "new".
+    // Dining (+$5) and Shopping ($43.99, no baseline) sit under the
+    // significance gate → typical. Nothing is under → no Under section.
+    expect(section.textContent).toContain('+$105');
+    expect(section.textContent).toContain('+$95');
+    expect(section.textContent).toContain('new');
+    expect(section.textContent).toContain('Typical');
+    expect(section.textContent).not.toContain('Under');
+    // Net row: 105 + 5 + 95 + 43.99 ≈ +$249 vs typical.
+    expect(section.textContent).toContain('+$249');
+    expect(section.textContent).toContain('vs typical');
+  });
+
+  it('scorecard rows drill to transactions like category rows', async () => {
+    const navigate = vi.fn();
+    renderScreen(<Dashboard />, { txFilter: MAY_FILTER, navigate });
+    await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Δ scorecard' }));
+    await waitFor(() => expect(screen.getByText('Over')).toBeTruthy());
+    await userEvent.click(screen.getByText('Grocery'));
+    expect(navigate).toHaveBeenCalledWith(
+      'transactions',
+      expect.objectContaining({ from: '2026-05-01', to: '2026-05-31', drillFrom: 'dashboard' }),
+    );
+  });
+
+  it('columns toggle switches to the sortable per-baseline delta table', async () => {
+    renderScreen(<Dashboard />, { txFilter: MAY_FILTER });
+    await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'Δ scorecard' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'columns' })).toBeTruthy());
+    await userEvent.click(screen.getByRole('button', { name: 'columns' }));
+    // The diagnostic table has the three baseline columns; the scorecard doesn't.
+    await waitFor(() => expect(screen.getByText(/vs prev/)).toBeTruthy());
+    expect(screen.getByText(/yr ago/)).toBeTruthy();
+    expect(screen.getByText(/12m avg/)).toBeTruthy();
+  });
+
+  it('mounts with scorecard mode on when navigated with scorecard: true', async () => {
+    renderScreen(<Dashboard />, { txFilter: { ...MAY_FILTER, scorecard: true } });
+    await waitFor(() => expect(screen.getByText(/Spending by category · vs typical/)).toBeTruthy());
+  });
+
   it('Spending by category rows sum to the displayed Expenses total', async () => {
     // Exercise the two cases that used to break reconciliation: a refund inside a
     // real category (must NET to 200) and an income+spend mix inside Uncategorized

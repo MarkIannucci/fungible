@@ -4,8 +4,9 @@ import {
   getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, getOwnerRows,
   getCategoryDriftData, getFlexDriftData, getAccountDriftData, countSearchMatches, getSearchFilteredData, getMerchantSummary,
   type MonthlySummary, type FlexSummary, type AccountRow, type OwnerRow,
-  type CategoryDrift, type FlexDriftData, type AccountDrift, type MerchantSummaryRow,
+  type CategoryDrift, type FlexDriftData, type AccountDrift, type MerchantSummaryRow, type DriftSlice,
 } from '../core/queries.js';
+import { bucketDrift, isSignificantDelta, ratioLabel } from '../core/scorecard.js';
 import {
   getPeriodStart, getPeriodDates, navigatePeriod, formatPeriodLabel,
   getDriftWindows,
@@ -31,14 +32,16 @@ function pct(part: number, total: number) {
   return `${Math.round((part / total) * 100)}%`;
 }
 
-/** Heat-map color based on current spend vs 12-month rolling average. */
-function driftColor(current: number, avg12m: number): string {
-  if (current === 0) return C_NEUTRAL;
-  if (avg12m === 0) return C_NEGATIVE;     // new spending with no history
-  const ratio = current / avg12m;
-  if (ratio <= 1.10) return C_POSITIVE;   // within 10% of average
-  if (ratio <= 1.30) return C_WARNING;    // creeping (10–30% over)
-  return C_NEGATIVE;                      // spiked (>30% over)
+/**
+ * Heat-map color vs the median baseline, gated on significance: rows inside
+ * the noise band stay neutral so only deltas worth acting on get color.
+ */
+function driftColor(slice: Pick<DriftSlice, 'current' | 'median12m' | 'medianDelta'>): string {
+  if (slice.current === 0 && slice.median12m === 0) return C_NEUTRAL;
+  if (!isSignificantDelta(slice.medianDelta, slice.median12m)) return C_NEUTRAL;
+  if (slice.medianDelta < 0) return C_POSITIVE;                    // meaningfully under
+  if (slice.median12m === 0) return C_NEGATIVE;                    // new spending, no history
+  return slice.current / slice.median12m >= 1.3 ? C_NEGATIVE : C_WARNING;
 }
 
 /** Format a drift delta value compactly (no cents). */
@@ -78,7 +81,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   const [view, setView] = useState<DashView>('categories');
   const [bounds, setBounds] = useState<{ minDate: string; maxDate: string }>({ minDate: '2000-01-01', maxDate: '2099-12-31' });
   useEffect(() => { void getDataBounds().then(setBounds); }, []);
-  const [driftMode, setDriftMode] = useState(false);
+  const [scorecardMode, setScorecardMode] = useState(false);
+  const [detailMode, setDetailMode] = useState(false); // 'x': per-baseline delta columns
   const [catDrift,  setCatDrift]  = useState<CategoryDrift[] | null>(null);
   const [flexDrift, setFlexDrift] = useState<FlexDriftData  | null>(null);
   const [acctDrift, setAcctDrift] = useState<AccountDrift[] | null>(null);
@@ -146,7 +150,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   }, [range, anchor.toISOString().slice(0, 10), queryFilter, refreshKey]);
 
   useEffect(() => {
-    if (!driftMode) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
+    if (!scorecardMode) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
     const windows = getDriftWindows(range, anchor, new Date());
     if (!windows) { setCatDrift(null); setFlexDrift(null); setAcctDrift(null); return; }
     const { current, lastPeriod, lastYear, rolling12 } = windows;
@@ -155,7 +159,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     void getCategoryDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(ok(setCatDrift));
     void getFlexDriftData(current, lastPeriod, lastYear, rolling12, queryFilter).then(ok(setFlexDrift));
     void getAccountDriftData(current, lastPeriod, lastYear, rolling12).then(ok(setAcctDrift));
-  }, [driftMode, range, anchor.toISOString().slice(0, 10), queryFilter]);
+  }, [scorecardMode, range, anchor.toISOString().slice(0, 10), queryFilter]);
 
   const setTyping = useSetTyping();
   useEffect(() => { setTyping(searchMode); }, [searchMode]);
@@ -188,7 +192,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     setMerchantDrill(null);
     setMerchantRows([]);
     setMerchantCursor(0);
-  }, [queryFilter, search, driftMode, view]);
+  }, [queryFilter, search, scorecardMode, view]);
 
   // Re-fetch merchant data when period or range changes while drill is active
   useEffect(() => {
@@ -213,6 +217,29 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
 
   const categories = summary?.byCategory ?? [];
 
+  const scorecard = useMemo(() => (catDrift ? bucketDrift(catDrift) : null), [catDrift]);
+  // Flat render order (over → typical → under) shared by the cursor and Enter.
+  const scoreRows = useMemo(
+    () => (scorecard ? [...scorecard.over, ...scorecard.typical, ...scorecard.under] : []),
+    [scorecard],
+  );
+  const maxScoreDelta = Math.max(1, ...scoreRows.map((r) => Math.abs(r.medianDelta)));
+  const scoreTotal = scoreRows.reduce((s, r) => s + r.current, 0);
+  // Buckets with their starting offset in scoreRows, so each row knows its
+  // global index for cursor selection.
+  const scoreBuckets = useMemo(() => {
+    if (!scorecard) return [];
+    const defs = [
+      { key: 'over' as const,    label: 'OVER',    rows: scorecard.over },
+      { key: 'typical' as const, label: 'TYPICAL', rows: scorecard.typical },
+      { key: 'under' as const,   label: 'UNDER',   rows: scorecard.under },
+    ];
+    let start = 0;
+    return defs
+      .filter((d) => d.rows.length > 0)
+      .map((d) => { const b = { ...d, start }; start += d.rows.length; return b; });
+  }, [scorecard]);
+
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;
   // Normal categories: [sel+name] gap [amount=10] gap [bar] — 2 gaps of 2 = 16 reserved
@@ -225,9 +252,13 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   // means an owner exists regardless of whether they spent anything this period.
   const hasOwners = ownerRows.some((r) => r.owner !== 'Unassigned');
   const maxOwnerSpend = ownerRows[0]?.spending ?? 1;
-  // Drift categories: 3 delta cols × 9 chars + 4 gaps of 2 = 27+8=35 for cols; plus amount(10)+gaps
+  // Drift detail: 3 delta cols × 9 chars + 4 gaps of 2 = 27+8=35 for cols; plus amount(10)+gaps
   // total fixed = 2(cursor) + 10(amt) + 4(gaps to amt) + 27(3×9) + 4(gaps between deltas) = 47
   const driftCatNameW = Math.max(12, inner - 47);
+  // Scorecard: [sel=2] [name] [amount=10] [delta=9] [bar] [ratio=5] with 5 gaps of 2 = 36 fixed
+  const scoreFlex  = Math.max(18, inner - 36);
+  const scoreNameW = Math.max(12, Math.min(20, Math.floor(scoreFlex * 0.55)));
+  const scoreBarW  = Math.max(6,  Math.min(14, scoreFlex - scoreNameW));
   // Normal flex: [label=18] gap [amount=10] gap [pct=4] gap [bar] — 3 gaps of 2
   const dashFlexBarW  = Math.max(8, inner - 38);
   // Account: [sel=2] gap [name] gap [col1=10] gap [col2=10] — 3 gaps of 2
@@ -307,10 +338,14 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
     }
 
     if (view === 'categories') {
-      const displayCats = displaySummary?.byCategory ?? [];
+      // Cursor and Enter track whatever list is actually rendered: scorecard
+      // buckets, drift detail rows, or the plain category breakdown.
+      const displayCats: Array<{ category: string }> = scorecardMode
+        ? (detailMode ? (catDrift ?? []) : scoreRows)
+        : (displaySummary?.byCategory ?? []);
       if (key.upArrow)   { setCatCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setCatCursor((c) => Math.min(displayCats.length - 1, c + 1)); return; }
-      if (input === 'm' && !driftMode) {
+      if (input === 'm' && !scorecardMode) {
         const cat = displayCats[catCursor];
         if (cat) {
           const { from, to } = getPeriodDates(range, anchor);
@@ -373,7 +408,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
       return;
     }
 
-    if (input === 'd') { setDriftMode((m) => !m); return; }
+    if (input === 's') { setScorecardMode((m) => !m); setCatCursor(0); return; }
+    if (input === 'x' && scorecardMode) { setDetailMode((t) => !t); setCatCursor(0); return; }
 
     if (input === '/') {
       setSearchInput(search); // pre-fill with current search
@@ -420,12 +456,12 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         : <Text dimColor>
             {showHints
               ? (view === 'account'
-                  ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [d] delta`
+                  ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns  ·  Space ${selectedAccount ? 'unfilter' : 'filter'}  ·  [c] clear  ·  [Tab] view  ·  [s] scorecard`
                   : view === 'categories'
-                    ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns${driftMode ? '' : '  ·  [m] merchants'}  ·  [Tab] view  ·  [d] delta`
+                    ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns${scorecardMode ? `  ·  [x] ${detailMode ? 'compact' : 'columns'}` : '  ·  [m] merchants'}  ·  [Tab] view  ·  [s] scorecard`
                     : view === 'owner'
                       ? '← → period  ·  [r] range  ·  [Tab] view'
-                      : '[/] search  ·  ← → period  ·  Enter txns  ·  [Tab] view  ·  [d] delta')
+                      : `[/] search  ·  ← → period  ·  Enter txns${scorecardMode ? `  ·  [x] ${detailMode ? 'compact' : 'columns'}` : ''}  ·  [Tab] view  ·  [s] scorecard`)
               : '[/] search'}
           </Text>
       }
@@ -445,7 +481,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
             : <Text bold>{formatPeriodLabel(range, anchor)}</Text>
           }
           {selectedAccount && <Text color={C_WARNING}>{selectedAccount.name}</Text>}
-          {driftMode && <Text color={C_MANUAL} bold>delta</Text>}
+          {scorecardMode && <Text color={C_MANUAL} bold>{detailMode ? 'scorecard · columns' : 'scorecard'}</Text>}
           <Text dimColor>
             {merchantDrill ? `merchants · ${merchantDrill.category}` : view === 'categories' ? 'categories' : view === 'flex' ? 'flex' : view === 'account' ? 'account' : 'owner'}
           </Text>
@@ -482,16 +518,16 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
         <Box flexDirection="column" marginTop={1}>
           {accountRows.length === 0 ? (
             <Text dimColor>No accounts linked. [8] accounts → link a bank.</Text>
-          ) : driftMode && range === 'alltime' ? (
-            <Text dimColor>Delta not available for All Time range.</Text>
+          ) : scorecardMode && range === 'alltime' ? (
+            <Text dimColor>Scorecard not available for All Time range.</Text>
           ) : (
             <>
               <Box marginBottom={0}>
                 <Text dimColor>{'  '}</Text>
                 <Box gap={2}>
                   <Text dimColor>{'Account'.padEnd(dashAcctNameW)}</Text>
-                  {driftMode
-                    ? <Text dimColor>{'vs prev'.padStart(10)}</Text>
+                  {scorecardMode
+                    ? <Text dimColor>{'Δ typical'.padStart(10)}</Text>
                     : <Text dimColor>{'Income'.padStart(10)}</Text>}
                   <Text dimColor>{'Expenses'.padStart(10)}</Text>
                 </Box>
@@ -499,19 +535,19 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
               {accountRows.map((acct, i) => {
                 const isSelected = i === acctCursor;
                 const isFiltered = selectedAccount?.id === acct.id;
-                const drift = driftMode ? acctDrift?.find((d) => d.id === acct.id) : undefined;
-                const spendColor = drift ? driftColor(drift.current, drift.avg12m) : C_NEGATIVE;
+                const drift = scorecardMode ? acctDrift?.find((d) => d.id === acct.id) : undefined;
+                const spendColor = drift ? driftColor(drift) : C_NEGATIVE;
                 return (
                   <SelectableRow key={acct.id} selected={isSelected}>
                     <Text color={isFiltered ? C_WARNING : isSelected ? C_ACCENT : undefined} dimColor={!isSelected && !isFiltered}>
                       {(acct.name.length > dashAcctNameW ? acct.name.slice(0, dashAcctNameW - 1) + '…' : acct.name).padEnd(dashAcctNameW)}
                     </Text>
-                    {driftMode
+                    {scorecardMode
                       ? <Text color={drift ? spendColor : C_NEUTRAL} dimColor={!drift}>
-                          {drift ? fmtDelta(drift.lastPeriodDelta).padStart(10) : '—'.padStart(10)}
+                          {drift ? fmtDelta(drift.medianDelta).padStart(10) : '—'.padStart(10)}
                         </Text>
                       : <Text color={C_POSITIVE} dimColor={acct.income === 0}>{(acct.income > 0 ? fmt(acct.income) : '—').padStart(10)}</Text>}
-                    <Text color={driftMode ? spendColor : C_NEGATIVE} dimColor={acct.spending === 0}>
+                    <Text color={scorecardMode ? spendColor : C_NEGATIVE} dimColor={acct.spending === 0}>
                       {(acct.spending > 0 ? fmt(acct.spending) : '—').padStart(10)}
                     </Text>
                     {isFiltered && <Text color={C_WARNING}>  ●</Text>}
@@ -557,7 +593,13 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
 
           {view === 'categories' ? (
             <Box flexDirection="column" marginTop={1}>
-              <SectionHeader>{merchantDrill ? `TOP MERCHANTS · ${merchantDrill.category}` : 'SPENDING BY CATEGORY'}</SectionHeader>
+              <SectionHeader>
+                {merchantDrill
+                  ? `TOP MERCHANTS · ${merchantDrill.category}`
+                  : scorecardMode && !detailMode
+                    ? 'SPENDING BY CATEGORY · VS TYPICAL (12M MEDIAN)'
+                    : 'SPENDING BY CATEGORY'}
+              </SectionHeader>
               {merchantDrill ? (
                 <Box flexDirection="column" marginTop={1}>
                   {merchantRows.length === 0 ? (
@@ -579,9 +621,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                   )}
                   {showHints && <Box marginTop={1}><Text dimColor>[Enter] transactions  ·  [Esc] back</Text></Box>}
                 </Box>
-              ) : driftMode && range === 'alltime' ? (
-                <Box marginTop={1}><Text dimColor>Delta not available for All Time range.</Text></Box>
-              ) : driftMode ? (
+              ) : scorecardMode && range === 'alltime' ? (
+                <Box marginTop={1}><Text dimColor>Scorecard not available for All Time range.</Text></Box>
+              ) : scorecardMode && detailMode ? (
                 <Box flexDirection="column" marginTop={1}>
                   {/* column headers */}
                   <Box>
@@ -599,7 +641,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                   ) : (
                     (catDrift ?? []).map((row, i) => {
                       const isSelected = catCursor === i;
-                      const color = driftColor(row.current, row.avg12m);
+                      const color = driftColor(row);
                       const nameW = driftCatNameW;
                       return (
                         <SelectableRow key={`${row.category}-${i}`} selected={isSelected}>
@@ -613,6 +655,73 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                         </SelectableRow>
                       );
                     })
+                  )}
+                </Box>
+              ) : scorecardMode ? (
+                <Box flexDirection="column" marginTop={1}>
+                  {scoreRows.length === 0 ? (
+                    <Text dimColor>No expense data for this period.</Text>
+                  ) : (
+                    <>
+                      <Box>
+                        <Text dimColor>{'  '}</Text>
+                        <Box gap={2}>
+                          <Text dimColor>{''.padEnd(scoreNameW)}</Text>
+                          <Text dimColor>{'amount'.padStart(10)}</Text>
+                          <Text dimColor>{'Δ typical'.padStart(9)}</Text>
+                        </Box>
+                      </Box>
+                      {scoreBuckets.map((bucket) => (
+                        <Box key={bucket.key} flexDirection="column">
+                          <Box>
+                            <Text
+                              bold
+                              color={bucket.key === 'over' ? C_NEGATIVE : bucket.key === 'under' ? C_POSITIVE : undefined}
+                              dimColor={bucket.key === 'typical'}
+                            >
+                              {'  '}{bucket.label}
+                            </Text>
+                            <Text dimColor> {'─'.repeat(Math.max(4, inner - bucket.label.length - 5))}</Text>
+                          </Box>
+                          {bucket.rows.map((row, i) => {
+                            const globalIdx = bucket.start + i;
+                            const isSelected = catCursor === globalIdx;
+                            const isTypical = bucket.key === 'typical';
+                            const color = isTypical ? undefined : driftColor(row);
+                            return (
+                              <SelectableRow key={row.category} selected={isSelected}>
+                                <Text color={isSelected ? C_ACCENT : color} dimColor={isTypical && !isSelected}>
+                                  {truncate(row.category, scoreNameW).padEnd(scoreNameW)}
+                                </Text>
+                                <Text color={C_NEUTRAL} dimColor={isTypical}>{fmt(row.current).padStart(10)}</Text>
+                                <Text color={color} dimColor={isTypical}>{fmtDelta(row.medianDelta).padStart(9)}</Text>
+                                {!isTypical && (
+                                  <>
+                                    <Text color={color}>{bar(Math.abs(row.medianDelta), maxScoreDelta, scoreBarW).padEnd(scoreBarW)}</Text>
+                                    <Text dimColor>{ratioLabel(row.current, row.median12m).padStart(5)}</Text>
+                                  </>
+                                )}
+                              </SelectableRow>
+                            );
+                          })}
+                        </Box>
+                      ))}
+                      <Box><Text dimColor>{'  '}{'─'.repeat(Math.max(4, inner - 2))}</Text></Box>
+                      <Box>
+                        <Text>{'  '}</Text>
+                        <Box gap={2}>
+                          <Text bold>{'NET'.padEnd(scoreNameW)}</Text>
+                          <Text color={C_NEUTRAL}>{fmt(scoreTotal).padStart(10)}</Text>
+                          <Text
+                            bold
+                            color={(scorecard?.net ?? 0) <= 0 ? C_POSITIVE : (scorecard?.net ?? 0) >= scoreTotal * 0.05 ? C_NEGATIVE : C_WARNING}
+                          >
+                            {fmtDelta(scorecard?.net ?? 0).padStart(9)}
+                          </Text>
+                          <Text dimColor>vs typical</Text>
+                        </Box>
+                      </Box>
+                    </>
                   )}
                 </Box>
               ) : (
@@ -641,9 +750,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
           ) : (
             <Box flexDirection="column" marginTop={1}>
               <SectionHeader>SPENDING BY FLEXIBILITY</SectionHeader>
-              {driftMode && range === 'alltime' ? (
-                <Box marginTop={1}><Text dimColor>Delta not available for All Time range.</Text></Box>
-              ) : driftMode ? (
+              {scorecardMode && range === 'alltime' ? (
+                <Box marginTop={1}><Text dimColor>Scorecard not available for All Time range.</Text></Box>
+              ) : scorecardMode && detailMode ? (
                 <Box flexDirection="column" marginTop={1}>
                   {/* column headers */}
                   <Box gap={2}>
@@ -656,7 +765,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                   {flexDrift && FLEX_TIERS.map(({ key, label }) => {
                     const slice = flexDrift[key];
                     if (slice.current === 0 && slice.avg12m === 0) return null;
-                    const color = driftColor(slice.current, slice.avg12m);
+                    const color = driftColor(slice);
                     return (
                       <Box key={key} gap={2}>
                         <Text color={color}>{'  '}{label.padEnd(16)}</Text>
@@ -664,6 +773,29 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                         <Text color={color}>{fmtDelta(slice.lastPeriodDelta).padStart(9)}</Text>
                         <Text color={color}>{fmtDelta(slice.lastYearDelta).padStart(9)}</Text>
                         <Text color={color}>{fmtDelta(slice.avg12mDelta).padStart(9)}</Text>
+                      </Box>
+                    );
+                  })}
+                </Box>
+              ) : scorecardMode ? (
+                <Box flexDirection="column" marginTop={1}>
+                  {/* Same verdict column as the category scorecard: the displayed
+                      delta is the number the color is keyed to. */}
+                  <Box gap={2}>
+                    <Text dimColor>{''.padEnd(18)}</Text>
+                    <Text dimColor>{'amount'.padStart(10)}</Text>
+                    <Text dimColor>{'Δ typical'.padStart(9)}</Text>
+                  </Box>
+                  {flexDrift && FLEX_TIERS.map(({ key, label }) => {
+                    const slice = flexDrift[key];
+                    if (slice.current === 0 && slice.avg12m === 0) return null;
+                    const color = driftColor(slice);
+                    return (
+                      <Box key={key} gap={2}>
+                        <Text color={color}>{'  '}{label.padEnd(16)}</Text>
+                        <Text color={C_NEUTRAL}>{fmt(slice.current).padStart(10)}</Text>
+                        <Text color={color}>{fmtDelta(slice.medianDelta).padStart(9)}</Text>
+                        <Text dimColor>{ratioLabel(slice.current, slice.median12m).padStart(6)}</Text>
                       </Box>
                     );
                   })}
@@ -684,7 +816,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                   })}
                 </Box>
               )}
-              {!driftMode && displayFlexData && displayFlexData.untagged > 0 && !search && (
+              {!scorecardMode && displayFlexData && displayFlexData.untagged > 0 && !search && (
                 <Box marginTop={1}><Text dimColor>{pct(displayFlexData.untagged, totalExpenses)} untagged — set tiers in Rules → Categories</Text></Box>
               )}
             </Box>
