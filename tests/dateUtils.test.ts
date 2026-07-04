@@ -91,6 +91,22 @@ describe('getPeriodStart', () => {
     });
   });
 
+  describe('last30', () => {
+    it('returns 29 days before the given date (trailing window start)', () => {
+      const start = getPeriodStart('last30', d(2026, 7, 3));
+      expect(start.getFullYear()).toBe(2026);
+      expect(start.getMonth()).toBe(5); // June
+      expect(start.getDate()).toBe(4);
+    });
+
+    it('crosses year boundaries', () => {
+      const start = getPeriodStart('last30', d(2026, 1, 10));
+      expect(start.getFullYear()).toBe(2025);
+      expect(start.getMonth()).toBe(11); // December
+      expect(start.getDate()).toBe(12);
+    });
+  });
+
   describe('alltime', () => {
     it('returns year 2000', () => {
       const start = getPeriodStart('alltime', d(2025, 1, 1));
@@ -169,6 +185,20 @@ describe('getPeriodDates', () => {
       expect(dates.to).toBe('2025-12-31');
     });
   });
+
+  describe('last30', () => {
+    it('returns a 30-day range starting at the anchor', () => {
+      const dates = getPeriodDates('last30', d(2026, 6, 4));
+      expect(dates.from).toBe('2026-06-04');
+      expect(dates.to).toBe('2026-07-03');
+    });
+
+    it('spans month and year boundaries', () => {
+      const dates = getPeriodDates('last30', d(2025, 12, 15));
+      expect(dates.from).toBe('2025-12-15');
+      expect(dates.to).toBe('2026-01-13');
+    });
+  });
 });
 
 describe('navigatePeriod', () => {
@@ -243,6 +273,20 @@ describe('navigatePeriod', () => {
     });
   });
 
+  describe('last30 navigation', () => {
+    it('moves backward 30 days', () => {
+      const prev = navigatePeriod('last30', d(2026, 6, 4), -1);
+      expect(prev.getMonth()).toBe(4); // May
+      expect(prev.getDate()).toBe(5);
+    });
+
+    it('moves forward 30 days', () => {
+      const next = navigatePeriod('last30', d(2026, 6, 4), 1);
+      expect(next.getMonth()).toBe(6); // July
+      expect(next.getDate()).toBe(4);
+    });
+  });
+
   describe('alltime navigation', () => {
     it('does not move (alltime is fixed)', () => {
       const anchor = d(2025, 6, 15);
@@ -283,6 +327,18 @@ describe('formatPeriodLabel', () => {
 
   it('formats year label', () => {
     expect(formatPeriodLabel('year', d(2025, 6, 15))).toBe('2025');
+  });
+
+  it('formats last30 label spanning months', () => {
+    expect(formatPeriodLabel('last30', d(2026, 6, 4))).toBe('Jun 4 – Jul 3, 2026');
+  });
+
+  it('formats last30 label within one month', () => {
+    expect(formatPeriodLabel('last30', d(2026, 1, 1))).toBe('Jan 1–30, 2026');
+  });
+
+  it('formats last30 label spanning years', () => {
+    expect(formatPeriodLabel('last30', d(2025, 12, 15))).toBe('Dec 15 – Jan 13, 2026');
   });
 
   it('formats alltime label', () => {

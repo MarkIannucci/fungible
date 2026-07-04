@@ -1,7 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
+import { useNav } from '../hooks/useNav.js';
 import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact } from '../../../../core/fmt.js';
+import { getDriftWindows, getPeriodStart } from '../../../../core/dateUtils.js';
+import { bucketDrift } from '../../../../core/scorecard.js';
 import { KeyHints } from '../components/KeyHints.js';
 import styles from './Health.module.css';
 
@@ -27,7 +30,22 @@ function roundToStep(n: number): number {
 }
 
 export function Health() {
+  const { navigate } = useNav();
   const data = useQuery(() => api.health.loadHealthData(), []);
+
+  // Trailing-30-day scorecard: which categories drifted from typical recently.
+  const drift = useQuery(() => {
+    const today = new Date();
+    const w = getDriftWindows('last30', getPeriodStart('last30', today), today);
+    return w
+      ? api.queries.getCategoryDriftData(w.current, w.lastPeriod, w.lastYear, w.rolling12)
+      : Promise.resolve(null);
+  }, []);
+  const scorecard = useMemo(() => (drift ? bucketDrift(drift) : null), [drift]);
+  const topUnder = useMemo(
+    () => (scorecard ? [...scorecard.under].sort((a, b) => a.medianDelta - b.medianDelta).slice(0, 2) : []),
+    [scorecard],
+  );
 
   const [monthlySpend, setMonthlySpend] = useState<number | null>(null);
   const [monthlySavings, setMonthlySavings] = useState<number | null>(null);
@@ -109,6 +127,40 @@ export function Health() {
             <span className={`dim ${styles.metricHint}`}>{fmt(data.liquid)} incl. brokerage</span>
           </div>
         </section>
+
+        {scorecard && (scorecard.over.length > 0 || scorecard.under.length > 0) && (
+          <section className={styles.panel}>
+            <h2>Last 30 days · vs typical</h2>
+            {scorecard.over.length > 0 && (
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Watch</span>
+                <span className={`neg ${styles.metricValue}`}>
+                  {scorecard.over.slice(0, 2).map((r) => `${r.category} ${fmtSigned(r.medianDelta, 0)}`).join('  ·  ')}
+                </span>
+              </div>
+            )}
+            {topUnder.length > 0 && (
+              <div className={styles.metric}>
+                <span className={styles.metricLabel}>Good</span>
+                <span className={`pos ${styles.metricValue}`}>
+                  {topUnder.map((r) => `${r.category} ${fmtSigned(r.medianDelta, 0)}`).join('  ·  ')}
+                </span>
+              </div>
+            )}
+            <div className={styles.metric}>
+              <span className={styles.metricLabel}>Net</span>
+              <span className={`num ${scorecard.net <= 0 ? 'pos' : 'warn'} ${styles.metricValue}`}>
+                {fmtSigned(scorecard.net, 0)}
+              </span>
+              <button
+                className={`dim ${styles.scorecardLink}`}
+                onClick={() => navigate('dashboard', { range: 'last30', scorecard: true })}
+              >
+                full scorecard →
+              </button>
+            </div>
+          </section>
+        )}
 
         {data.totalDebt > 0 && (
           <section className={styles.panel}>

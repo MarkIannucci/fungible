@@ -15,7 +15,8 @@ import {
   RANGE_LABELS,
   type Range,
 } from '../../../../core/dateUtils.js';
-import type { AccountRow, CategoryDrift, FlexSummary } from '../../../../core/queries.js';
+import type { AccountRow, CategoryDrift, DriftSlice, FlexSummary } from '../../../../core/queries.js';
+import { bucketDrift, isSignificantDelta, ratioLabel } from '../../../../core/scorecard.js';
 import { mergeFilters, type Filter } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
 import type { TxFilter } from '../../../shared/nav.js';
@@ -34,15 +35,24 @@ function pct(part: number, total: number) {
   return total === 0 ? '0%' : `${Math.round((part / total) * 100)}%`;
 }
 
-/** Heat-map class based on current spend vs 12-month rolling average (mirrors TUI driftColor). */
-function driftClass(current: number, avg12m: number): string {
-  if (current === 0) return '';
-  if (avg12m === 0) return 'neg'; // new spending with no history
-  const ratio = current / avg12m;
-  if (ratio <= 1.1) return 'pos';
-  if (ratio <= 1.3) return 'warn';
-  return 'neg';
+/**
+ * Heat-map class vs the median baseline, gated on significance (mirrors TUI
+ * driftColor): rows inside the noise band stay neutral so only deltas worth
+ * acting on get color.
+ */
+function driftClass(slice: Pick<DriftSlice, 'current' | 'median12m' | 'medianDelta'>): string {
+  if (slice.current === 0 && slice.median12m === 0) return '';
+  if (!isSignificantDelta(slice.medianDelta, slice.median12m)) return '';
+  if (slice.medianDelta < 0) return 'pos';                       // meaningfully under
+  if (slice.median12m === 0) return 'neg';                       // new spending, no history
+  return slice.current / slice.median12m >= 1.3 ? 'neg' : 'warn';
 }
+
+const BUCKET_META = {
+  over:    { label: 'Over',    cls: 'neg' },
+  typical: { label: 'Typical', cls: 'dim' },
+  under:   { label: 'Under',   cls: 'pos' },
+} as const;
 
 function fmtDelta(delta: number): string {
   return delta === 0 ? '—' : fmtSigned(delta, 0);
@@ -74,7 +84,8 @@ export function Dashboard() {
     return getPeriodStart(initialRange, now);
   });
   const [view, setView] = useState<DashView>('categories');
-  const [driftMode, setDriftMode] = useState(false);
+  const [scorecardMode, setScorecardMode] = useState(txFilter.scorecard ?? false);
+  const [detailMode, setDetailMode] = useState(false); // sortable per-baseline delta columns
   const [searchInput, setSearchInput] = useState(txFilter.search ?? '');
   const [search, setSearch] = useState(txFilter.search ?? '');
   const [selectedAccount, setSelectedAccount] = useState<AccountRow | null>(null);
@@ -104,27 +115,27 @@ export function Dashboard() {
   const accountRows = useQuery(() => api.queries.getAccountRows(from, to, filter), [from, to, acctId, sharedFilter]);
   const ownerRows = useQuery(() => api.queries.getOwnerRows(from, to, filter), [from, to, acctId, sharedFilter]);
 
-  const driftWindows = driftMode ? getDriftWindows(range, anchor, new Date()) : null;
+  const driftWindows = scorecardMode ? getDriftWindows(range, anchor, new Date()) : null;
   const catDrift = useQuery(
     () =>
       driftWindows
         ? api.queries.getCategoryDriftData(driftWindows.current, driftWindows.lastPeriod, driftWindows.lastYear, driftWindows.rolling12, filter)
         : Promise.resolve(null),
-    [driftMode, from, to, acctId, sharedFilter],
+    [scorecardMode, from, to, acctId, sharedFilter],
   );
   const flexDrift = useQuery(
     () =>
       driftWindows
         ? api.queries.getFlexDriftData(driftWindows.current, driftWindows.lastPeriod, driftWindows.lastYear, driftWindows.rolling12, filter)
         : Promise.resolve(null),
-    [driftMode, from, to, acctId, sharedFilter],
+    [scorecardMode, from, to, acctId, sharedFilter],
   );
   const acctDrift = useQuery(
     () =>
       driftWindows
         ? api.queries.getAccountDriftData(driftWindows.current, driftWindows.lastPeriod, driftWindows.lastYear, driftWindows.rolling12)
         : Promise.resolve(null),
-    [driftMode, from, to],
+    [scorecardMode, from, to],
   );
 
   const searchStats = useQuery(
@@ -158,6 +169,12 @@ export function Dashboard() {
       return desc ? -cmp : cmp;
     });
   }, [catDrift, driftSort]);
+
+  const scorecard = useMemo(() => (catDrift ? bucketDrift(catDrift) : null), [catDrift]);
+  const maxScoreDelta = scorecard
+    ? Math.max(1, ...[...scorecard.over, ...scorecard.under].map((r) => Math.abs(r.medianDelta)))
+    : 1;
+  const scoreTotal = (catDrift ?? []).reduce((s, r) => s + r.current, 0);
 
   function goPeriod(delta: -1 | 1) {
     if (range === 'alltime') return;
@@ -201,7 +218,8 @@ export function Dashboard() {
       const idx = RANGES.indexOf(range);
       pickRange(RANGES[(idx + 1) % RANGES.length]);
     },
-    d: () => setDriftMode((m) => !m),
+    s: () => setScorecardMode((m) => !m),
+    x: () => { if (scorecardMode) setDetailMode((t) => !t); },
     Tab: () => {
       setMerchantDrill(null);
       setView((v) => views[(views.indexOf(v) + 1) % views.length]);
@@ -220,7 +238,7 @@ export function Dashboard() {
 
   return (
     <div className={styles.screen}>
-      <KeyHints hints="[1-9·0] screens   [r] range   [d] delta   [tab] view   [← →] period   [/] search   [esc] back" />
+      <KeyHints hints={`[1-9·0] screens   [r] range   [s] scorecard${scorecardMode ? '   [x] columns' : ''}   [tab] view   [← →] period   [/] search   [esc] back`} />
       <div className={styles.topBar}>
         <h1 className={styles.title}>Dashboard</h1>
         <div className={styles.periodNav}>
@@ -254,12 +272,21 @@ export function Dashboard() {
           ))}
         </div>
         <button
-          className={driftMode ? styles.driftBtnActive : styles.driftBtn}
-          onClick={() => setDriftMode((m) => !m)}
-          title="Compare against prior periods"
+          className={scorecardMode ? styles.driftBtnActive : styles.driftBtn}
+          onClick={() => setScorecardMode((m) => !m)}
+          title="Which categories drifted from your typical month, and does it matter"
         >
-          Δ delta
+          Δ scorecard
         </button>
+        {scorecardMode && (
+          <button
+            className={detailMode ? styles.driftBtnActive : styles.driftBtn}
+            onClick={() => setDetailMode((t) => !t)}
+            title="Sortable per-baseline delta columns (vs prev / yr ago / 12m avg)"
+          >
+            columns
+          </button>
+        )}
         <div className={styles.searchWrap}>
           <input
             ref={searchRef}
@@ -365,10 +392,10 @@ export function Dashboard() {
 
       {view === 'categories' && !merchantDrill && (
         <section className={styles.panel}>
-          <h2>Spending by category</h2>
-          {driftMode && range === 'alltime' ? (
-            <p className="dim">Delta not available for All Time range.</p>
-          ) : driftMode ? (
+          <h2>{scorecardMode && !detailMode ? 'Spending by category · vs typical (12m median)' : 'Spending by category'}</h2>
+          {scorecardMode && range === 'alltime' ? (
+            <p className="dim">Scorecard not available for All Time range.</p>
+          ) : scorecardMode && detailMode ? (
             sortedDrift && sortedDrift.length === 0 ? (
               <p className="dim">No expense data for this period.</p>
             ) : (
@@ -384,7 +411,7 @@ export function Dashboard() {
                 </thead>
                 <tbody>
                   {(sortedDrift ?? []).map((row: CategoryDrift) => {
-                    const cls = driftClass(row.current, row.avg12m);
+                    const cls = driftClass(row);
                     return (
                       <tr
                         key={row.category}
@@ -399,6 +426,64 @@ export function Dashboard() {
                       </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            )
+          ) : scorecardMode ? (
+            !scorecard || scorecard.over.length + scorecard.typical.length + scorecard.under.length === 0 ? (
+              <p className="dim">No expense data for this period.</p>
+            ) : (
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th className={styles.th}>Category</th>
+                    <th className={styles.th}>Amount</th>
+                    <th className={styles.th}>Δ typical</th>
+                    <th className={styles.th}></th>
+                    <th className={styles.th}>Ratio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(['over', 'typical', 'under'] as const).map((bucket) => {
+                    const rows = scorecard[bucket];
+                    if (rows.length === 0) return null;
+                    const meta = BUCKET_META[bucket];
+                    return (
+                      <React.Fragment key={bucket}>
+                        <tr className={styles.bucketRow}>
+                          <td colSpan={5} className={meta.cls}>{meta.label}</td>
+                        </tr>
+                        {rows.map((row) => {
+                          const isTypical = bucket === 'typical';
+                          const cls = isTypical ? 'dim' : driftClass(row);
+                          const barColor = cls === 'pos' ? 'var(--positive)' : cls === 'warn' ? 'var(--warning)' : 'var(--negative)';
+                          return (
+                            <tr
+                              key={row.category}
+                              className={styles.rowClickable}
+                              onClick={() => drillToTransactions({ categories: [row.category] })}
+                            >
+                              <td className={`${styles.tdName} ${cls}`}>{row.category}</td>
+                              <td className={`num ${isTypical ? 'dim' : ''}`}>{fmt(row.current)}</td>
+                              <td className={`num ${cls}`}>{fmtDelta(row.medianDelta)}</td>
+                              <td className={styles.tdBar}>
+                                {!isTypical && <Bar value={Math.abs(row.medianDelta)} max={maxScoreDelta} color={barColor} />}
+                              </td>
+                              <td className="num dim">{isTypical ? '' : ratioLabel(row.current, row.median12m)}</td>
+                            </tr>
+                          );
+                        })}
+                      </React.Fragment>
+                    );
+                  })}
+                  <tr className={styles.netRow}>
+                    <td className={styles.tdName}>Net</td>
+                    <td className="num">{fmt(scoreTotal)}</td>
+                    <td className={`num ${scorecard.net <= 0 ? 'pos' : scorecard.net >= scoreTotal * 0.05 ? 'neg' : 'warn'}`}>
+                      {fmtDelta(scorecard.net)}
+                    </td>
+                    <td colSpan={2} className="dim">vs typical</td>
+                  </tr>
                 </tbody>
               </table>
             )
@@ -443,9 +528,9 @@ export function Dashboard() {
       {view === 'flex' && (
         <section className={styles.panel}>
           <h2>Spending by flexibility</h2>
-          {driftMode && range === 'alltime' ? (
-            <p className="dim">Delta not available for All Time range.</p>
-          ) : driftMode && flexDrift ? (
+          {scorecardMode && range === 'alltime' ? (
+            <p className="dim">Scorecard not available for All Time range.</p>
+          ) : scorecardMode && detailMode && flexDrift ? (
             <table className={styles.table}>
               <thead>
                 <tr>
@@ -460,7 +545,7 @@ export function Dashboard() {
                 {FLEX_TIERS.map(({ key, label, cssVar }) => {
                   const slice = flexDrift[key];
                   if (slice.current === 0 && slice.avg12m === 0) return null;
-                  const cls = driftClass(slice.current, slice.avg12m);
+                  const cls = driftClass(slice);
                   return (
                     <tr key={key}>
                       <td className={styles.tdName} style={{ color: cssVar }}>
@@ -470,6 +555,34 @@ export function Dashboard() {
                       <td className={`num ${cls}`}>{fmtDelta(slice.lastPeriodDelta)}</td>
                       <td className={`num ${cls}`}>{fmtDelta(slice.lastYearDelta)}</td>
                       <td className={`num ${cls}`}>{fmtDelta(slice.avg12mDelta)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : scorecardMode && flexDrift ? (
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.th}>Tier</th>
+                  <th className={styles.th}>Amount</th>
+                  <th className={styles.th}>Δ typical</th>
+                  <th className={styles.th}>Ratio</th>
+                </tr>
+              </thead>
+              <tbody>
+                {FLEX_TIERS.map(({ key, label, cssVar }) => {
+                  const slice = flexDrift[key];
+                  if (slice.current === 0 && slice.avg12m === 0) return null;
+                  const cls = driftClass(slice);
+                  return (
+                    <tr key={key}>
+                      <td className={styles.tdName} style={{ color: cssVar }}>
+                        {label}
+                      </td>
+                      <td className="num">{fmt(slice.current)}</td>
+                      <td className={`num ${cls}`}>{fmtDelta(slice.medianDelta)}</td>
+                      <td className="num dim">{ratioLabel(slice.current, slice.median12m)}</td>
                     </tr>
                   );
                 })}
@@ -527,22 +640,22 @@ export function Dashboard() {
           <h2>By account</h2>
           {(accountRows ?? []).length === 0 ? (
             <p className="dim">No accounts linked — add one in Accounts.</p>
-          ) : driftMode && range === 'alltime' ? (
-            <p className="dim">Delta not available for All Time range.</p>
+          ) : scorecardMode && range === 'alltime' ? (
+            <p className="dim">Scorecard not available for All Time range.</p>
           ) : (
             <table className={styles.table}>
               <thead>
                 <tr>
                   <th className={styles.th}>Account</th>
-                  <th className={styles.th}>{driftMode ? 'vs prev' : 'Income'}</th>
+                  <th className={styles.th}>{scorecardMode ? 'Δ typical' : 'Income'}</th>
                   <th className={styles.th}>Expenses</th>
                   <th className={styles.th}>Filter</th>
                 </tr>
               </thead>
               <tbody>
                 {(accountRows ?? []).map((acct) => {
-                  const drift = driftMode ? acctDrift?.find((d) => d.id === acct.id) : undefined;
-                  const cls = drift ? driftClass(drift.current, drift.avg12m) : '';
+                  const drift = scorecardMode ? acctDrift?.find((d) => d.id === acct.id) : undefined;
+                  const cls = drift ? driftClass(drift) : '';
                   const isFiltered = selectedAccount?.id === acct.id;
                   return (
                     <tr
@@ -553,14 +666,14 @@ export function Dashboard() {
                       <td className={styles.tdName} style={isFiltered ? { color: 'var(--warning)' } : undefined}>
                         {acct.name}
                       </td>
-                      {driftMode ? (
-                        <td className={`num ${cls}`}>{drift ? fmtDelta(drift.lastPeriodDelta) : '—'}</td>
+                      {scorecardMode ? (
+                        <td className={`num ${cls}`}>{drift ? fmtDelta(drift.medianDelta) : '—'}</td>
                       ) : (
                         <td className={`num ${acct.income > 0 ? 'pos' : 'dim'}`}>
                           {acct.income > 0 ? fmt(acct.income) : '—'}
                         </td>
                       )}
-                      <td className={`num ${driftMode ? cls : acct.spending > 0 ? 'neg' : 'dim'}`}>
+                      <td className={`num ${scorecardMode ? cls : acct.spending > 0 ? 'neg' : 'dim'}`}>
                         {acct.spending > 0 ? fmt(acct.spending) : '—'}
                       </td>
                       <td className={styles.tdAction}>
