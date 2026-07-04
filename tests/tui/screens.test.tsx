@@ -279,11 +279,11 @@ describe('Dashboard', () => {
     }, 2000);
   });
 
-  it('d key toggles delta mode label', async () => {
+  it('s key toggles scorecard mode label', async () => {
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('d');
-    await waitFor(() => expect(frame(r)).toContain('delta'));
+    r.stdin.write('s');
+    await waitFor(() => expect(frame(r)).toContain('scorecard'));
   });
 
   it('pressing a nav number calls onNavigate', async () => {

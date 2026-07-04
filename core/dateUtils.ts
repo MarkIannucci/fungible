@@ -1,8 +1,13 @@
-export type Range = 'week' | 'month' | 'quarter' | 'year' | 'alltime';
-export const RANGES: Range[] = ['week', 'month', 'quarter', 'year', 'alltime'];
+export type Range = 'week' | 'month' | 'last30' | 'quarter' | 'year' | 'alltime';
+export const RANGES: Range[] = ['week', 'month', 'last30', 'quarter', 'year', 'alltime'];
 export const RANGE_LABELS: Record<Range, string> = {
-  week: 'Week', month: 'Month', quarter: 'Quarter', year: 'Year', alltime: 'All',
+  week: 'Week', month: 'Month', last30: '30 Days', quarter: 'Quarter', year: 'Year', alltime: 'All',
 };
+
+// last30 is a trailing 30-day window; the anchor is the window START (today−29
+// when anchored to now), keeping the anchor-is-period-start convention of the
+// other ranges. Unlike calendar ranges it never has unelapsed days.
+export const LAST30_DAYS = 30;
 
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -19,6 +24,12 @@ export function getPeriodStart(range: Range, d: Date): Date {
       return monday;
     }
     case 'month':   return new Date(d.getFullYear(), d.getMonth(), 1);
+    case 'last30': {
+      const start = new Date(d);
+      start.setDate(d.getDate() - (LAST30_DAYS - 1));
+      start.setHours(0, 0, 0, 0);
+      return start;
+    }
     case 'quarter': return new Date(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 1);
     case 'year':    return new Date(d.getFullYear(), 0, 1);
     case 'alltime': return new Date(2000, 0, 1);
@@ -31,6 +42,7 @@ export function getPeriodDates(range: Range, anchor: Date): { from: string; to: 
   let end: Date;
   switch (range) {
     case 'week':    end = new Date(anchor); end.setDate(anchor.getDate() + 6); break;
+    case 'last30':  end = new Date(anchor); end.setDate(anchor.getDate() + (LAST30_DAYS - 1)); break;
     case 'month':   end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0); break;
     case 'quarter': end = new Date(anchor.getFullYear(), anchor.getMonth() + 3, 0); break;
     case 'year':    end = new Date(anchor.getFullYear(), 11, 31); break;
@@ -42,6 +54,7 @@ export function navigatePeriod(range: Range, anchor: Date, delta: -1 | 1): Date 
   const d = new Date(anchor);
   switch (range) {
     case 'week':    d.setDate(d.getDate() + delta * 7); break;
+    case 'last30':  d.setDate(d.getDate() + delta * LAST30_DAYS); break;
     case 'month':   d.setMonth(d.getMonth() + delta); break;
     case 'quarter': d.setMonth(d.getMonth() + delta * 3); break;
     case 'year':    d.setFullYear(d.getFullYear() + delta); break;
@@ -175,15 +188,23 @@ export function getDriftWindows(range: Range, anchor: Date, today: Date): DriftW
   return { current: { from, to: effectiveTo }, lastPeriod, lastYear, rolling12 };
 }
 
+function spanLabel(start: Date, end: Date): string {
+  const sameYear = start.getFullYear() === end.getFullYear();
+  const sameMonth = start.getMonth() === end.getMonth();
+  if (sameMonth && sameYear) return `${MONTHS[start.getMonth()]} ${start.getDate()}–${end.getDate()}, ${start.getFullYear()}`;
+  if (sameYear)  return `${MONTHS[start.getMonth()]} ${start.getDate()} – ${MONTHS[end.getMonth()]} ${end.getDate()}, ${start.getFullYear()}`;
+  return `${MONTHS[start.getMonth()]} ${start.getDate()} – ${MONTHS[end.getMonth()]} ${end.getDate()}, ${end.getFullYear()}`;
+}
+
 export function formatPeriodLabel(range: Range, anchor: Date): string {
   switch (range) {
     case 'week': {
       const end = new Date(anchor); end.setDate(anchor.getDate() + 6);
-      const sameYear = anchor.getFullYear() === end.getFullYear();
-      const sameMonth = anchor.getMonth() === end.getMonth();
-      if (sameMonth) return `${MONTHS[anchor.getMonth()]} ${anchor.getDate()}–${end.getDate()}, ${anchor.getFullYear()}`;
-      if (sameYear)  return `${MONTHS[anchor.getMonth()]} ${anchor.getDate()} – ${MONTHS[end.getMonth()]} ${end.getDate()}, ${anchor.getFullYear()}`;
-      return `${MONTHS[anchor.getMonth()]} ${anchor.getDate()} – ${MONTHS[end.getMonth()]} ${end.getDate()}, ${end.getFullYear()}`;
+      return spanLabel(anchor, end);
+    }
+    case 'last30': {
+      const end = new Date(anchor); end.setDate(anchor.getDate() + (LAST30_DAYS - 1));
+      return spanLabel(anchor, end);
     }
     case 'month':   return `${MONTHS[anchor.getMonth()]} ${anchor.getFullYear()}`;
     case 'quarter': return `Q${Math.floor(anchor.getMonth() / 3) + 1} ${anchor.getFullYear()}`;
