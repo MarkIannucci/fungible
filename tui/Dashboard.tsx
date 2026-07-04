@@ -461,7 +461,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                     ? `[/] search  ·  ← → period  ·  ↑↓ select  ·  Enter txns${scorecardMode ? `  ·  [x] ${detailMode ? 'compact' : 'columns'}` : '  ·  [m] merchants'}  ·  [Tab] view  ·  [s] scorecard`
                     : view === 'owner'
                       ? '← → period  ·  [r] range  ·  [Tab] view'
-                      : '[/] search  ·  ← → period  ·  Enter txns  ·  [Tab] view  ·  [s] scorecard')
+                      : `[/] search  ·  ← → period  ·  Enter txns${scorecardMode ? `  ·  [x] ${detailMode ? 'compact' : 'columns'}` : ''}  ·  [Tab] view  ·  [s] scorecard`)
               : '[/] search'}
           </Text>
       }
@@ -527,7 +527,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                 <Box gap={2}>
                   <Text dimColor>{'Account'.padEnd(dashAcctNameW)}</Text>
                   {scorecardMode
-                    ? <Text dimColor>{'vs prev'.padStart(10)}</Text>
+                    ? <Text dimColor>{'Δ typical'.padStart(10)}</Text>
                     : <Text dimColor>{'Income'.padStart(10)}</Text>}
                   <Text dimColor>{'Expenses'.padStart(10)}</Text>
                 </Box>
@@ -544,7 +544,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                     </Text>
                     {scorecardMode
                       ? <Text color={drift ? spendColor : C_NEUTRAL} dimColor={!drift}>
-                          {drift ? fmtDelta(drift.lastPeriodDelta).padStart(10) : '—'.padStart(10)}
+                          {drift ? fmtDelta(drift.medianDelta).padStart(10) : '—'.padStart(10)}
                         </Text>
                       : <Text color={C_POSITIVE} dimColor={acct.income === 0}>{(acct.income > 0 ? fmt(acct.income) : '—').padStart(10)}</Text>}
                     <Text color={scorecardMode ? spendColor : C_NEGATIVE} dimColor={acct.spending === 0}>
@@ -752,7 +752,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
               <SectionHeader>SPENDING BY FLEXIBILITY</SectionHeader>
               {scorecardMode && range === 'alltime' ? (
                 <Box marginTop={1}><Text dimColor>Scorecard not available for All Time range.</Text></Box>
-              ) : scorecardMode ? (
+              ) : scorecardMode && detailMode ? (
                 <Box flexDirection="column" marginTop={1}>
                   {/* column headers */}
                   <Box gap={2}>
@@ -773,6 +773,29 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                         <Text color={color}>{fmtDelta(slice.lastPeriodDelta).padStart(9)}</Text>
                         <Text color={color}>{fmtDelta(slice.lastYearDelta).padStart(9)}</Text>
                         <Text color={color}>{fmtDelta(slice.avg12mDelta).padStart(9)}</Text>
+                      </Box>
+                    );
+                  })}
+                </Box>
+              ) : scorecardMode ? (
+                <Box flexDirection="column" marginTop={1}>
+                  {/* Same verdict column as the category scorecard: the displayed
+                      delta is the number the color is keyed to. */}
+                  <Box gap={2}>
+                    <Text dimColor>{''.padEnd(18)}</Text>
+                    <Text dimColor>{'amount'.padStart(10)}</Text>
+                    <Text dimColor>{'Δ typical'.padStart(9)}</Text>
+                  </Box>
+                  {flexDrift && FLEX_TIERS.map(({ key, label }) => {
+                    const slice = flexDrift[key];
+                    if (slice.current === 0 && slice.avg12m === 0) return null;
+                    const color = driftColor(slice);
+                    return (
+                      <Box key={key} gap={2}>
+                        <Text color={color}>{'  '}{label.padEnd(16)}</Text>
+                        <Text color={C_NEUTRAL}>{fmt(slice.current).padStart(10)}</Text>
+                        <Text color={color}>{fmtDelta(slice.medianDelta).padStart(9)}</Text>
+                        <Text dimColor>{ratioLabel(slice.current, slice.median12m).padStart(6)}</Text>
                       </Box>
                     );
                   })}
