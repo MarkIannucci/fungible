@@ -530,7 +530,7 @@ export function Dashboard() {
           <h2>Spending by flexibility</h2>
           {scorecardMode && range === 'alltime' ? (
             <p className="dim">Scorecard not available for All Time range.</p>
-          ) : scorecardMode && flexDrift ? (
+          ) : scorecardMode && detailMode && flexDrift ? (
             <table className={styles.table}>
               <thead>
                 <tr>
@@ -555,6 +555,34 @@ export function Dashboard() {
                       <td className={`num ${cls}`}>{fmtDelta(slice.lastPeriodDelta)}</td>
                       <td className={`num ${cls}`}>{fmtDelta(slice.lastYearDelta)}</td>
                       <td className={`num ${cls}`}>{fmtDelta(slice.avg12mDelta)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : scorecardMode && flexDrift ? (
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.th}>Tier</th>
+                  <th className={styles.th}>Amount</th>
+                  <th className={styles.th}>Δ typical</th>
+                  <th className={styles.th}>Ratio</th>
+                </tr>
+              </thead>
+              <tbody>
+                {FLEX_TIERS.map(({ key, label, cssVar }) => {
+                  const slice = flexDrift[key];
+                  if (slice.current === 0 && slice.avg12m === 0) return null;
+                  const cls = driftClass(slice);
+                  return (
+                    <tr key={key}>
+                      <td className={styles.tdName} style={{ color: cssVar }}>
+                        {label}
+                      </td>
+                      <td className="num">{fmt(slice.current)}</td>
+                      <td className={`num ${cls}`}>{fmtDelta(slice.medianDelta)}</td>
+                      <td className="num dim">{ratioLabel(slice.current, slice.median12m)}</td>
                     </tr>
                   );
                 })}
@@ -619,7 +647,7 @@ export function Dashboard() {
               <thead>
                 <tr>
                   <th className={styles.th}>Account</th>
-                  <th className={styles.th}>{scorecardMode ? 'vs prev' : 'Income'}</th>
+                  <th className={styles.th}>{scorecardMode ? 'Δ typical' : 'Income'}</th>
                   <th className={styles.th}>Expenses</th>
                   <th className={styles.th}>Filter</th>
                 </tr>
@@ -639,7 +667,7 @@ export function Dashboard() {
                         {acct.name}
                       </td>
                       {scorecardMode ? (
-                        <td className={`num ${cls}`}>{drift ? fmtDelta(drift.lastPeriodDelta) : '—'}</td>
+                        <td className={`num ${cls}`}>{drift ? fmtDelta(drift.medianDelta) : '—'}</td>
                       ) : (
                         <td className={`num ${acct.income > 0 ? 'pos' : 'dim'}`}>
                           {acct.income > 0 ? fmt(acct.income) : '—'}
