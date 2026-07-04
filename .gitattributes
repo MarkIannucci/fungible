@@ -1,0 +1,5 @@
+# GitHub substitutes %(describe:tags) with the release tag when generating
+# archive tarballs — this is how Homebrew installs (no .git dir) learn their
+# version. In a git checkout the placeholder survives and bin/fungible falls
+# back to `git describe`.
+VERSION export-subst

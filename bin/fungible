@@ -10,6 +10,18 @@ while [ -L "$SCRIPT_SOURCE" ]; do
 done
 PACKAGE_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")/.." && pwd)"
 
+# Version: the VERSION file is a git export-subst placeholder that GitHub
+# fills in when it generates release tarballs (what Homebrew installs from).
+# In a git checkout the placeholder survives, so fall back to `git describe`.
+if [[ "${1:-}" == "--version" || "${1:-}" == "-v" ]]; then
+  VERSION="$(cat "$PACKAGE_DIR/VERSION" 2>/dev/null || true)"
+  if [[ "$VERSION" == *'$Format'* || -z "$VERSION" ]]; then
+    VERSION="$(git -C "$PACKAGE_DIR" describe --tags 2>/dev/null || echo "unknown")"
+  fi
+  echo "fungible ${VERSION#v}"
+  exit 0
+fi
+
 # Demo mode: use a separate data directory so real data is untouched
 for arg in "$@"; do
   if [[ "$arg" == "--demo" ]]; then
