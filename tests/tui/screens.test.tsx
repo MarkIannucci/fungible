@@ -1844,6 +1844,45 @@ describe('App', () => {
     r.stdin.write('0');
     await waitFor(() => expect(frame(r)).toContain('Settings'));
   });
+
+  it('digit-nav sweep: every screen renders in the full app with seeded data', async () => {
+    // Bug-bash sweep: unlike the per-screen describes above (which mount each
+    // screen directly), this drives the real App through its digit navigation so
+    // every screen mounts with the props/context App actually passes it. Each
+    // step asserts the screen's header plus a seeded datum — proving its load
+    // path ran, not just that it mounted. Dashboard and Transactions anchor to
+    // the real current month (no initialFilter from App), which the fixed
+    // May-2026 seed can't reach, so give them one transaction dated today.
+    const today = new Date().toISOString().slice(0, 10);
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+            VALUES ('tx-sweep-now', 'test-credit', ?, 'Sweep Marker Coffee', 4.50, 'Dining', 0, 0)`,
+      args: [today],
+    });
+
+    const r = render(<App />);
+    await waitFor(() => expect(frame(r)).toContain('Dashboard'));
+
+    const sweep: [digit: string, markers: string[]][] = [
+      ['2', ['Transactions', 'Sweep Marker Coffee']],
+      ['3', ['Trends', 'May 2026']],
+      ['4', ['Net Worth', 'Test Checking']],
+      ['5', ['Tags', 'travel']],
+      ['6', ['Financial Health', 'SNAPSHOT']],
+      ['7', ['Category Rules', 'Whole Foods']],
+      ['8', ['Accounts', 'Test Checking']],
+      ['9', ['Canvas']],
+      ['0', ['Settings', 'HOUSEHOLD']],
+      ['1', ['Dashboard', 'Dining']],
+    ];
+    for (const [digit, markers] of sweep) {
+      r.stdin.write(digit);
+      await waitFor(() => {
+        const f = frame(r);
+        for (const m of markers) expect(f).toContain(m);
+      }, 2000);
+    }
+  });
 });
 
 // ── FilterPanel ─────────────────────────────────────────────────────────────
