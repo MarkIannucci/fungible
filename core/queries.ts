@@ -420,17 +420,17 @@ export async function getSearchFilteredData(
   return { summary: { income, expenses, net: income - expenses, byCategory }, flexData };
 }
 
-export type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null };
-export type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null };
+export type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null; account_id: string | null };
+export type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null; account_id: string | null };
 export type CategoryDetail = { name: string; flexibility: 'fixed' | 'flexible' | 'discretionary' | null };
 
 export async function getAllRules(): Promise<Rule[]> {
-  const result = await db.execute('SELECT id, priority, match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC, id ASC');
+  const result = await db.execute('SELECT id, priority, match_type, pattern, category, min_amount, max_amount, account_id FROM category_rules ORDER BY priority DESC, (account_id IS NULL) ASC, id ASC');
   return result.rows as unknown as Rule[];
 }
 
 export async function getAllNameRules(): Promise<NameRule[]> {
-  const result = await db.execute('SELECT id, match_type, pattern, replacement, min_amount, max_amount FROM name_rules ORDER BY id ASC');
+  const result = await db.execute('SELECT id, match_type, pattern, replacement, min_amount, max_amount, account_id FROM name_rules ORDER BY (account_id IS NULL) ASC, id ASC');
   return result.rows as unknown as NameRule[];
 }
 

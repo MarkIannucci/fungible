@@ -52,6 +52,8 @@ export async function deleteAccount(id: string): Promise<void> {
     { sql: 'DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id = ?)', args: [id] },
     { sql: 'DELETE FROM transactions WHERE account_id = ?', args: [id] },
     { sql: 'DELETE FROM balance_history WHERE account_id = ?', args: [id] },
+    { sql: 'DELETE FROM category_rules WHERE account_id = ?', args: [id] },
+    { sql: 'DELETE FROM name_rules WHERE account_id = ?', args: [id] },
     { sql: 'DELETE FROM accounts WHERE id = ?', args: [id] },
   ], 'write');
 }
@@ -89,7 +91,7 @@ export async function importCsvTransactions(
     }
     if (!rawDate || !name || isNaN(amount)) { skipped++; continue; }
     const date = parseDate(rawDate);
-    const category = categorizeWithRules(rules, name, null, null);
+    const category = categorizeWithRules(rules, name, null, null, amount, account.id);
     const id = generateTxId(account.mask ?? account.id, date, name, amount);
     const result = await db.execute({
       sql: 'INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending) VALUES (?, ?, ?, ?, ?, ?, NULL, 0)',
