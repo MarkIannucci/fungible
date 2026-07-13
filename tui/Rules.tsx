@@ -152,9 +152,9 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
 
   useEffect(() => { load(); }, [refreshKey]);
 
-  function handleDeleteRule(id: number) {
-    deleteCategoryRule(id);
-    showStatus('Rule deleted');
+  async function handleDeleteRule(id: number) {
+    const count = await deleteCategoryRule(id);
+    showStatus(`Rule deleted · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
     load();
   }
 
@@ -175,7 +175,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       editingId: editingRuleId,
     });
     setEditingRuleId(null);
-    showStatus(`Rule saved · recategorized ${count} transactions`, 3000);
+    showStatus(`Rule saved · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
     setNewPattern('');
     setMode('list');
     load();
@@ -224,9 +224,28 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     load();
   }
 
+  // Clearing the search filter shifts which rule sits under a given numeric
+  // cursor index, so re-anchor the cursor to the rule the user was looking at
+  // (by id) — otherwise Esc-then-'x' deletes the wrong rule.
+  function clearSearchPreservingCursor() {
+    if (section === 'rules' && filteredRules[cursor]) {
+      const id = filteredRules[cursor].id;
+      const idx = rules.findIndex((r) => r.id === id);
+      setSearch('');
+      if (idx >= 0) setCursor(idx);
+    } else if (section === 'names' && filteredNameRules[nameCursor]) {
+      const id = filteredNameRules[nameCursor].id;
+      const idx = nameRules.findIndex((r) => r.id === id);
+      setSearch('');
+      if (idx >= 0) setNameCursor(idx);
+    } else {
+      setSearch('');
+    }
+  }
+
   useInput((input, key) => {
     if (mode === 'search') {
-      if (key.escape) { setSearch(''); setMode('list'); return; }
+      if (key.escape) { clearSearchPreservingCursor(); setMode('list'); return; }
       if (key.return) { setMode('list'); return; }
       if (key.backspace || key.delete) { setSearch((s) => s.slice(0, -1)); return; }
       if (input && !key.ctrl && !key.meta) setSearch((s) => s + input);
@@ -236,7 +255,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     if (mode === 'list') {
       if (handleNavKey(input, 'rules', onNavigate)) return;
       if (key.escape) {
-        if (search) { setSearch(''); return; }
+        if (search) { clearSearchPreservingCursor(); return; }
         onNavigate('dashboard');
         return;
       }
@@ -259,7 +278,7 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
           setEditingRuleId(null); setNewPattern(''); setNewType('name'); setNewMinAmount(''); setNewMaxAmount(''); setCatCursor(0); setAccountCursor(0);
           setRuleField('pattern'); setMode('rule-form');
         }
-        if (input === 'x' && filteredRules[cursor]) { handleDeleteRule(filteredRules[cursor].id); }
+        if (input === 'x' && filteredRules[cursor]) { void handleDeleteRule(filteredRules[cursor].id); }
         if (key.return && filteredRules[cursor]) {
           const r = filteredRules[cursor];
           setEditingRuleId(r.id);

@@ -157,8 +157,8 @@ export function Rules() {
                         className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
                         onClick={async (e) => {
                           e.stopPropagation();
-                          await api.rules.deleteCategoryRule(r.id);
-                          showStatus('Rule deleted');
+                          const count = await api.rules.deleteCategoryRule(r.id);
+                          showStatus(`Rule deleted · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
                           reload();
                         }}
                       >

@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
  */
 
 // Pure modules the renderer imports directly — no bridging needed.
-const PURE_MODULES = new Set(['fmt', 'dateUtils', 'filters', 'canvas-spec']);
+const PURE_MODULES = new Set(['fmt', 'dateUtils', 'filters', 'canvas-spec', 'account-class']);
 
 // TUI files that are out of GUI scope.
 const SKIP_FILES = new Set(['Setup.tsx', 'index.tsx']);
@@ -36,6 +36,11 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   evalExpr: 'renderer imports pure core/canvas-spec.ts directly',
   fmtValue: 'renderer imports pure core/canvas-spec.ts directly',
   fmtDialValue: 'renderer imports pure core/canvas-spec.ts directly',
+
+  // Pure scorecard helpers — renderer imports core/scorecard.ts directly (GUI PR2)
+  bucketDrift: 'renderer imports pure core/scorecard.ts directly',
+  isSignificantDelta: 'renderer imports pure core/scorecard.ts directly',
+  ratioLabel: 'renderer imports pure core/scorecard.ts directly',
 
   // Electron-side bridge namespaces live in gui/main/bridge.ts (not registry.ts)
   getDefaultDaysRequested: 'bridge plaid namespace (gui/main/bridge.ts)',

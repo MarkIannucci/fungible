@@ -6,7 +6,7 @@ import { useNav } from '../hooks/useNav.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { Modal } from '../components/Modal.js';
-import { fmt, fmtSigned } from '../../../../core/fmt.js';
+import { fmt, fmtSigned, fmtSpan, sortTags, type TagSort } from '../../../../core/fmt.js';
 import type { Tag } from '../../../../core/queries.js';
 import { useFilter } from '../hooks/useFilter.js';
 import styles from './Tags.module.css';
@@ -27,6 +27,7 @@ export function Tags() {
   }
   const { showStatus, statusEl } = useStatus();
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<TagSort>('name');
   const [reloadKey, setReloadKey] = useState(0);
   const reload = () => setReloadKey((k) => k + 1);
 
@@ -35,7 +36,11 @@ export function Tags() {
   const [addOpen, setAddOpen] = useState(false);
   const [renameTag, setRenameTag] = useState<Tag | null>(null);
 
-  const visibleTags = search ? tags.filter((t) => t.name.toLowerCase().includes(search.toLowerCase())) : tags;
+  const q = search.toLowerCase();
+  const visibleTags = sortTags(
+    search ? tags.filter((t) => t.name.toLowerCase().includes(q)) : tags,
+    sort,
+  );
   const selected = tags.find((t) => t.name.toLowerCase() === selectedName?.toLowerCase()) ?? null;
 
   const summary = useQuery(
@@ -76,6 +81,11 @@ export function Tags() {
             }
           }}
         />
+        <select className={styles.select} value={sort} onChange={(e) => setSort(e.target.value as TagSort)}>
+          <option value="name">Sort: name</option>
+          <option value="recent">Sort: most recent</option>
+          <option value="oldest">Sort: oldest</option>
+        </select>
         <button className={styles.addBtn} onClick={() => setAddOpen(true)}>
           + New tag
         </button>
@@ -91,6 +101,7 @@ export function Tags() {
                 <tr>
                   <th className={styles.th}>Tag</th>
                   <th className={styles.th}>Txns</th>
+                  <th className={styles.th}>Span</th>
                   <th className={styles.th}>Inflow</th>
                   <th className={styles.th}>Outflow</th>
                   <th className={styles.th} />
@@ -105,6 +116,7 @@ export function Tags() {
                   >
                     <td className={styles.tdName}>{t.name}</td>
                     <td className="num dim">{t.count}</td>
+                    <td className="dim">{fmtSpan(t.earliest, t.latest)}</td>
                     <td className="num pos">{fmt(t.inflow)}</td>
                     <td className="num neg">{fmt(t.outflow)}</td>
                     <td className={styles.tdActions}>

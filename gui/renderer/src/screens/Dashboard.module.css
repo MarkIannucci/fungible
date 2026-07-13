@@ -289,6 +289,27 @@
   background: var(--bg-hover);
 }
 
+.bucketRow td {
+  text-align: left !important;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  font-weight: 600;
+  padding-top: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.netRow td {
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+  padding-top: 10px;
+}
+
+.netRow td:last-child {
+  text-align: left;
+  font-weight: 400;
+}
+
 .barTrack {
   height: 14px;
   border-radius: 4px;
