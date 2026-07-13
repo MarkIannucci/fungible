@@ -93,7 +93,7 @@ async function parseCheckingOrSavings(filePath: string): Promise<number> {
     const amount = txType.trim().toLowerCase() === 'credit' ? -absAmount : absAmount;
 
     const accountId = await ensureAccount(mask, guessAccountName(filePath, mask), 'depository', guessSubtype(filePath));
-    const category = await categorize(name, null, null);
+    const category = await categorize(name, null, null, amount, accountId);
     const id = txId(mask, date, name, amount);
 
     inserts.push({
@@ -125,7 +125,7 @@ async function parseCreditCard(filePath: string): Promise<number> {
 
     const accountId = await ensureAccount(cardMask, `Credit Card ${cardMask}`, 'credit', 'credit card');
     const mapped = mapCapOneCategory(rawCapOneCategory);
-    const category = mapped ?? await categorize(txName, null, null);
+    const category = mapped ?? await categorize(txName, null, null, amount, accountId);
     const id = txId(cardMask, txDate, txName, amount);
 
     const result = await db.execute({

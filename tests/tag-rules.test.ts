@@ -126,16 +126,41 @@ describe('stickiness (suppression)', () => {
     expect(await hasTag(t1, tag)).toBe(false);
   });
 
-  it('a removal before any rule blocks a later-created rule (always remember)', async () => {
+  it('removing a manually-added tag (no rule applies it) records no suppression', async () => {
     const tag = await makeTag('Work');
     const t1 = await insertTx('Lunch', 'work');
-    // manual tag then removal, with no rule yet
+    // manual tag then removal, with no rule yet — a correction, not "keep rules away"
     await addTagToTransaction(t1, tag);
     await removeTagFromTransaction(t1, tag);
 
-    // now a matching rule is created and backfilled
+    const sup = await db.execute({ sql: 'SELECT 1 FROM tag_rule_suppressions WHERE transaction_id = ? AND tag_id = ?', args: [t1, tag] });
+    expect(sup.rows.length).toBe(0);
+
+    // a legit rule created later still applies
     await saveTagRule({ matchType: 'all', pattern: '', tagId: tag, minAmount: null, maxAmount: null, accountId: 'work' });
-    expect(await hasTag(t1, tag)).toBe(false);
+    expect(await hasTag(t1, tag)).toBe(true);
+  });
+
+  it('removing a tag a current rule applies records a suppression', async () => {
+    const tag = await makeTag('Work');
+    const t1 = await insertTx('Lunch', 'work');
+    await insertRule({ match_type: 'all', tag_id: tag, account_id: 'work' });
+    await applyTagRules();
+    await removeTagFromTransaction(t1, tag);
+
+    const sup = await db.execute({ sql: 'SELECT 1 FROM tag_rule_suppressions WHERE transaction_id = ? AND tag_id = ?', args: [t1, tag] });
+    expect(sup.rows.length).toBe(1);
+  });
+
+  it('removing a tag whose rule is scoped to another account records no suppression', async () => {
+    const tag = await makeTag('Work');
+    const t1 = await insertTx('Lunch', 'home');
+    await insertRule({ match_type: 'all', tag_id: tag, account_id: 'work' });
+    await addTagToTransaction(t1, tag); // manual, out of rule scope
+    await removeTagFromTransaction(t1, tag);
+
+    const sup = await db.execute({ sql: 'SELECT 1 FROM tag_rule_suppressions WHERE transaction_id = ? AND tag_id = ?', args: [t1, tag] });
+    expect(sup.rows.length).toBe(0);
   });
 
   it('manual re-add clears the suppression so rules apply again', async () => {
@@ -189,5 +214,15 @@ describe('countTagRuleMatches', () => {
     expect(await countTagRuleMatches('all', '', null)).toBe(3);
     expect(await countTagRuleMatches('name', 'amzn', null)).toBe(2);
     expect(await countTagRuleMatches('regex', '^amzn', 'work')).toBe(1);
+  });
+
+  it('respects min/max amount bounds like tagRuleMatches does', async () => {
+    await insertTx('AMZN', 'work', 5);
+    await insertTx('AMZN', 'work', 50);
+    await insertTx('AMZN', 'work', 500);
+    expect(await countTagRuleMatches('all', '', 'work', 10, null)).toBe(2);
+    expect(await countTagRuleMatches('all', '', 'work', null, 100)).toBe(2);
+    expect(await countTagRuleMatches('name', 'amzn', null, 10, 100)).toBe(1);
+    expect(await countTagRuleMatches('regex', '^amzn', 'work', 501, null)).toBe(0);
   });
 });

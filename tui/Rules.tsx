@@ -132,11 +132,13 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     if (mode !== 'tag-rule-form') return;
     if (newTagType !== 'all' && !newTagPattern.trim()) { setTagMatchCount(0); return; }
     let cancelled = false;
-    void countTagRuleMatches(newTagType, newTagPattern, accountOptions[accountCursor] ?? null)
+    const minAmt = newTagMinAmount.trim() ? parseFloat(newTagMinAmount) : null;
+    const maxAmt = newTagMaxAmount.trim() ? parseFloat(newTagMaxAmount) : null;
+    void countTagRuleMatches(newTagType, newTagPattern, accountOptions[accountCursor] ?? null, minAmt, maxAmt)
       .then((n) => { if (!cancelled) setTagMatchCount(n); })
       .catch(() => { if (!cancelled) setTagMatchCount(0); });
     return () => { cancelled = true; };
-  }, [mode, newTagType, newTagPattern, accountCursor]);
+  }, [mode, newTagType, newTagPattern, accountCursor, newTagMinAmount, newTagMaxAmount]);
 
   // Account picker options: index 0 = "All accounts" (global), then one per account.
   const accountOptions: (string | null)[] = [null, ...accounts.map((a) => a.id)];
@@ -238,6 +240,11 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
       const idx = nameRules.findIndex((r) => r.id === id);
       setSearch('');
       if (idx >= 0) setNameCursor(idx);
+    } else if (section === 'tags' && filteredTagRules[tagRuleCursor]) {
+      const id = filteredTagRules[tagRuleCursor].id;
+      const idx = tagRules.findIndex((r) => r.id === id);
+      setSearch('');
+      if (idx >= 0) setTagRuleCursor(idx);
     } else {
       setSearch('');
     }

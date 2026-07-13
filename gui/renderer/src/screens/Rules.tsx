@@ -651,10 +651,16 @@ function TagRuleFormModal({
   useEffect(() => {
     if (needsPattern && !pattern.trim()) { setMatchCount(0); return; }
     api.rules
-      .countTagRuleMatches(matchType, pattern, accountId)
+      .countTagRuleMatches(
+        matchType,
+        pattern,
+        accountId,
+        minAmount.trim() ? parseFloat(minAmount) : null,
+        maxAmount.trim() ? parseFloat(maxAmount) : null,
+      )
       .then(setMatchCount)
       .catch(() => setMatchCount(0));
-  }, [matchType, pattern, accountId, needsPattern]);
+  }, [matchType, pattern, accountId, needsPattern, minAmount, maxAmount]);
 
   const canSave = tagId !== null && (!needsPattern || pattern.trim().length > 0);
 
