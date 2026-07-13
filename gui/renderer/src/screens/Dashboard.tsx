@@ -440,7 +440,8 @@ export function Dashboard() {
                     <th className={styles.th}>Amount</th>
                     <th className={styles.th}>Δ typical</th>
                     <th className={styles.th}></th>
-                    <th className={styles.th}>Ratio</th>
+                    <th className={styles.th}>× med</th>
+                    <th className={styles.th}>× avg</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -451,7 +452,7 @@ export function Dashboard() {
                     return (
                       <React.Fragment key={bucket}>
                         <tr className={styles.bucketRow}>
-                          <td colSpan={5} className={meta.cls}>{meta.label}</td>
+                          <td colSpan={6} className={meta.cls}>{meta.label}</td>
                         </tr>
                         {rows.map((row) => {
                           const isTypical = bucket === 'typical';
@@ -470,6 +471,7 @@ export function Dashboard() {
                                 {!isTypical && <Bar value={Math.abs(row.medianDelta)} max={maxScoreDelta} color={barColor} />}
                               </td>
                               <td className="num dim">{isTypical ? '' : ratioLabel(row.current, row.median12m)}</td>
+                              <td className="num dim">{isTypical ? '' : ratioLabel(row.current, row.avg12m)}</td>
                             </tr>
                           );
                         })}
@@ -482,7 +484,7 @@ export function Dashboard() {
                     <td className={`num ${scorecard.net <= 0 ? 'pos' : scorecard.net >= scoreTotal * 0.05 ? 'neg' : 'warn'}`}>
                       {fmtDelta(scorecard.net)}
                     </td>
-                    <td colSpan={2} className="dim">vs typical</td>
+                    <td colSpan={3} className="dim">vs typical</td>
                   </tr>
                 </tbody>
               </table>
@@ -567,7 +569,8 @@ export function Dashboard() {
                   <th className={styles.th}>Tier</th>
                   <th className={styles.th}>Amount</th>
                   <th className={styles.th}>Δ typical</th>
-                  <th className={styles.th}>Ratio</th>
+                  <th className={styles.th}>× med</th>
+                  <th className={styles.th}>× avg</th>
                 </tr>
               </thead>
               <tbody>
@@ -583,6 +586,7 @@ export function Dashboard() {
                       <td className="num">{fmt(slice.current)}</td>
                       <td className={`num ${cls}`}>{fmtDelta(slice.medianDelta)}</td>
                       <td className="num dim">{ratioLabel(slice.current, slice.median12m)}</td>
+                      <td className="num dim">{ratioLabel(slice.current, slice.avg12m)}</td>
                     </tr>
                   );
                 })}

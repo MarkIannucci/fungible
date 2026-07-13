@@ -32,8 +32,8 @@ describe('ratioLabel', () => {
     expect(ratioLabel(291, 762)).toBe('0.4x');
   });
 
-  it('labels new spending with no baseline', () => {
-    expect(ratioLabel(100, 0)).toBe('new');
+  it('labels spending with no baseline as n/a', () => {
+    expect(ratioLabel(100, 0)).toBe('n/a');
     expect(ratioLabel(0, 0)).toBe('');
   });
 });

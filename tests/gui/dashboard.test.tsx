@@ -87,12 +87,12 @@ describe('GUI Dashboard', () => {
       return s;
     });
     // Grocery: May $205 vs April-only baseline $100 → over by $105.
-    // Bills & Utilities: $95 with no history → over, flagged "new".
+    // Bills & Utilities: $95 with no history → over, ratio shows "n/a".
     // Dining (+$5) and Shopping ($43.99, no baseline) sit under the
     // significance gate → typical. Nothing is under → no Under section.
     expect(section.textContent).toContain('+$105');
     expect(section.textContent).toContain('+$95');
-    expect(section.textContent).toContain('new');
+    expect(section.textContent).toContain('n/a');
     expect(section.textContent).toContain('Typical');
     expect(section.textContent).not.toContain('Under');
     // Net row: 105 + 5 + 95 + 43.99 ≈ +$249 vs typical.

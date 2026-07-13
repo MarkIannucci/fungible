@@ -65,7 +65,7 @@ describe('get_scorecard tool output', () => {
 
     expect(out).toContain('Scorecard — last 30 days (Jun 4 – Jul 3, 2026)');
     expect(out).toContain('OVER');
-    expect(out).toContain('(new) 🔴'); // no baseline history → new spending
+    expect(out).toContain('(n/a) 🔴'); // no baseline history → no ratio
   });
 
   it('reports no data for an empty window', async () => {
