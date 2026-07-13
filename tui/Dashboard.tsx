@@ -789,6 +789,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                     <Text dimColor>{''.padEnd(18)}</Text>
                     <Text dimColor>{'amount'.padStart(10)}</Text>
                     <Text dimColor>{'Δ typical'.padStart(9)}</Text>
+                    <Text dimColor>{'×med'.padStart(6)}</Text>
+                    <Text dimColor>{'×avg'.padStart(5)}</Text>
                   </Box>
                   {flexDrift && FLEX_TIERS.map(({ key, label }) => {
                     const slice = flexDrift[key];

@@ -569,7 +569,8 @@ export function Dashboard() {
                   <th className={styles.th}>Tier</th>
                   <th className={styles.th}>Amount</th>
                   <th className={styles.th}>Δ typical</th>
-                  <th className={styles.th}>Ratio</th>
+                  <th className={styles.th}>× med</th>
+                  <th className={styles.th}>× avg</th>
                 </tr>
               </thead>
               <tbody>
@@ -585,6 +586,7 @@ export function Dashboard() {
                       <td className="num">{fmt(slice.current)}</td>
                       <td className={`num ${cls}`}>{fmtDelta(slice.medianDelta)}</td>
                       <td className="num dim">{ratioLabel(slice.current, slice.median12m)}</td>
+                      <td className="num dim">{ratioLabel(slice.current, slice.avg12m)}</td>
                     </tr>
                   );
                 })}
