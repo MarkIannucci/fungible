@@ -12,6 +12,35 @@ export type MerchantSummaryRow = {
   pct: number;
 };
 
+// The catch-all category. Unlike a real category, it legitimately mixes income
+// (e.g. an un-ruled paycheck) with spending, so we never net the two together —
+// see summarizeBuckets.
+const UNCATEGORIZED = 'Uncategorized';
+
+/**
+ * Turn per-category {outflow, inflow} buckets into an income/expense/byCategory
+ * summary. Real categories are NETTED (a refund reduces that category's spending);
+ * `Uncategorized` is SPLIT by flow (its outflows are spending, its inflows income)
+ * so a paycheck landing there can't erase the uncategorized spending total.
+ */
+function summarizeBuckets(rows: { category: string; outflow: number; inflow: number }[]): MonthlySummary {
+  let income = 0, expenses = 0;
+  const byCategory: CategorySummary[] = [];
+  for (const r of rows) {
+    const outflow = Number(r.outflow), inflow = Number(r.inflow);
+    if (r.category === UNCATEGORIZED) {
+      if (outflow > 0) { expenses += outflow; byCategory.push({ category: r.category, total: outflow }); }
+      income += inflow;
+    } else {
+      const net = outflow - inflow;
+      if (net > 0) { expenses += net; byCategory.push({ category: r.category, total: net }); }
+      else income += -net;
+    }
+  }
+  byCategory.sort((a, b) => b.total - a.total);
+  return { income, expenses, net: income - expenses, byCategory };
+}
+
 export async function getHiddenCategories(): Promise<Set<string>> {
   const result = await db.execute('SELECT category FROM hidden_categories');
   return new Set((result.rows as unknown as { category: string }[]).map((r) => r.category));
@@ -26,36 +55,32 @@ export async function getMonthlySummary(year: number, month: number): Promise<Mo
 export async function getRangeSummary(from: string, to: string, filter?: Filter): Promise<MonthlySummary> {
   const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
-    sql: `SELECT category, SUM(amount) as total
+    sql: `SELECT category,
+            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as outflow,
+            SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) as inflow
           FROM transactions
           WHERE date >= ? AND date <= ? AND pending = 0 AND ignored = 0${f.clause}
             AND category NOT IN (SELECT category FROM hidden_categories)
-          GROUP BY category ORDER BY total DESC`,
+          GROUP BY category`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { category: string; total: number }[];
-  const income   = rows.filter((r) => r.total < 0).reduce((s, r) => s + Math.abs(r.total), 0);
-  const expenses = rows.filter((r) => r.total > 0).reduce((s, r) => s + r.total, 0);
-  const byCategory = rows.filter((r) => r.total > 0).map((r) => ({ category: r.category, total: Number(r.total) }));
-  return { income, expenses, net: income - expenses, byCategory };
+  return summarizeBuckets(result.rows as unknown as { category: string; outflow: number; inflow: number }[]);
 }
 
 export async function getTagSummary(tagName: string): Promise<MonthlySummary> {
   const result = await db.execute({
-    sql: `SELECT t.category, SUM(t.amount) as total
+    sql: `SELECT t.category,
+            SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) as outflow,
+            SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) as inflow
           FROM transactions t
           JOIN transaction_tags tt ON tt.transaction_id = t.id
           JOIN tags tg ON tg.id = tt.tag_id
           WHERE tg.name = ? AND t.ignored = 0
             AND t.category NOT IN (SELECT category FROM hidden_categories)
-          GROUP BY t.category ORDER BY total DESC`,
+          GROUP BY t.category`,
     args: [tagName],
   });
-  const rows = result.rows as unknown as { category: string; total: number }[];
-  const income     = rows.filter((r) => r.total < 0).reduce((s, r) => s + Math.abs(r.total), 0);
-  const expenses   = rows.filter((r) => r.total > 0).reduce((s, r) => s + r.total, 0);
-  const byCategory = rows.filter((r) => r.total > 0).map((r) => ({ category: r.category, total: Number(r.total) }));
-  return { income, expenses, net: income - expenses, byCategory };
+  return summarizeBuckets(result.rows as unknown as { category: string; outflow: number; inflow: number }[]);
 }
 
 export async function getMerchantSummary(
@@ -187,7 +212,13 @@ export async function getOwnerRows(from: string, to: string, filter?: Filter): P
 
 // ── Drift ──────────────────────────────────────────────────────────────────────
 
-export type DriftSlice    = { current: number; lastPeriodDelta: number; lastYearDelta: number; avg12mDelta: number; avg12m: number };
+export type DriftSlice    = {
+  current: number; lastPeriodDelta: number; lastYearDelta: number;
+  avg12mDelta: number; avg12m: number;
+  // Median of the rolling windows — robust to one-off spikes (a single $7K
+  // medical month shouldn't inflate the "typical" baseline the way a mean does).
+  median12m: number; medianDelta: number;
+};
 export type CategoryDrift = { category: string } & DriftSlice;
 export type FlexDriftData = Record<keyof FlexSummary, DriftSlice>;
 export type AccountDrift  = { id: string; name: string; subtype: string | null } & DriftSlice;
@@ -195,40 +226,47 @@ type Window = { from: string; to: string };
 
 async function queryCategoryTotals(from: string, to: string, filter?: Filter): Promise<Map<string, number>> {
   const f = buildFilterClause(filter, 'transactions');
+  // Per-category spending using the same rule as getRangeSummary (net real
+  // categories, split Uncategorized) so delta mode reconciles with the breakdown.
   const result = await db.execute({
-    sql: `SELECT category, SUM(amount) as total
+    sql: `SELECT category,
+            SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as outflow,
+            SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) as inflow
           FROM transactions
-          WHERE date >= ? AND date <= ?
-            AND amount > 0 AND pending = 0 AND ignored = 0
+          WHERE date >= ? AND date <= ? AND pending = 0 AND ignored = 0
             AND category NOT IN (SELECT category FROM hidden_categories)${f.clause}
-          GROUP BY category HAVING SUM(amount) > 0`,
+          GROUP BY category`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { category: string; total: number }[];
-  return new Map(rows.map((r) => [r.category, Number(r.total)]));
+  const { byCategory } = summarizeBuckets(result.rows as unknown as { category: string; outflow: number; inflow: number }[]);
+  return new Map(byCategory.map((c) => [c.category, c.total]));
 }
 
 async function queryFlexTotals(from: string, to: string, filter?: Filter): Promise<FlexSummary> {
   const f = buildFilterClause(filter, 't');
+  // Per-category outflow/inflow + its flex tier; spending is netted for real
+  // categories and outflow-only for Uncategorized (same rule as summarizeBuckets),
+  // then summed into tiers. Uncategorized has no flexibility, so it lands in 'untagged'.
   const result = await db.execute({
-    sql: `SELECT COALESCE(c.flexibility, 'untagged') as tier, SUM(cat_totals.total) as total
-          FROM (
-            SELECT t.category, SUM(t.amount) as total
-            FROM transactions t
-            WHERE t.date >= ? AND t.date <= ?
-              AND t.pending = 0 AND t.ignored = 0
-              AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}
-            GROUP BY t.category HAVING SUM(t.amount) > 0
-          ) as cat_totals
-          LEFT JOIN categories c ON c.name = cat_totals.category
-          GROUP BY tier`,
+    sql: `SELECT t.category, COALESCE(c.flexibility, 'untagged') as tier,
+            SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END) as outflow,
+            SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END) as inflow
+          FROM transactions t
+          LEFT JOIN categories c ON c.name = t.category
+          WHERE t.date >= ? AND t.date <= ?
+            AND t.pending = 0 AND t.ignored = 0
+            AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}
+          GROUP BY t.category, c.flexibility`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { tier: string; total: number }[];
+  const rows = result.rows as unknown as { category: string; tier: string; outflow: number; inflow: number }[];
   const out: FlexSummary = { fixed: 0, flexible: 0, discretionary: 0, untagged: 0 };
   for (const r of rows) {
-    const t = r.tier as keyof FlexSummary;
-    if (t in out) out[t] = Number(r.total);
+    const outflow = Number(r.outflow), inflow = Number(r.inflow);
+    const spend = r.category === UNCATEGORIZED ? outflow : outflow - inflow;
+    if (spend <= 0) continue;
+    const tier = r.tier as keyof FlexSummary;
+    if (tier in out) out[tier] += spend;
   }
   return out;
 }
@@ -250,17 +288,35 @@ async function queryAccountSpending(from: string, to: string): Promise<Map<strin
 
 function sliceFor(current: number, last: number, year: number, rolling: number[]): DriftSlice {
   const avg12m = rolling.length > 0 ? rolling.reduce((s, v) => s + v, 0) / rolling.length : 0;
-  return { current, lastPeriodDelta: current - last, lastYearDelta: current - year, avg12mDelta: current - avg12m, avg12m };
+  let median12m = 0;
+  if (rolling.length > 0) {
+    const sorted = [...rolling].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    median12m = sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  return {
+    current, lastPeriodDelta: current - last, lastYearDelta: current - year,
+    avg12mDelta: current - avg12m, avg12m,
+    median12m, medianDelta: current - median12m,
+  };
+}
+
+// Rolling windows from before the first transaction contribute phantom zeros
+// that drag baselines down (e.g. 3 months of history averaged over 12 windows).
+async function clampToHistory(windows: Window[]): Promise<Window[]> {
+  const { minDate } = await getDataBounds();
+  return windows.filter((w) => w.to >= minDate);
 }
 
 export async function getCategoryDriftData(
   currentWin: Window, lastPeriodWin: Window, lastYearWin: Window, rolling12: Window[], filter?: Filter,
 ): Promise<CategoryDrift[]> {
+  const rolling = await clampToHistory(rolling12);
   const [cur, last, yr, ...rolls] = await Promise.all([
     queryCategoryTotals(currentWin.from, currentWin.to, filter),
     queryCategoryTotals(lastPeriodWin.from, lastPeriodWin.to, filter),
     queryCategoryTotals(lastYearWin.from, lastYearWin.to, filter),
-    ...rolling12.map((w) => queryCategoryTotals(w.from, w.to, filter)),
+    ...rolling.map((w) => queryCategoryTotals(w.from, w.to, filter)),
   ]);
   return [...cur.entries()]
     .map(([category, currentAmt]) => ({
@@ -273,11 +329,12 @@ export async function getCategoryDriftData(
 export async function getFlexDriftData(
   currentWin: Window, lastPeriodWin: Window, lastYearWin: Window, rolling12: Window[], filter?: Filter,
 ): Promise<FlexDriftData> {
+  const rolling = await clampToHistory(rolling12);
   const [cur, last, yr, ...rolls] = await Promise.all([
     queryFlexTotals(currentWin.from, currentWin.to, filter),
     queryFlexTotals(lastPeriodWin.from, lastPeriodWin.to, filter),
     queryFlexTotals(lastYearWin.from, lastYearWin.to, filter),
-    ...rolling12.map((w) => queryFlexTotals(w.from, w.to, filter)),
+    ...rolling.map((w) => queryFlexTotals(w.from, w.to, filter)),
   ]);
   const tiers: (keyof FlexSummary)[] = ['fixed', 'flexible', 'discretionary', 'untagged'];
   return Object.fromEntries(
@@ -294,11 +351,12 @@ export async function getAccountDriftData(
   );
   const accounts = acctRes.rows as unknown as { id: string; name: string; subtype: string | null }[];
 
+  const rolling = await clampToHistory(rolling12);
   const [cur, last, yr, ...rolls] = await Promise.all([
     queryAccountSpending(currentWin.from, currentWin.to),
     queryAccountSpending(lastPeriodWin.from, lastPeriodWin.to),
     queryAccountSpending(lastYearWin.from, lastYearWin.to),
-    ...rolling12.map((w) => queryAccountSpending(w.from, w.to)),
+    ...rolling.map((w) => queryAccountSpending(w.from, w.to)),
   ]);
 
   return accounts.map((acct) => ({
@@ -326,27 +384,36 @@ export async function getSearchFilteredData(
   const re = buildSearchRe(search);
   const matches = rows.filter((r) => re.test(r.display) || (r.merchant_name ? re.test(r.merchant_name) : false));
 
-  const catMap = new Map<string, { total: number; flex: string }>();
+  // Accumulate per-category outflow/inflow, then apply the hybrid rule: real
+  // categories net (refunds reduce them), Uncategorized splits by flow (outflow =
+  // spending, inflow = income). Mirrors summarizeBuckets / queryFlexTotals.
+  const catMap = new Map<string, { outflow: number; inflow: number; flex: string }>();
   for (const r of matches) {
-    const e = catMap.get(r.category);
-    if (!e) catMap.set(r.category, { total: Number(r.amount), flex: r.flex });
-    else e.total += Number(r.amount);
+    const amt = Number(r.amount);
+    const e = catMap.get(r.category) ?? { outflow: 0, inflow: 0, flex: r.flex };
+    if (amt > 0) e.outflow += amt;
+    else if (amt < 0) e.inflow += -amt;
+    catMap.set(r.category, e);
   }
 
   let income = 0, expenses = 0;
   const byCategory: { category: string; total: number }[] = [];
   const flexData: FlexSummary = { fixed: 0, flexible: 0, discretionary: 0, untagged: 0 };
-
-  for (const [category, { total, flex }] of catMap) {
-    if (total < 0) { income += Math.abs(total); }
-    else if (total > 0) {
-      expenses += total;
-      byCategory.push({ category, total });
-      if (flex === 'fixed') flexData.fixed += total;
-      else if (flex === 'flexible') flexData.flexible += total;
-      else if (flex === 'discretionary') flexData.discretionary += total;
-      else flexData.untagged += total;
+  for (const [category, { outflow, inflow, flex }] of catMap) {
+    let spend: number;
+    if (category === UNCATEGORIZED) { spend = outflow; income += inflow; }
+    else {
+      const net = outflow - inflow;
+      if (net < 0) { income += -net; continue; }
+      spend = net;
     }
+    if (spend <= 0) continue;
+    expenses += spend;
+    byCategory.push({ category, total: spend });
+    if (flex === 'fixed') flexData.fixed += spend;
+    else if (flex === 'flexible') flexData.flexible += spend;
+    else if (flex === 'discretionary') flexData.discretionary += spend;
+    else flexData.untagged += spend;
   }
 
   byCategory.sort((a, b) => b.total - a.total);
@@ -422,20 +489,25 @@ export async function toggleHiddenCategory(category: string, hidden: Set<string>
   }
 }
 
-export type Tag = { id: number; name: string; count: number; inflow: number; outflow: number };
+export type Tag = {
+  id: number; name: string; count: number; inflow: number; outflow: number;
+  earliest: string | null; latest: string | null;
+};
 
 export async function getAllTags(): Promise<Tag[]> {
   const result = await db.execute(`
     SELECT t.id, t.name, COUNT(tt.transaction_id) as count,
       COALESCE(SUM(CASE WHEN tx.amount < 0 THEN ABS(tx.amount) ELSE 0 END), 0) as inflow,
-      COALESCE(SUM(CASE WHEN tx.amount > 0 THEN tx.amount ELSE 0 END), 0) as outflow
+      COALESCE(SUM(CASE WHEN tx.amount > 0 THEN tx.amount ELSE 0 END), 0) as outflow,
+      MIN(tx.date) as earliest, MAX(tx.date) as latest
     FROM tags t
     LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
     LEFT JOIN transactions tx ON tx.id = tt.transaction_id
     GROUP BY t.id ORDER BY t.name
   `);
-  return (result.rows as unknown as { id: number; name: string; count: number; inflow: number; outflow: number }[]).map((r) => ({
+  return (result.rows as unknown as Tag[]).map((r) => ({
     id: Number(r.id), name: r.name, count: Number(r.count), inflow: Number(r.inflow), outflow: Number(r.outflow),
+    earliest: r.earliest, latest: r.latest,
   }));
 }
 
@@ -510,16 +582,18 @@ export async function countSearchMatches(
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 
-export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; last_synced: string | null; apr: number | null };
+export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; last_synced: string | null; apr: number | null; excluded: boolean };
 
 export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
   const result = await db.execute(`
-    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.apr,
+    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.apr, a.excluded,
       (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
     FROM accounts a
     ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END, a.name
   `);
-  return result.rows as unknown as LinkedAccount[];
+  return (result.rows as unknown as (Omit<LinkedAccount, 'excluded'> & { excluded: number })[]).map((r) => ({
+    ...r, excluded: toBool(r.excluded),
+  }));
 }
 
 export type CsvAccount = { id: string; name: string; mask: string | null };
@@ -529,7 +603,10 @@ export async function getCsvAccounts(): Promise<CsvAccount[]> {
   return result.rows as unknown as CsvAccount[];
 }
 
-export type AccountBalance    = { name: string; nickname: string | null; type: string; subtype: string | null; balance: number };
+export type AccountBalance    = { name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };
+
+// SQLite has no boolean type — integer 0/1 columns are coerced here.
+const toBool = (v: unknown): boolean => Number(v) === 1;
 export type HistoryRow        = { date: string; assets: number; liabilities: number; net: number };
 export type NetWorthPeriod    = { period: string; assets: number; liabilities: number; net_worth: number };
 export type NetWorthGranularity = 'day' | 'week' | 'month' | 'quarter' | 'year';
@@ -568,7 +645,7 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
       END) AS net_worth
     FROM period_last pl
     JOIN accounts a ON a.id = pl.account_id
-    WHERE pl.rn = 1
+    WHERE pl.rn = 1 AND a.excluded = 0
     GROUP BY pl.period
     ORDER BY pl.period ASC
   `);
@@ -583,7 +660,7 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
 export async function getAccountsWithBalances(): Promise<{ accounts: AccountBalance[]; history: HistoryRow[] }> {
   const [acctResult, histResult] = await Promise.all([
     db.execute(`
-      SELECT a.name, a.nickname, a.type, a.subtype, bh.balance
+      SELECT a.name, a.nickname, a.type, a.subtype, a.excluded, bh.balance
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)
@@ -595,10 +672,13 @@ export async function getAccountsWithBalances(): Promise<{ accounts: AccountBala
         SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END) as liabilities
       FROM balance_history bh
       JOIN accounts a ON a.id = bh.account_id
+      WHERE a.excluded = 0
       GROUP BY bh.date ORDER BY bh.date
     `),
   ]);
-  const accounts = acctResult.rows as unknown as AccountBalance[];
+  const accounts = (acctResult.rows as unknown as (Omit<AccountBalance, 'excluded'> & { excluded: number })[]).map((r) => ({
+    ...r, excluded: toBool(r.excluded),
+  }));
   const history = (histResult.rows as unknown as { date: string; assets: number; liabilities: number }[]).map((r) => ({
     ...r, assets: Number(r.assets), liabilities: Number(r.liabilities), net: Number(r.assets) - Number(r.liabilities),
   }));

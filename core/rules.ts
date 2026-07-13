@@ -28,8 +28,9 @@ export async function getUncategorizedCount(): Promise<number> {
   return Number((result.rows[0] as unknown as { c: number }).c);
 }
 
-export async function deleteCategoryRule(id: number): Promise<void> {
+export async function deleteCategoryRule(id: number): Promise<number> {
   await db.execute({ sql: 'DELETE FROM category_rules WHERE id = ?', args: [id] });
+  return applyAll();
 }
 
 export async function deleteNameRule(id: number): Promise<void> {

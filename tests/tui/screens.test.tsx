@@ -123,6 +123,35 @@ describe('Dashboard', () => {
     await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
   });
 
+  it('SPENDING BY CATEGORY lines sum to the displayed Expenses total', async () => {
+    // Exercise the two cases that used to break reconciliation: a refund inside a
+    // real category (must NET to 200, not show 300) and an income+spend mix inside
+    // Uncategorized (must SPLIT — the $500 spend shows, the $2000 inflow is income).
+    await db.batch([
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel',        'test-credit',   '2026-05-04', 'United',        300.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-travel-refund', 'test-credit',   '2026-05-05', 'United Refund', -100.00, 'Travel', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-uncat-spend',   'test-credit',   '2026-05-07', 'Mystery Shop',  500.00, 'Uncategorized', 0, 0)`,
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-uncat-income',  'test-checking', '2026-05-02', 'Side Gig',     -2000.00, 'Uncategorized', 0, 0)`,
+    ], 'write');
+
+    const r = dash();
+    await waitFor(() => expect(frame(r)).toContain('Uncategorized'));
+
+    const [statRegion, catRegion] = frame(r).split('SPENDING BY CATEGORY');
+    const money = (s: string) =>
+      [...s.matchAll(/[-+]?\$[\d,]+\.\d{2}/g)].map((m) => parseFloat(m[0].replace(/[$,+]/g, '')));
+    // Stat cards render in order Income · Expenses · Net, so Expenses is the 2nd $ token.
+    const expenses = money(statRegion)[1];
+    const categoryTotal = money(catRegion).reduce((sum, n) => sum + n, 0);
+
+    expect(expenses).toBeCloseTo(1088.99, 2);          // 388.99 seeded + 200 net Travel + 500 uncat
+    expect(categoryTotal).toBeCloseTo(expenses, 2);    // detailed lines reconcile to the total
+  });
+
   it('Tab cycles to flex view', async () => {
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('Income'));
@@ -250,11 +279,11 @@ describe('Dashboard', () => {
     }, 2000);
   });
 
-  it('d key toggles delta mode label', async () => {
+  it('s key toggles scorecard mode label', async () => {
     const r = dash();
     await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('d');
-    await waitFor(() => expect(frame(r)).toContain('delta'));
+    r.stdin.write('s');
+    await waitFor(() => expect(frame(r)).toContain('scorecard'));
   });
 
   it('pressing a nav number calls onNavigate', async () => {
@@ -1154,6 +1183,25 @@ describe('NetWorth', () => {
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
+
+  it('shows an excluded account in a carved-out section, out of Total assets', async () => {
+    await db.execute("INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('acct-529', 'College 529', 'investment', '529', 1)");
+    await db.execute("INSERT INTO balance_history (account_id, balance, date) VALUES ('acct-529', 12345.00, '2026-05-20')");
+    const r = networth();
+    await waitFor(() => expect(frame(r)).toContain('Excluded (not in net worth)'));
+    const f = frame(r);
+    expect(f).toContain('College 529');
+    expect(f).toContain('Excluded total');
+    // The 529 is an investment asset; were it counted, Total assets would read
+    // $17,345.00 (5,000 + 12,345). It must stay out of the headline.
+    expect(f).not.toContain('17,345');
+  });
+
+  it('omits the excluded section when no account is excluded', async () => {
+    const r = networth();
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    expect(frame(r)).not.toContain('Excluded (not in net worth)');
+  });
 });
 
 // ── Tags ──────────────────────────────────────────────────────────────────────
@@ -1330,6 +1378,61 @@ describe('Rules', () => {
     });
   });
 
+  it('Esc from search preserves cursor on the highlighted rule (not the unfiltered top)', async () => {
+    // Regression: pressing Esc in search used to reset cursor to its pre-search
+    // numeric index, so the highlighted (filtered) rule could differ from what
+    // 'x' then deleted. Now the cursor re-anchors to that rule by id.
+    await db.execute('DELETE FROM category_rules');
+    await db.batch([
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Aaa Coffee', 'Dining')",
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Bbb Diner',  'Dining')",
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Zzz Lounge', 'Dining')",
+    ], 'write');
+
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Aaa Coffee'));
+    r.stdin.write('/');
+    await waitFor(() => expect(frame(r)).toContain('Esc clear')); // search bar visible
+    for (const ch of 'Zzz') r.stdin.write(ch);
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Zzz Lounge');
+      expect(f).not.toContain('Aaa Coffee'); // filter is active
+    });
+    r.stdin.write('\x1b');         // Esc clears search
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Aaa Coffee'); // full list back
+      // ▶ cursor marker should sit on the Zzz row, not the top.
+      const zzzLine = f.split('\n').find((l) => l.includes('Zzz Lounge'))!;
+      expect(zzzLine.includes('▶')).toBe(true);
+    });
+  });
+
+  it('[x] deletes the rule and surfaces the recategorized count in the status', async () => {
+    // Self-contained: clear seeded transactions/rules so the count pins to exactly 1.
+    // Mirrors the GUI delete test (tests/gui/rules.test.tsx) and locks the singular
+    // pluralization of the status message ("1 transaction", not "1 transactions").
+    await db.execute('DELETE FROM category_rules');
+    await db.execute('DELETE FROM transactions');
+    await db.execute(
+      `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+       VALUES ('tx-tj', 'test-credit', '2026-05-15', 'Trader Joes', 50.00, 'Grocery', 0, 0)`,
+    );
+    await db.execute(
+      "INSERT INTO category_rules (priority, match_type, pattern, category) VALUES (10, 'name', 'Trader Joes', 'Grocery')",
+    );
+
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('x');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toMatch(/Rule deleted · recategorized 1 transaction\b/); // \b rejects trailing 's'
+      expect(f).not.toContain('Trader Joes'); // rule gone from the list
+    });
+  });
+
   it('[a] in Name Rules section opens new name rule form', async () => {
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Category Rules'));
@@ -1490,6 +1593,28 @@ describe('Accounts', () => {
       expect(f).toContain('Vacation Fund');
       expect(f).not.toContain('Test Checking');
     });
+  });
+
+  it('toggling "exclude from net worth" refreshes the list with the excl marker', async () => {
+    const real = accountsApi.updateAccountExcluded;
+    vi.spyOn(accountsApi, 'updateAccountExcluded').mockImplementation(delayWrite(real));
+
+    const r = accounts();
+    await waitFor(() => expect(frame(r)).toContain('Test Checking'));
+    r.stdin.write('\r');                            // open unified edit panel (cursor on Nickname)
+    await waitFor(() => expect(frame(r)).toContain('Edit: Test Checking'));
+    expect(frame(r)).toContain('Included');         // Net-worth toggle defaults to Included
+    // Fields for a depository with no household members: Nickname, Type, Subtype, Net worth.
+    r.stdin.write('\x1b[B');                         // ↓ Nickname → Type
+    r.stdin.write('\x1b[B');                         // ↓ Type → Subtype
+    r.stdin.write('\x1b[B');                         // ↓ Subtype → Net worth
+    // Let the field-change commit before toggling: the toggle reads editField from
+    // its closure, which is stale if the right-arrow runs in the same input batch.
+    await new Promise((res) => setTimeout(res, 60));
+    r.stdin.write('\x1b[C');                         // → toggle to Excluded
+    await waitFor(() => expect(frame(r)).toContain('Excluded'));
+    r.stdin.write('\r');                             // save
+    await waitFor(() => expect(frame(r)).toContain('excl')); // ⊘ excl row marker after reload
   });
 
   it('deleting an account refreshes the list to drop it', async () => {

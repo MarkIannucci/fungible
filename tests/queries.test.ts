@@ -15,6 +15,9 @@ import {
   getOwnerRows,
   hasAccounts,
   getTransactions,
+  getNetWorthHistory,
+  getAccountsWithBalances,
+  getLinkedAccounts,
 } from '../core/queries.js';
 
 let txId = 0;
@@ -120,23 +123,35 @@ describe('getRangeSummary', () => {
     expect(s.expenses).toBeCloseTo(100);
   });
 
-  it('nets refunds within a category before classifying as income/expense', async () => {
+  it('nets refunds within a real category before classifying as income/expense', async () => {
     await insertTx({ amount: 1000, category: 'Travel' });
     await insertTx({ amount: -800, category: 'Travel' });
     const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.expenses).toBeCloseTo(200);
     expect(s.income).toBe(0);
-    expect(s.byCategory).toHaveLength(1);
-    expect(s.byCategory[0]).toEqual({ category: 'Travel', total: 200 });
+    expect(s.byCategory).toEqual([{ category: 'Travel', total: 200 }]);
   });
 
-  it('categories with net negative total count as income', async () => {
+  it('real categories with a net negative total count as income (not spending)', async () => {
     await insertTx({ amount: 100, category: 'Rewards' });
     await insertTx({ amount: -200, category: 'Rewards' });
     const s = await getRangeSummary('2025-01-01', '2025-01-31');
     expect(s.income).toBeCloseTo(100);
     expect(s.expenses).toBe(0);
     expect(s.byCategory).toHaveLength(0);
+  });
+
+  it('does NOT net Uncategorized: splits its outflows (spending) from inflows (income)', async () => {
+    // Regression: a paycheck landing in the Uncategorized catch-all used to net the
+    // bucket negative, hiding all uncategorized spending from byCategory. Uncategorized
+    // is split by flow; the spending row stays labeled "Uncategorized".
+    await insertTx({ amount: 1850, category: 'Uncategorized', name: 'Rent Payment' });
+    await insertTx({ amount: 63.8, category: 'Uncategorized', name: 'Whole Foods Market' });
+    await insertTx({ amount: -4200, category: 'Uncategorized', name: 'Direct Deposit' });
+    const s = await getRangeSummary('2025-01-01', '2025-01-31');
+    expect(s.expenses).toBeCloseTo(1913.8);
+    expect(s.income).toBeCloseTo(4200);
+    expect(s.byCategory).toEqual([{ category: 'Uncategorized', total: 1913.8 }]);
   });
 
   it('aggregates multiple categories correctly', async () => {
@@ -190,7 +205,7 @@ describe('getFlexSummary', () => {
     expect(s.untagged).toBeCloseTo(125);
   });
 
-  it('nets out refunds before bucketing — no tier inflation (regression)', async () => {
+  it('nets out refunds in a real category before bucketing — no tier inflation (regression)', async () => {
     await insertCat('Travel', 'discretionary');
     await insertTx({ amount: 10000, category: 'Travel' });
     await insertTx({ amount: -8000, category: 'Travel' });
@@ -200,12 +215,21 @@ describe('getFlexSummary', () => {
     expect(s.flexible).toBe(0);
   });
 
-  it('excludes categories where net is negative (refund-heavy categories)', async () => {
+  it('excludes a real category whose net is negative (refund-heavy)', async () => {
     await insertCat('Travel', 'discretionary');
     await insertTx({ amount: 100, category: 'Travel' });
     await insertTx({ amount: -500, category: 'Travel' });
     const s = await getFlexSummary('2025-01-01', '2025-01-31');
     expect(s.discretionary).toBe(0);
+  });
+
+  it('buckets Uncategorized outflow into untagged even when it holds a larger inflow', async () => {
+    // Uncategorized has no flexibility tag → untagged tier; its spending must show
+    // even though the bucket nets negative from an inflow (e.g. a paycheck).
+    await insertTx({ amount: 200, category: 'Uncategorized' });
+    await insertTx({ amount: -5000, category: 'Uncategorized' });
+    const s = await getFlexSummary('2025-01-01', '2025-01-31');
+    expect(s.untagged).toBeCloseTo(200);
   });
 
   it('fixed + flexible + discretionary + untagged == total expenses', async () => {
@@ -514,5 +538,39 @@ describe('getOwnerRows', () => {
     await insertTx({ accountId: 'a1', amount: 999, date: '2024-12-31' });  // out of range, excluded
     const rows = await getOwnerRows(...RANGE);
     expect(rows).toEqual([{ owner: 'Mark', spending: 100 }]);
+  });
+});
+
+describe('excluded accounts', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM balance_history');
+    // One counted brokerage, one excluded 529 — same balance.
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('brk', 'Brokerage', 'investment', 'brokerage', 0)", args: [] });
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES ('529', '529 Plan', 'investment', '529', 1)", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('brk', 100000, '2025-01-31')", args: [] });
+    await db.execute({ sql: "INSERT INTO balance_history (account_id, balance, date) VALUES ('529', 60000, '2025-01-31')", args: [] });
+  });
+
+  it('drops excluded accounts from getNetWorthHistory totals', async () => {
+    const hist = await getNetWorthHistory('month');
+    expect(hist).toHaveLength(1);
+    expect(hist[0].assets).toBe(100000);     // 529 omitted
+    expect(hist[0].net_worth).toBe(100000);
+  });
+
+  it('keeps excluded accounts in getAccountsWithBalances (flagged) but out of the history series', async () => {
+    const { accounts, history } = await getAccountsWithBalances();
+    expect(accounts.map((a) => a.name).sort()).toEqual(['529 Plan', 'Brokerage']);
+    expect(accounts.find((a) => a.name === '529 Plan')!.excluded).toBe(true);
+    expect(accounts.find((a) => a.name === 'Brokerage')!.excluded).toBe(false);
+    // History time series counts only the non-excluded account.
+    expect(history.at(-1)!.assets).toBe(100000);
+  });
+
+  it('returns the excluded flag from getLinkedAccounts', async () => {
+    const linked = await getLinkedAccounts();
+    expect(linked.find((a) => a.id === '529')!.excluded).toBe(true);
+    expect(linked.find((a) => a.id === 'brk')!.excluded).toBe(false);
   });
 });

@@ -11,16 +11,18 @@ import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { notifyChange } from './refresh.js';
 import { DATA_DIR } from './paths.js';
-import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, type NetWorthGranularity } from './queries.js';
+import { getRangeSummary, getMonthlySummary, getTagSummary, getCategoryDriftData, getMerchantSummary, getNetWorthHistory, getLinkedAccounts, type NetWorthGranularity, type CategoryDrift } from './queries.js';
 import { solveTVM } from './calculator.js';
-import { getDriftWindows } from './dateUtils.js';
+import { getDriftWindows, getPeriodStart, formatPeriodLabel } from './dateUtils.js';
+import { bucketDrift, ratioLabel } from './scorecard.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
 import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTopic } from './finance-guide.js';
 import { applyCategoriesToAll } from './categorize.js';
+import { deleteCategoryRule } from './rules.js';
 import { rebuildDisplayNames } from './rename.js';
 import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored } from './transactions.js';
 import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
-import { fmt, fmtSigned } from './fmt.js';
+import { fmt, fmtSigned, fmtSpan } from './fmt.js';
 import { syncAll } from './sync.js';
 import { db } from './db.js';
 import { validateRegex } from './rule-utils.js';
@@ -111,14 +113,15 @@ export const TOOL_DEFS: ToolDef[] = [
     },
   },
   {
-    name: 'get_drift',
-    description: 'Show spending deltas for each category: current amount vs prior period, same period last year, and 12-month rolling average. Useful for spotting categories where spending is quietly creeping up. Defaults to the current month-to-date.',
+    name: 'get_scorecard',
+    description: 'Spending scorecard: which categories are significantly over or under the typical month (12-month median baseline), with per-category deltas and a net verdict. Use for "how am I doing lately / where did my spending go wrong". Defaults to the trailing 30 days, which is fully populated even early in a calendar month.',
     parameters: {
       type: 'object',
       properties: {
+        window: { type: 'string', enum: ['last30', 'month'], description: "Comparison window: 'last30' = trailing 30 days ending on the given date (default), 'month' = calendar month-to-date" },
         year:  { type: 'integer', description: '4-digit year (default: current year)' },
         month: { type: 'integer', description: 'Month 1–12 (default: current month)', minimum: 1, maximum: 12 },
-        day:   { type: 'integer', description: 'Day of month to compare through — use for partial-month MTD (default: today)', minimum: 1, maximum: 31 },
+        day:   { type: 'integer', description: 'Day the window ends on (last30) or compares through (month) — default: today', minimum: 1, maximum: 31 },
       },
     },
   },
@@ -522,19 +525,17 @@ async function executeToolImpl(
     }
 
     case 'list_accounts': {
-      const result = await db.execute(
-        'SELECT COALESCE(nickname, name) as name, type, subtype, mask, institution_name FROM accounts'
-      );
-      const rows = result.rows as unknown as {
-        name: string; type: string; subtype: string; mask: string | null; institution_name: string | null;
-      }[];
+      const rows = await getLinkedAccounts();
       if (!rows.length) return 'No accounts connected.';
-      return rows.map((a) => `${a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`).join('\n');
+      return rows.map((a) =>
+        `${a.nickname ?? a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`
+        + (a.excluded ? ' · excluded from net worth' : '')
+      ).join('\n');
     }
 
     case 'get_balances': {
       const b = await getBalances();
-      if (!b.accounts.length) return 'No balance data available. Sync accounts first.';
+      if (!b.accounts.length && !b.excludedAccounts.length) return 'No balance data available. Sync accounts first.';
       return [
         'Assets:',
         ...b.accounts.filter((a) => a.isAsset).map((a) => `  ${a.name}: ${fmt(a.balance)} (${a.subtype ?? a.type})`),
@@ -545,6 +546,10 @@ async function executeToolImpl(
         `Net worth: ${b.netWorth >= 0 ? '' : '-'}${fmt(b.netWorth)}`,
         `Cash (checking/savings): ${fmt(b.cash)}`,
         `Liquid (incl. brokerage): ${fmt(b.liquid)}`,
+        ...(b.excludedAccounts.length ? [
+          'Excluded (not in net worth):',
+          ...b.excludedAccounts.map((a) => `  ${a.name}: ${fmt(a.balance)} (${a.subtype ?? a.type})`),
+        ] : []),
       ].join('\n');
     }
 
@@ -566,39 +571,51 @@ async function executeToolImpl(
       ].join('\n');
     }
 
-    case 'get_drift': {
+    case 'get_scorecard': {
       const today = new Date();
       const year  = input['year']  ? num('year')  : today.getFullYear();
       const month = input['month'] ? num('month') : today.getMonth() + 1;
       const day   = input['day']   ? num('day')   : today.getDate();
-      const anchor = new Date(year, month - 1, 1, 12);
+      const windowKind = input['window'] === 'month' ? 'month' as const : 'last30' as const;
       const asOf   = new Date(year, month - 1, day, 12);
-      const windows = getDriftWindows('month', anchor, asOf);
-      if (!windows) return 'Drift is not available for this range.';
+      const anchor = windowKind === 'month' ? new Date(year, month - 1, 1, 12) : getPeriodStart('last30', asOf);
+      const windows = getDriftWindows(windowKind, anchor, asOf);
+      if (!windows) return 'Scorecard is not available for this range.';
       const { current, lastPeriod, lastYear, rolling12 } = windows;
       const rows = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
-      if (!rows.length) return `No expense data for ${year}-${String(month).padStart(2, '0')} through day ${day}.`;
-      const fmtAmt   = (n: number) => fmt(n, 0);
+      const label = windowKind === 'last30'
+        ? `last 30 days (${formatPeriodLabel('last30', anchor)})`
+        : `${year}-${String(month).padStart(2, '0')} through day ${day}`;
+      if (!rows.length) return `No expense data for ${label}.`;
+
+      const { over, typical, under, net } = bucketDrift(rows);
+      const name = (c: string) => c.length > 24 ? c.slice(0, 23) + '…' : c.padEnd(24);
       const signedFmt = (n: number) => n === 0 ? '—' : fmtSigned(n, 0);
-      const heat = (current: number, avg: number) => {
-        if (avg === 0) return current > 0 ? ' 🔴' : '';
-        const r = current / avg;
-        if (r <= 1.10) return ' 🟢';
-        if (r <= 1.30) return ' 🟡';
-        return ' 🔴';
+      const line = (r: CategoryDrift, mark: string) => {
+        const ratio = ratioLabel(r.current, r.median12m);
+        return `  ${name(r.category)} ${fmt(r.current, 0).padStart(9)}  ${signedFmt(r.medianDelta).padStart(8)} vs typical` +
+          (ratio ? `  (${ratio})` : '') + ` ${mark}`;
       };
-      const header = `Drift — ${year}-${String(month).padStart(2, '0')} through day ${day}\n` +
-        `${'Category'.padEnd(26)} ${'Current'.padStart(10)} ${'vs Last'.padStart(10)} ${'vs Yr'.padStart(10)} ${'vs 12m'.padStart(10)}`;
-      const divider = '─'.repeat(header.split('\n')[1].length);
-      const lines = rows.map((r) =>
-        `${r.category.length > 26 ? r.category.slice(0, 25) + '…' : r.category.padEnd(26)} ` +
-        `${fmtAmt(r.current).padStart(10)} ` +
-        `${signedFmt(r.lastPeriodDelta).padStart(10)} ` +
-        `${signedFmt(r.lastYearDelta).padStart(10)} ` +
-        `${signedFmt(r.avg12mDelta).padStart(10)}` +
-        heat(r.current, r.avg12m)
-      );
-      return [header.split('\n')[0], divider, header.split('\n')[1], divider, ...lines].join('\n');
+      const overMark = (r: CategoryDrift) =>
+        r.median12m === 0 || r.current / r.median12m >= 1.3 ? '🔴' : '🟡';
+
+      const out: string[] = [`Scorecard — ${label} · vs typical month (12-month median)`];
+      if (over.length) {
+        out.push('', 'OVER');
+        for (const r of over) out.push(line(r, overMark(r)));
+      }
+      if (under.length) {
+        out.push('', 'UNDER');
+        for (const r of under) out.push(line(r, '🟢'));
+      }
+      if (typical.length) {
+        out.push('', 'TYPICAL (within normal range)');
+        for (const r of typical) {
+          out.push(`  ${name(r.category)} ${fmt(r.current, 0).padStart(9)}  ${signedFmt(r.medianDelta).padStart(8)}`);
+        }
+      }
+      out.push('', `NET: ${signedFmt(net)} vs typical month`);
+      return out.join('\n');
     }
 
     case 'get_trends': {
@@ -666,13 +683,16 @@ async function executeToolImpl(
 
     case 'list_tags': {
       const result = await db.execute(`
-        SELECT t.name, COUNT(tt.transaction_id) as count
-        FROM tags t LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
+        SELECT t.name, COUNT(tt.transaction_id) as count,
+          MIN(tx.date) as earliest, MAX(tx.date) as latest
+        FROM tags t
+        LEFT JOIN transaction_tags tt ON tt.tag_id = t.id
+        LEFT JOIN transactions tx ON tx.id = tt.transaction_id
         GROUP BY t.id ORDER BY t.name
       `);
-      const rows = result.rows as unknown as { name: string; count: number }[];
+      const rows = result.rows as unknown as { name: string; count: number; earliest: string | null; latest: string | null }[];
       return rows.length
-        ? rows.map((r) => `${r.name.padEnd(30)} ${r.count} txn${r.count !== 1 ? 's' : ''}`).join('\n')
+        ? rows.map((r) => `${r.name.padEnd(30)} ${String(r.count).padStart(4)} txn${r.count !== 1 ? 's' : ' '}  ${fmtSpan(r.earliest, r.latest)}`).join('\n')
         : 'No tags defined.';
     }
 
@@ -795,8 +815,11 @@ async function executeToolImpl(
       const ruleResult = await db.execute({ sql: 'SELECT pattern, category FROM category_rules WHERE id = ?', args: [num('id')] });
       const rule = ruleResult.rows[0] as unknown as { pattern: string; category: string } | undefined;
       if (!rule) return `No rule with id ${num('id')}.`;
-      await db.execute({ sql: 'DELETE FROM category_rules WHERE id = ?', args: [num('id')] });
-      return `Deleted rule: "${rule.pattern}" → ${rule.category}`;
+      // deleteCategoryRule deletes the row AND re-evaluates affected transactions
+      // (reverting orphans to Uncategorized / a lower-priority rule), matching the
+      // TUI/GUI. Raw DELETE here would leave stale categorizations behind.
+      const count = await deleteCategoryRule(num('id'));
+      return `Deleted rule: "${rule.pattern}" → ${rule.category}\nRecategorized ${count} transactions.`;
     }
 
     case 'add_name_rule': {
