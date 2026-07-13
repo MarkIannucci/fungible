@@ -20,9 +20,9 @@ export function isSignificantDelta(delta: number, baseline: number): boolean {
   return Math.abs(delta) >= Math.max(SIGNIFICANCE_FLOOR, SIGNIFICANCE_SHARE * baseline);
 }
 
-/** "4.2x" multiplier vs baseline; "new" when there is no baseline to compare. */
+/** "4.2x" multiplier vs baseline; "n/a" when there is no baseline to compare. */
 export function ratioLabel(current: number, baseline: number): string {
-  if (baseline <= 0) return current > 0 ? 'new' : '';
+  if (baseline <= 0) return current > 0 ? 'n/a' : '';
   return `${(current / baseline).toFixed(1)}x`;
 }
 

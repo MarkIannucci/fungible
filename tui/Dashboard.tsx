@@ -255,8 +255,8 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
   // Drift detail: 3 delta cols × 9 chars + 4 gaps of 2 = 27+8=35 for cols; plus amount(10)+gaps
   // total fixed = 2(cursor) + 10(amt) + 4(gaps to amt) + 27(3×9) + 4(gaps between deltas) = 47
   const driftCatNameW = Math.max(12, inner - 47);
-  // Scorecard: [sel=2] [name] [amount=10] [delta=9] [bar] [ratio=5] with 5 gaps of 2 = 36 fixed
-  const scoreFlex  = Math.max(18, inner - 36);
+  // Scorecard: [sel=2] [name] [amount=10] [delta=9] [bar] [×med=5] [×avg=5] with 6 gaps of 2 = 43 fixed
+  const scoreFlex  = Math.max(18, inner - 43);
   const scoreNameW = Math.max(12, Math.min(20, Math.floor(scoreFlex * 0.55)));
   const scoreBarW  = Math.max(6,  Math.min(14, scoreFlex - scoreNameW));
   // Normal flex: [label=18] gap [amount=10] gap [pct=4] gap [bar] — 3 gaps of 2
@@ -669,6 +669,9 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                           <Text dimColor>{''.padEnd(scoreNameW)}</Text>
                           <Text dimColor>{'amount'.padStart(10)}</Text>
                           <Text dimColor>{'Δ typical'.padStart(9)}</Text>
+                          <Text dimColor>{''.padEnd(scoreBarW)}</Text>
+                          <Text dimColor>{'×med'.padStart(5)}</Text>
+                          <Text dimColor>{'×avg'.padStart(5)}</Text>
                         </Box>
                       </Box>
                       {scoreBuckets.map((bucket) => (
@@ -699,6 +702,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                                   <>
                                     <Text color={color}>{bar(Math.abs(row.medianDelta), maxScoreDelta, scoreBarW).padEnd(scoreBarW)}</Text>
                                     <Text dimColor>{ratioLabel(row.current, row.median12m).padStart(5)}</Text>
+                                    <Text dimColor>{ratioLabel(row.current, row.avg12m).padStart(5)}</Text>
                                   </>
                                 )}
                               </SelectableRow>
@@ -796,6 +800,7 @@ export function Dashboard({ onNavigate, isActive, initialFilter, showHints }: { 
                         <Text color={C_NEUTRAL}>{fmt(slice.current).padStart(10)}</Text>
                         <Text color={color}>{fmtDelta(slice.medianDelta).padStart(9)}</Text>
                         <Text dimColor>{ratioLabel(slice.current, slice.median12m).padStart(6)}</Text>
+                        <Text dimColor>{ratioLabel(slice.current, slice.avg12m).padStart(5)}</Text>
                       </Box>
                     );
                   })}
