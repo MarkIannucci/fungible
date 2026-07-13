@@ -170,12 +170,18 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     const category = categories[catCursor];
     const minAmt = newMinAmount.trim() ? parseFloat(newMinAmount) : null;
     const maxAmt = newMaxAmount.trim() ? parseFloat(newMaxAmount) : null;
-    const count = await saveCategoryRule({
-      pattern: newPattern, matchType: newType, category,
-      minAmount: minAmt, maxAmount: maxAmt,
-      accountId: accountOptions[accountCursor] ?? null,
-      editingId: editingRuleId,
-    });
+    let count: number;
+    try {
+      count = await saveCategoryRule({
+        pattern: newPattern, matchType: newType, category,
+        minAmount: minAmt, maxAmount: maxAmt,
+        accountId: accountOptions[accountCursor] ?? null,
+        editingId: editingRuleId,
+      });
+    } catch (e) {
+      showStatus(e instanceof Error ? e.message : 'Failed to save rule', 4000);
+      return;
+    }
     setEditingRuleId(null);
     showStatus(`Rule saved · recategorized ${count} transaction${count === 1 ? '' : 's'}`, 3000);
     setNewPattern('');
@@ -186,12 +192,17 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
   async function handleSaveNameRule() {
     const minAmt = newNameMinAmount.trim() ? parseFloat(newNameMinAmount) : null;
     const maxAmt = newNameMaxAmount.trim() ? parseFloat(newNameMaxAmount) : null;
-    await saveNameRule({
-      pattern: newNamePattern, matchType: newNameType, replacement: newReplacement,
-      minAmount: minAmt, maxAmount: maxAmt,
-      accountId: accountOptions[accountCursor] ?? null,
-      editingId: editingNameRuleId,
-    });
+    try {
+      await saveNameRule({
+        pattern: newNamePattern, matchType: newNameType, replacement: newReplacement,
+        minAmount: minAmt, maxAmount: maxAmt,
+        accountId: accountOptions[accountCursor] ?? null,
+        editingId: editingNameRuleId,
+      });
+    } catch (e) {
+      showStatus(e instanceof Error ? e.message : 'Failed to save name rule', 4000);
+      return;
+    }
     setEditingNameRuleId(null);
     showStatus('Name rule saved', 3000);
     setNewNamePattern('');
@@ -207,12 +218,18 @@ export function Rules({ onNavigate, isActive, showHints }: { onNavigate: (s: Scr
     if (!tag) { showStatus('Create a tag first'); return; }
     const minAmt = newTagMinAmount.trim() ? parseFloat(newTagMinAmount) : null;
     const maxAmt = newTagMaxAmount.trim() ? parseFloat(newTagMaxAmount) : null;
-    const count = await saveTagRule({
-      matchType: newTagType, pattern: newTagPattern, tagId: tag.id,
-      minAmount: minAmt, maxAmount: maxAmt,
-      accountId: accountOptions[accountCursor] ?? null,
-      editingId: editingTagRuleId,
-    });
+    let count: number;
+    try {
+      count = await saveTagRule({
+        matchType: newTagType, pattern: newTagPattern, tagId: tag.id,
+        minAmount: minAmt, maxAmount: maxAmt,
+        accountId: accountOptions[accountCursor] ?? null,
+        editingId: editingTagRuleId,
+      });
+    } catch (e) {
+      showStatus(e instanceof Error ? e.message : 'Failed to save tag rule', 4000);
+      return;
+    }
     setEditingTagRuleId(null);
     showStatus(`Tag rule saved · tagged ${count} transaction${count === 1 ? '' : 's'}`, 3000);
     setNewTagPattern('');

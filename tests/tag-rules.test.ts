@@ -226,3 +226,25 @@ describe('countTagRuleMatches', () => {
     expect(await countTagRuleMatches('regex', '^amzn', 'work', 501, null)).toBe(0);
   });
 });
+
+// Regression: an invalid regex must be rejected at save time. saveTagRule used
+// to insert the row and only then hit the RegExp constructor inside
+// applyTagRules — persisting a rule that made every later rule application
+// (sync, import, tag removal's suppression check) throw.
+describe('saveTagRule regex validation', () => {
+  it('rejects an invalid regex without persisting the rule', async () => {
+    const tagId = await makeTag('trip');
+    await expect(
+      saveTagRule({ matchType: 'regex', pattern: '(', tagId, minAmount: null, maxAmount: null }),
+    ).rejects.toThrow(/Invalid regex/);
+    const r = await db.execute('SELECT COUNT(*) as c FROM tag_rules');
+    expect(Number((r.rows[0] as unknown as { c: number }).c)).toBe(0);
+  });
+
+  it('accepts a valid regex', async () => {
+    const tagId = await makeTag('trip');
+    await insertTx('AMZN Mktp');
+    const count = await saveTagRule({ matchType: 'regex', pattern: '^amzn', tagId, minAmount: null, maxAmount: null });
+    expect(count).toBe(1);
+  });
+});

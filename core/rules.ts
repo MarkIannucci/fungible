@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { rebuildDisplayNames } from './rename.js';
 import { applyTagRules, type TagMatchType } from './tag-rules.js';
+import { validateRegex } from './rule-utils.js';
 
 async function applyAll(): Promise<number> {
   const rules = await loadCategoryRules();
@@ -51,6 +52,9 @@ export type SaveCategoryRuleOpts = {
 
 export async function saveCategoryRule(opts: SaveCategoryRuleOpts): Promise<number> {
   const { pattern, matchType, category, minAmount, maxAmount, accountId = null, editingId } = opts;
+  // Validate before any write: a persisted bad regex would throw inside every
+  // later rule application (sync, import, re-categorize), not just this save.
+  if (matchType === 'regex') validateRegex(pattern);
   if (editingId != null) {
     await db.execute({
       sql: 'UPDATE category_rules SET match_type = ?, pattern = ?, category = ?, min_amount = ?, max_amount = ?, account_id = ? WHERE id = ?',
@@ -89,6 +93,7 @@ export type SaveNameRuleOpts = {
 
 export async function saveNameRule(opts: SaveNameRuleOpts): Promise<void> {
   const { pattern, matchType, replacement, minAmount, maxAmount, accountId = null, editingId } = opts;
+  if (matchType === 'regex') validateRegex(pattern);
   if (editingId != null) {
     await db.execute({
       sql: 'UPDATE name_rules SET match_type = ?, pattern = ?, replacement = ?, min_amount = ?, max_amount = ?, account_id = ? WHERE id = ?',
@@ -120,6 +125,7 @@ export type SaveTagRuleOpts = {
 
 export async function saveTagRule(opts: SaveTagRuleOpts): Promise<number> {
   const { matchType, pattern, tagId, minAmount, maxAmount, accountId = null, editingId } = opts;
+  if (matchType === 'regex') validateRegex(pattern);
   const normPattern = matchType === 'all' ? '' : pattern;
   if (editingId != null) {
     await db.execute({

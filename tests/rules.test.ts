@@ -85,3 +85,16 @@ describe('delete_rule MCP tool re-evaluates transactions', () => {
     expect(await categoryOf(id)).toBe('Uncategorized');
   });
 });
+
+// Regression: invalid regexes must be rejected before any write (see the
+// matching saveTagRule test) — a persisted bad regex throws inside every later
+// categorize/rename pass.
+describe('regex validation on rule save', () => {
+  it('saveCategoryRule rejects an invalid regex without persisting', async () => {
+    await expect(
+      saveCategoryRule({ pattern: '(', matchType: 'regex', category: 'Travel', minAmount: null, maxAmount: null }),
+    ).rejects.toThrow(/Invalid regex/);
+    const r = await db.execute('SELECT COUNT(*) as c FROM category_rules');
+    expect(Number((r.rows[0] as unknown as { c: number }).c)).toBe(0);
+  });
+});

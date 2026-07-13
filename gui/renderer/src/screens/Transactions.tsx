@@ -443,6 +443,7 @@ function EditModal({
   const [pattern, setPattern] = useState('');
   const [matchType, setMatchType] = useState<'name' | 'regex'>('name');
   const [matchCount, setMatchCount] = useState(0);
+  const [error, setError] = useState('');
   const matchGuard = useLoadGuard();
 
   useEffect(() => {
@@ -462,13 +463,18 @@ function EditModal({
 
     if (pattern.trim()) {
       const saved: string[] = [];
-      if (catChanged) {
-        const count = await api.transactions.upsertCategoryRule(pattern, matchType, cat);
-        saved.push(`category rule (${count} updated)`);
-      }
-      if (nameChanged) {
-        await api.transactions.upsertNameRule(pattern, matchType, newDisplay);
-        saved.push('name rule');
+      try {
+        if (catChanged) {
+          const count = await api.transactions.upsertCategoryRule(pattern, matchType, cat);
+          saved.push(`category rule (${count} updated)`);
+        }
+        if (nameChanged) {
+          await api.transactions.upsertNameRule(pattern, matchType, newDisplay);
+          saved.push('name rule');
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to save rule');
+        return;
       }
       onSaved(saved.length ? `Saved: ${saved.join(' + ')}` : 'No changes');
     } else {
@@ -511,6 +517,7 @@ function EditModal({
           <span className="dim"> · saving creates a rule applied to all of them</span>
         </p>
       )}
+      {error && <p className="neg">{error}</p>}
       <div className={styles.modalActions}>
         <button className={styles.btnSecondary} onClick={onClose}>
           Cancel
