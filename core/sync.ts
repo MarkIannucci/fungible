@@ -2,6 +2,7 @@ import { getPlaidClient } from './plaid.js';
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyNameRulesWithRules, loadNameRules } from './rename.js';
+import { applyTagRules } from './tag-rules.js';
 import { deduplicateCsvVsPlaid } from './dedup.js';
 import { decryptToken } from './crypto.js';
 import type { Transaction } from 'plaid';
@@ -86,6 +87,10 @@ export async function syncTransactions(accessToken: string, itemId: string) {
       }),
       'write',
     );
+
+    // Apply tag rules to new/changed rows. Suppression keeps removed tags gone,
+    // so re-asserting on modified/existing rows is safe.
+    await applyTagRules({ txIds: [...added, ...modified].map((tx) => tx.transaction_id) });
   }
 
   // Remove deleted

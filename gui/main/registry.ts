@@ -23,6 +23,7 @@ import {
   getTagSummary,
   getAllRules,
   getAllNameRules,
+  getAllTagRules,
   getCategoryDetails,
   toggleHiddenCategory,
 } from '../../core/queries.js';
@@ -50,12 +51,15 @@ import {
   deleteTag,
 } from '../../core/tags.js';
 import { countPatternMatches } from '../../core/rule-utils.js';
+import { countTagRuleMatches } from '../../core/tag-rules.js';
 import {
   getUncategorizedCount as getTotalUncategorizedCount,
   deleteCategoryRule,
   deleteNameRule,
   saveCategoryRule,
   saveNameRule,
+  saveTagRule,
+  deleteTagRule,
   setCategoryFlexibility,
   createCategory,
   deleteCategory,
@@ -144,8 +148,10 @@ export const registry = {
   },
   rules: {
     countPatternMatches,
+    countTagRuleMatches,
     getAllRules,
     getAllNameRules,
+    getAllTagRules,
     getCategoryDetails,
     toggleHiddenCategory,
     getTotalUncategorizedCount,
@@ -153,6 +159,8 @@ export const registry = {
     deleteNameRule,
     saveCategoryRule,
     saveNameRule,
+    saveTagRule,
+    deleteTagRule,
     setCategoryFlexibility,
     createCategory,
     deleteCategory,

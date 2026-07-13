@@ -6,10 +6,12 @@ import { Modal } from '../components/Modal.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { fmt } from '../../../../core/fmt.js';
-import type { Rule, NameRule, LinkedAccount } from '../../../../core/queries.js';
+import type { Rule, NameRule, TagRuleRow, LinkedAccount } from '../../../../core/queries.js';
+import type { TagOption } from '../../../../core/tags.js';
+import type { TagMatchType } from '../../../../core/tag-rules.js';
 import styles from './Rules.module.css';
 
-type Tab = 'rules' | 'names' | 'categories';
+type Tab = 'rules' | 'names' | 'tags' | 'categories';
 
 const FLEX_OPTIONS = ['', 'fixed', 'flexible', 'discretionary'] as const;
 
@@ -29,6 +31,8 @@ export function Rules() {
 
   const rules = useQuery(() => api.rules.getAllRules(), [reloadKey]) ?? [];
   const nameRules = useQuery(() => api.rules.getAllNameRules(), [reloadKey]) ?? [];
+  const tagRules = useQuery(() => api.rules.getAllTagRules(), [reloadKey]) ?? [];
+  const tagOptions = useQuery(() => api.tags.getTagOptions(), [reloadKey]) ?? [];
   const categories = useQuery(() => api.queries.getAllCategories(), [reloadKey]) ?? [];
   const catDetails = useQuery(() => api.rules.getCategoryDetails(), [reloadKey]) ?? [];
   const hiddenSet = useQuery(() => api.queries.getHiddenCategorySet(), [reloadKey]);
@@ -42,11 +46,12 @@ export function Rules() {
 
   const [ruleForm, setRuleForm] = useState<{ editing: Rule | null } | null>(null);
   const [nameRuleForm, setNameRuleForm] = useState<{ editing: NameRule | null } | null>(null);
+  const [tagRuleForm, setTagRuleForm] = useState<{ editing: TagRuleRow | null } | null>(null);
   const [addCatOpen, setAddCatOpen] = useState(false);
   const [renameCat, setRenameCat] = useState<string | null>(null);
 
   const searchRef = useRef<HTMLInputElement>(null);
-  const TABS: Tab[] = ['rules', 'names', 'categories'];
+  const TABS: Tab[] = ['rules', 'names', 'tags', 'categories'];
   useScreenKeys({
     Tab: () => {
       setSearch('');
@@ -56,6 +61,7 @@ export function Rules() {
     a: () => {
       if (tab === 'rules') setRuleForm({ editing: null });
       else if (tab === 'names') setNameRuleForm({ editing: null });
+      else if (tab === 'tags') setTagRuleForm({ editing: null });
       else setAddCatOpen(true);
     },
     Escape: () => setSearch(''),
@@ -68,6 +74,9 @@ export function Rules() {
   const filteredNameRules = q
     ? nameRules.filter((r) => r.pattern.toLowerCase().includes(q) || r.replacement.toLowerCase().includes(q))
     : nameRules;
+  const filteredTagRules = q
+    ? tagRules.filter((r) => r.pattern.toLowerCase().includes(q) || r.tag_name.toLowerCase().includes(q))
+    : tagRules;
 
   return (
     <div className={styles.screen}>
@@ -80,6 +89,9 @@ export function Rules() {
           </button>
           <button className={tab === 'names' ? styles.tabActive : styles.tab} onClick={() => setTab('names')}>
             Name rules ({nameRules.length})
+          </button>
+          <button className={tab === 'tags' ? styles.tabActive : styles.tab} onClick={() => setTab('tags')}>
+            Tag rules ({tagRules.length})
           </button>
           <button className={tab === 'categories' ? styles.tabActive : styles.tab} onClick={() => setTab('categories')}>
             Categories ({catDetails.length})
@@ -106,6 +118,7 @@ export function Rules() {
           onClick={() => {
             if (tab === 'rules') setRuleForm({ editing: null });
             else if (tab === 'names') setNameRuleForm({ editing: null });
+            else if (tab === 'tags') setTagRuleForm({ editing: null });
             else setAddCatOpen(true);
           }}
         >
@@ -191,6 +204,51 @@ export function Rules() {
                           e.stopPropagation();
                           await api.rules.deleteNameRule(r.id);
                           showStatus('Name rule deleted');
+                          reload();
+                        }}
+                      >
+                        delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      )}
+
+      {tab === 'tags' && (
+        <section className={styles.panel}>
+          {filteredTagRules.length === 0 ? (
+            <p className="dim">{search ? 'No tag rules match.' : 'No tag rules yet. A rule with match type "all" + an account tags everything in that account.'}</p>
+          ) : (
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th className={styles.th}>Type</th>
+                  <th className={styles.th}>Pattern</th>
+                  <th className={styles.th}>Amount</th>
+                  <th className={styles.th}>Tag</th>
+                  <th className={styles.th}>Scope</th>
+                  <th className={styles.th} />
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTagRules.map((r) => (
+                  <tr key={r.id} className={styles.row} onClick={() => setTagRuleForm({ editing: r })}>
+                    <td className="dim">{r.match_type}</td>
+                    <td className={styles.tdPattern}>{r.match_type === 'all' ? <span className="dim">— all —</span> : r.pattern}</td>
+                    <td className="num dim">{amountLabel(r.min_amount, r.max_amount)}</td>
+                    <td className="accent">{r.tag_name}</td>
+                    <td className="dim">{r.account_id ? accountLabel(r.account_id) : 'All'}</td>
+                    <td className={styles.tdActions}>
+                      <button
+                        className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          await api.rules.deleteTagRule(r.id);
+                          showStatus('Tag rule deleted · existing tags left in place');
                           reload();
                         }}
                       >
@@ -309,6 +367,20 @@ export function Rules() {
           onSaved={() => {
             setNameRuleForm(null);
             showStatus('Name rule saved');
+            reload();
+          }}
+        />
+      )}
+
+      {tagRuleForm && (
+        <TagRuleFormModal
+          editing={tagRuleForm.editing}
+          tags={tagOptions}
+          accounts={accounts}
+          onClose={() => setTagRuleForm(null)}
+          onSaved={(count) => {
+            setTagRuleForm(null);
+            showStatus(`Tag rule saved · tagged ${count} transaction${count === 1 ? '' : 's'}`, 3000);
             reload();
           }}
         />
@@ -543,6 +615,117 @@ function NameRuleFormModal({
           onClick={() => void save()}
           disabled={!pattern.trim() || !replacement.trim()}
         >
+          Save
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Tag rule form ────────────────────────────────────────────────────────────
+
+function TagRuleFormModal({
+  editing,
+  tags,
+  accounts,
+  onClose,
+  onSaved,
+}: {
+  editing: TagRuleRow | null;
+  tags: TagOption[];
+  accounts: LinkedAccount[];
+  onClose: () => void;
+  onSaved: (count: number) => void;
+}) {
+  const [matchType, setMatchType] = useState<TagMatchType>((editing?.match_type as TagMatchType) ?? 'all');
+  const [pattern, setPattern] = useState(editing?.pattern ?? '');
+  const [minAmount, setMinAmount] = useState(editing?.min_amount != null ? String(editing.min_amount) : '');
+  const [maxAmount, setMaxAmount] = useState(editing?.max_amount != null ? String(editing.max_amount) : '');
+  const [tagId, setTagId] = useState<number | null>(editing?.tag_id ?? tags[0]?.id ?? null);
+  const [accountId, setAccountId] = useState<string | null>(editing?.account_id ?? null);
+  const [matchCount, setMatchCount] = useState(0);
+  const [error, setError] = useState('');
+
+  const needsPattern = matchType !== 'all';
+
+  useEffect(() => {
+    if (needsPattern && !pattern.trim()) { setMatchCount(0); return; }
+    api.rules
+      .countTagRuleMatches(matchType, pattern, accountId)
+      .then(setMatchCount)
+      .catch(() => setMatchCount(0));
+  }, [matchType, pattern, accountId, needsPattern]);
+
+  const canSave = tagId !== null && (!needsPattern || pattern.trim().length > 0);
+
+  async function save() {
+    if (!canSave || tagId === null) return;
+    try {
+      const count = await api.rules.saveTagRule({
+        matchType,
+        pattern,
+        tagId,
+        minAmount: minAmount.trim() ? parseFloat(minAmount) : null,
+        maxAmount: maxAmount.trim() ? parseFloat(maxAmount) : null,
+        accountId,
+        editingId: editing?.id ?? null,
+      });
+      onSaved(count);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save tag rule');
+    }
+  }
+
+  return (
+    <Modal title={editing ? 'Edit tag rule' : 'New tag rule'} onClose={onClose} accent="var(--accent)">
+      <div className={styles.formGrid}>
+        <label>Match type</label>
+        <select value={matchType} onChange={(e) => setMatchType(e.target.value as TagMatchType)}>
+          <option value="all">all (every transaction in scope)</option>
+          <option value="name">name (substring)</option>
+          <option value="regex">regex</option>
+        </select>
+        {needsPattern && (
+          <>
+            <label>Pattern</label>
+            <input value={pattern} onChange={(e) => setPattern(e.target.value)} autoFocus placeholder="e.g. AMZN or ^AMZN" />
+          </>
+        )}
+        <label>Min $ (optional)</label>
+        <input value={minAmount} onChange={(e) => setMinAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
+        <label>Max $ (optional)</label>
+        <input value={maxAmount} onChange={(e) => setMaxAmount(e.target.value.replace(/[^\d.\-]/g, ''))} />
+        <label>Tag</label>
+        <select value={tagId ?? ''} onChange={(e) => setTagId(e.target.value ? Number(e.target.value) : null)}>
+          {tags.length === 0 && <option value="">No tags yet — create one first</option>}
+          {tags.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+        <label>Account</label>
+        <select value={accountId ?? ''} onChange={(e) => setAccountId(e.target.value || null)}>
+          <option value="">All accounts</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.nickname ?? a.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      {(!needsPattern || pattern.trim()) && (
+        <p className={styles.matchHint}>
+          <span className="warn">{matchCount} transactions match</span>
+          <span className="dim"> · saving tags them (removed tags stay removed)</span>
+        </p>
+      )}
+      {error && <p className="neg">{error}</p>}
+      <div className={styles.modalActions}>
+        <button className={styles.btnSecondary} onClick={onClose}>
+          Cancel
+        </button>
+        <button className={styles.btnPrimary} onClick={() => void save()} disabled={!canSave}>
           Save
         </button>
       </div>

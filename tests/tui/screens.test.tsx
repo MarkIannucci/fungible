@@ -1329,15 +1329,31 @@ describe('Rules', () => {
     });
   });
 
-  it('Tab Tab cycles to Categories section showing seeded categories', async () => {
+  it('Tab cycles to Categories section showing seeded categories', async () => {
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Category Rules'));
     r.stdin.write('\t');
     r.stdin.write('\t');
+    r.stdin.write('\t'); // rules → names → tags → categories
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('Grocery');
       expect(f).toContain('Dining');
+    });
+  });
+
+  it('Tab cycles to Tag Rules section', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    r.stdin.write('\t');
+    r.stdin.write('\t'); // rules → names → tags
+    await waitFor(() => expect(frame(r)).toContain('No tag rules yet'));
+    r.stdin.write('a');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('New Tag Rule');
+      expect(f).toContain('Match type');
+      expect(f).toContain('transactions match');
     });
   });
 
@@ -1474,6 +1490,7 @@ describe('Rules', () => {
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Category Rules'));
     r.stdin.write('\t');
+    r.stdin.write('\t');
     r.stdin.write('\t'); // categories section
     await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
     r.stdin.write('\r');
@@ -1488,6 +1505,7 @@ describe('Rules', () => {
   it('Esc in categories edit panel closes without navigating away', async () => {
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    r.stdin.write('\t');
     r.stdin.write('\t');
     r.stdin.write('\t');
     await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
