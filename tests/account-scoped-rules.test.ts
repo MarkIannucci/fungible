@@ -8,6 +8,7 @@ vi.mock('../core/db.js', async () => {
 import { db } from '../core/db.js';
 import { saveCategoryRule, saveNameRule } from '../core/rules.js';
 import { deleteAccount, importCsvTransactions } from '../core/accounts.js';
+import { clearTransactionOverride, clearOverridesBulk } from '../core/transactions.js';
 
 beforeEach(async () => {
   await db.execute('DELETE FROM category_rules');
@@ -56,6 +57,41 @@ describe('deleteAccount removes its scoped rules', () => {
     expect(cat[0].account_id).toBeNull();
     const names = (await db.execute('SELECT account_id FROM name_rules')).rows as unknown as { account_id: string | null }[];
     expect(names).toHaveLength(0);
+  });
+});
+
+describe('clearing manual overrides honors account-scoped rules', () => {
+  async function insertTx(id: string, accountId: string, manualCategory: string | null = 'Manual') {
+    await db.execute({
+      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, pending, ignored)
+            VALUES (?, ?, '2025-01-01', 'AMAZON.COM', 25, ?, ?, 0, 0)`,
+      args: [id, accountId, manualCategory ?? 'Uncategorized', manualCategory],
+    });
+  }
+
+  it('clearTransactionOverride re-categorizes with the account-scoped rule', async () => {
+    await saveCategoryRule({ pattern: 'amazon', matchType: 'name', category: 'Shopping', minAmount: null, maxAmount: null, accountId: null });
+    await saveCategoryRule({ pattern: 'amazon', matchType: 'name', category: 'Business Expenses', minAmount: null, maxAmount: null, accountId: 'work' });
+    await insertTx('t1', 'work');
+
+    await clearTransactionOverride('t1');
+
+    const row = (await db.execute("SELECT category, manual_category FROM transactions WHERE id = 't1'")).rows[0] as unknown as { category: string; manual_category: string | null };
+    expect(row.category).toBe('Business Expenses');
+    expect(row.manual_category).toBeNull();
+  });
+
+  it('clearOverridesBulk applies each transaction\'s own account scope', async () => {
+    await saveCategoryRule({ pattern: 'amazon', matchType: 'name', category: 'Shopping', minAmount: null, maxAmount: null, accountId: null });
+    await saveCategoryRule({ pattern: 'amazon', matchType: 'name', category: 'Business Expenses', minAmount: null, maxAmount: null, accountId: 'work' });
+    await insertTx('t1', 'work');
+    await insertTx('t2', 'home');
+
+    await clearOverridesBulk(['t1', 't2']);
+
+    const rows = (await db.execute('SELECT id, category FROM transactions ORDER BY id')).rows as unknown as { id: string; category: string }[];
+    expect(rows.find((r) => r.id === 't1')?.category).toBe('Business Expenses');
+    expect(rows.find((r) => r.id === 't2')?.category).toBe('Shopping');
   });
 });
 

@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { loadTagRules, tagRuleMatches } from './tag-rules.js';
 
 export type TagOption = { id: number; name: string };
 
@@ -48,13 +49,29 @@ export async function addTagToTransaction(txId: string, tagId: number): Promise<
   ], 'write');
 }
 
-// Removing a tag records a suppression so no tag rule (now or created later)
-// re-adds it. Un-stick by manually adding the tag again.
+// Removing a tag records a suppression so tag rules don't re-add it — but only
+// when a current rule actually applies this tag to this transaction. Most
+// removals are manual corrections of manually/LLM-added tags; suppressing those
+// would silently exclude the transaction from legitimate rules created later.
+// Un-stick a suppression by manually adding the tag again.
 export async function removeTagFromTransaction(txId: string, tagId: number): Promise<void> {
-  await db.batch([
-    { sql: 'DELETE FROM transaction_tags WHERE transaction_id = ? AND tag_id = ?', args: [txId, tagId] },
-    { sql: 'INSERT OR IGNORE INTO tag_rule_suppressions (transaction_id, tag_id) VALUES (?, ?)', args: [txId, tagId] },
-  ], 'write');
+  const ops = [
+    { sql: 'DELETE FROM transaction_tags WHERE transaction_id = ? AND tag_id = ?', args: [txId, tagId] as (string | number)[] },
+  ];
+  const txRes = await db.execute({
+    sql: 'SELECT account_id, name, merchant_name, amount FROM transactions WHERE id = ?',
+    args: [txId],
+  });
+  if (txRes.rows.length > 0) {
+    const tx = txRes.rows[0] as unknown as {
+      account_id: string; name: string; merchant_name: string | null; amount: number;
+    };
+    const rules = (await loadTagRules()).filter((r) => r.tag_id === tagId);
+    if (rules.some((r) => tagRuleMatches(r, tx.account_id, tx.name, tx.merchant_name, tx.amount))) {
+      ops.push({ sql: 'INSERT OR IGNORE INTO tag_rule_suppressions (transaction_id, tag_id) VALUES (?, ?)', args: [txId, tagId] });
+    }
+  }
+  await db.batch(ops, 'write');
 }
 
 export async function addTagToTransactions(txIds: string[], tagId: number): Promise<void> {
