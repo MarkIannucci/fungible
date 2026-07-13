@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { rebuildDisplayNames } from './rename.js';
 import { applyCategoriesToAll } from './categorize.js';
+import { validateRegex } from './rule-utils.js';
 
 // ── Single-transaction mutations ───────────────────────────────────────────────
 
@@ -57,6 +58,9 @@ export async function upsertCategoryRule(
   matchType: 'name' | 'regex',
   category: string,
 ): Promise<number> {
+  // Validate before any write: a persisted bad regex would throw inside every
+  // later rule application (sync, import, re-categorize), not just this save.
+  if (matchType === 'regex') validateRegex(pattern);
   const existing = await db.execute({
     sql: 'SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?',
     args: [matchType, pattern],
@@ -78,6 +82,7 @@ export async function upsertNameRule(
   matchType: 'name' | 'regex',
   replacement: string,
 ): Promise<void> {
+  if (matchType === 'regex') validateRegex(pattern);
   const existing = await db.execute({
     sql: 'SELECT id FROM name_rules WHERE match_type = ? AND pattern = ?',
     args: [matchType, pattern],

@@ -184,14 +184,19 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
     const saved: string[] = [];
 
-    if (catChanged) {
-      const count = await upsertCategoryRule(editPattern, editMatchType, newCat);
-      saved.push(`category rule (${count} updated)`);
-    }
+    try {
+      if (catChanged) {
+        const count = await upsertCategoryRule(editPattern, editMatchType, newCat);
+        saved.push(`category rule (${count} updated)`);
+      }
 
-    if (nameChanged) {
-      await upsertNameRule(editPattern, editMatchType, newDisplay);
-      saved.push('name rule');
+      if (nameChanged) {
+        await upsertNameRule(editPattern, editMatchType, newDisplay);
+        saved.push('name rule');
+      }
+    } catch (e) {
+      showStatus(e instanceof Error ? e.message : 'Failed to save rule', 4000);
+      return;
     }
 
     showStatus(saved.length ? `Saved: ${saved.join(' + ')}` : 'No changes', 3000);
