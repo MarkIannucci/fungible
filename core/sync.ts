@@ -93,10 +93,18 @@ export async function syncTransactions(accessToken: string, itemId: string) {
     await applyTagRules({ txIds: [...added, ...modified].map((tx) => tx.transaction_id) });
   }
 
-  // Remove deleted
+  // Remove deleted. Clear child rows first: transaction_tags has a FK
+  // (transaction_id → transactions.id), so deleting a tagged transaction
+  // directly fails with a FOREIGN KEY constraint. tag_rule_suppressions is
+  // keyed by transaction_id too (no FK, but clearing it avoids orphan rows).
+  // One batch keeps the three deletes atomic.
   if (removedIds.length > 0) {
     const placeholders = removedIds.map(() => '?').join(',');
-    await db.execute({ sql: `DELETE FROM transactions WHERE id IN (${placeholders})`, args: removedIds });
+    await db.batch([
+      { sql: `DELETE FROM transaction_tags WHERE transaction_id IN (${placeholders})`, args: removedIds },
+      { sql: `DELETE FROM tag_rule_suppressions WHERE transaction_id IN (${placeholders})`, args: removedIds },
+      { sql: `DELETE FROM transactions WHERE id IN (${placeholders})`, args: removedIds },
+    ], 'write');
   }
 
   // Save cursor and last_synced_at
