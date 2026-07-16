@@ -24,7 +24,6 @@
 .quickFilters {
   display: flex;
   gap: 6px;
-  margin-left: auto;
 }
 
 .qf,
@@ -44,6 +43,13 @@
 .qfActive {
   color: var(--warning);
   border-color: var(--warning);
+}
+
+.syncRow {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .syncBtn {

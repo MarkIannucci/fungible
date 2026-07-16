@@ -225,12 +225,14 @@ export function Transactions() {
             All
           </button>
         </div>
-        <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing}>
-          {syncing ? 'Syncing…' : '⟳ Sync'}
-        </button>
-        {lastSynced !== undefined && (
-          <span className="dim">Last synced {fmtTimeAgo(lastSynced ?? null)}</span>
-        )}
+        <div className={styles.syncRow}>
+          <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing}>
+            {syncing ? 'Syncing…' : '⟳ Sync'}
+          </button>
+          {lastSynced !== undefined && (
+            <span className="dim">Last synced {fmtTimeAgo(lastSynced ?? null)}</span>
+          )}
+        </div>
       </div>
 
       {(chips.length > 0 || dl) && (
