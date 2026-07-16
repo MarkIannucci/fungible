@@ -66,7 +66,7 @@ import {
   renameCategory,
 } from '../../core/rules.js';
 import { loadHealthData, yearsToFire, coastYears } from '../../core/health.js';
-import { getSetting, setSetting } from '../../core/settings.js';
+import { getSetting, setSetting, PRETAX_MONTHLY_KEY } from '../../core/settings.js';
 import {
   buildTrendViews,
   getPeriodTotals,
@@ -231,7 +231,7 @@ export const registry = {
     },
   },
   settings: {
-    getSetting,
-    setSetting,
+    getPretaxMonthly: () => getSetting(PRETAX_MONTHLY_KEY),
+    setPretaxMonthly: (v: string) => setSetting(PRETAX_MONTHLY_KEY, v),
   },
 } as const;

@@ -131,11 +131,9 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       if (currentDial === 'spend')      setMonthlySpend((s) => s + SPEND_STEP);
       if (currentDial === 'savings')    setMonthlySavings((s) => s + SPEND_STEP);
       if (currentDial === 'pretax') {
-        setPretaxSavings((s) => {
-          const newValue = s + SPEND_STEP;
-          void setSetting(PRETAX_MONTHLY_KEY, String(newValue));
-          return newValue;
-        });
+        const newValue = pretaxSavings + SPEND_STEP;
+        setPretaxSavings(newValue);
+        void setSetting(PRETAX_MONTHLY_KEY, String(newValue));
       }
       if (currentDial === 'withdrawal') setWithdrawal((w) => parseFloat(Math.min(10, w + WITHDRAW_STEP).toFixed(1)));
       if (currentDial === 'growth')     setGrowth((g) => parseFloat(Math.min(20, g + GROWTH_STEP).toFixed(1)));
@@ -145,11 +143,9 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
       if (currentDial === 'spend')      setMonthlySpend((s) => Math.max(SPEND_STEP, s - SPEND_STEP));
       if (currentDial === 'savings')    setMonthlySavings((s) => s - SPEND_STEP);
       if (currentDial === 'pretax') {
-        setPretaxSavings((s) => {
-          const newValue = Math.max(0, s - SPEND_STEP);
-          void setSetting(PRETAX_MONTHLY_KEY, String(newValue));
-          return newValue;
-        });
+        const newValue = Math.max(0, pretaxSavings - SPEND_STEP);
+        setPretaxSavings(newValue);
+        void setSetting(PRETAX_MONTHLY_KEY, String(newValue));
       }
       if (currentDial === 'withdrawal') setWithdrawal((w) => parseFloat(Math.max(0.5, w - WITHDRAW_STEP).toFixed(1)));
       if (currentDial === 'growth')     setGrowth((g) => parseFloat(Math.max(0, g - GROWTH_STEP).toFixed(1)));
@@ -233,7 +229,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
                     : savingsRate >= 50
                       ? 'FIRE pace'
                       : 'on track'}
-            {pretaxSavings > 0 ? `  (+${fmt(pretaxSavings)}/mo pretax)` : ''}
+            {savingsRate !== null && pretaxSavings > 0 ? `  (+${fmt(pretaxSavings)}/mo pretax)` : ''}
           </Text>
         </Box>
         <Box gap={3}>

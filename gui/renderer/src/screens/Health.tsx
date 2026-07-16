@@ -5,7 +5,6 @@ import { useNav } from '../hooks/useNav.js';
 import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact } from '../../../../core/fmt.js';
 import { getDriftWindows, getPeriodStart } from '../../../../core/dateUtils.js';
 import { bucketDrift } from '../../../../core/scorecard.js';
-import { PRETAX_MONTHLY_KEY } from '../../../../core/settings.js';
 import { KeyHints } from '../components/KeyHints.js';
 import styles from './Health.module.css';
 
@@ -54,7 +53,7 @@ export function Health() {
   const [withdrawal, setWithdrawal] = useState(DEFAULT_WITHDRAWAL);
   const [growth, setGrowth] = useState(DEFAULT_GROWTH);
 
-  const pretaxRaw = useQuery(() => api.settings.getSetting(PRETAX_MONTHLY_KEY), []);
+  const pretaxRaw = useQuery(() => api.settings.getPretaxMonthly(), []);
   useEffect(() => {
     if (pretaxRaw !== undefined) setPretaxSavings(pretaxRaw ? roundToStep(parseFloat(pretaxRaw)) : 0);
   }, [pretaxRaw]);
@@ -113,7 +112,7 @@ export function Health() {
                       : savingsRate >= 50
                         ? 'FIRE pace'
                         : 'on track'}
-              {pretax > 0 ? ` (+${fmt(pretax)}/mo pretax)` : ''}
+              {savingsRate !== null && pretax > 0 ? ` (+${fmt(pretax)}/mo pretax)` : ''}
             </span>
           </div>
           <div className={styles.metric}>
@@ -270,11 +269,11 @@ export function Health() {
             hint="401k/HSA — not in transactions"
             onChange={(v) => {
               setPretaxSavings(Math.max(0, v));
-              void api.settings.setSetting(PRETAX_MONTHLY_KEY, String(Math.max(0, v)));
+              void api.settings.setPretaxMonthly(String(Math.max(0, v)));
             }}
             onReset={() => {
               setPretaxSavings(0);
-              void api.settings.setSetting(PRETAX_MONTHLY_KEY, '0');
+              void api.settings.setPretaxMonthly('0');
             }}
           />
           <SliderDial
