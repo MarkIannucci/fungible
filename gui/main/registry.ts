@@ -26,6 +26,7 @@ import {
   getAllTagRules,
   getCategoryDetails,
   toggleHiddenCategory,
+  getLastSyncedAt,
 } from '../../core/queries.js';
 import {
   setTransactionCategory,
@@ -213,6 +214,7 @@ export const registry = {
   },
   sync: {
     syncAll,
+    getLastSyncedAt,
   },
   config: {
     writeEnv: async (updates: EnvUpdates): Promise<{ written: string[] }> => {

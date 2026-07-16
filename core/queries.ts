@@ -136,6 +136,12 @@ export async function hasAccounts(): Promise<boolean> {
   return Number((result.rows[0] as unknown as { count: number }).count) > 0;
 }
 
+export async function getLastSyncedAt(): Promise<number | null> {
+  const res = await db.execute('SELECT MAX(last_synced_at) AS ts FROM plaid_items');
+  const row = res.rows[0] as unknown as { ts: number | null };
+  return row?.ts ?? null;
+}
+
 export async function getUncategorizedCount(from: string, to: string, filter?: Filter): Promise<number> {
   const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
