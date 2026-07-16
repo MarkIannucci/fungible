@@ -178,6 +178,9 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const savingsRate = grossIncome > 0
     ? ((monthlySavings + pretaxSavings) / grossIncome) * 100
     : null;
+  const rawSavingsRate = data.monthlyIncome > 0
+    ? (monthlySavings / data.monthlyIncome) * 100
+    : null;
 
   const netCash        = data.cash - data.totalDebt;
   const remainingDebt  = Math.max(0, data.totalDebt - data.cash);
@@ -230,13 +233,18 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
                     : savingsRate >= 50
                       ? 'FIRE pace'
                       : 'on track'}
-            {savingsRate !== null && pretaxSavings > 0 ? `  (+${fmt(pretaxSavings)}/mo pretax)` : ''}
+            {savingsRate !== null && pretaxSavings > 0 && rawSavingsRate !== null
+              ? `  (${fmtPct(rawSavingsRate)} take-home)`
+              : ''}
           </Text>
         </Box>
         <Box gap={3}>
           <Text dimColor>{'Monthly income'.padEnd(L)}</Text>
           <Text bold>{fmt(grossIncome).padStart(V)}</Text>
-          <Text dimColor>avg past 12 months</Text>
+          <Text dimColor>
+            {'avg past 12 months'}
+            {pretaxSavings > 0 ? `  (${fmt(data.monthlyIncome)} take-home)` : ''}
+          </Text>
         </Box>
       </Box>
 

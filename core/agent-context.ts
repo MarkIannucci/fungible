@@ -6,6 +6,7 @@
 
 import { db } from './db.js';
 import { yearsToFire } from './health.js';
+import { getSetting, PRETAX_MONTHLY_KEY } from './settings.js';
 import { isAssetAccount, isLiabilityAccount } from './account-class.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -41,12 +42,16 @@ export type FinancialHealth = {
   retirement: number;
   loanDebt: number;
   avgMonthlyExpenses: number;
+  avgMonthlyIncome: number;
   avgMonthlySavings: number;
+  pretaxMonthly: number;       // from settings; 401k/HSA not in transactions
+  grossMonthlyIncome: number;  // avgMonthlyIncome + pretaxMonthly
+  savingsRate: number | null;  // (avgMonthlySavings + pretax) / grossIncome
   cashRunwayMonths: number;
   liquidRunwayMonths: number;
   fireNumber: number;          // at 4% withdrawal
   fireProgress: number;        // 0–1 ratio
-  yearsToFire: number | null;  // null = >100 years
+  yearsToFire: number | null;  // null = >100 years; includes pretax in savings
 };
 
 export type MonthlyTrendRow = {
@@ -150,24 +155,34 @@ export async function getFinancialHealth(
 ): Promise<FinancialHealth> {
   const balances = await getBalances();
 
-  const expResult = await db.execute(`
-    SELECT
-      COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_expenses,
-      COALESCE(
-        -SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END) -
-         SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),
-        0
-      ) / 12.0 AS avg_savings
-    FROM transactions
-    WHERE date >= date('now', '-12 months')
-      AND pending = 0 AND ignored = 0
-      AND category NOT IN (SELECT category FROM hidden_categories)
-      AND category != 'Transfer'
-  `);
-  const expRow = expResult.rows[0] as unknown as { avg_expenses: number; avg_savings: number };
+  const [expResult, pretaxRaw] = await Promise.all([
+    db.execute(`
+      SELECT
+        COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_expenses,
+        COALESCE(-SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END), 0) / 12.0 AS avg_income,
+        COALESCE(
+          -SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END) -
+           SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),
+          0
+        ) / 12.0 AS avg_savings
+      FROM transactions
+      WHERE date >= date('now', '-12 months')
+        AND pending = 0 AND ignored = 0
+        AND category NOT IN (SELECT category FROM hidden_categories)
+        AND category != 'Transfer'
+    `),
+    getSetting(PRETAX_MONTHLY_KEY),
+  ]);
+  const expRow = expResult.rows[0] as unknown as { avg_expenses: number; avg_income: number; avg_savings: number };
 
   const avgMonthlyExpenses = Number(expRow.avg_expenses);
+  const avgMonthlyIncome   = Number(expRow.avg_income);
   const avgMonthlySavings  = Number(expRow.avg_savings);
+  const pretaxMonthly      = pretaxRaw ? parseFloat(pretaxRaw) : 0;
+  const grossMonthlyIncome = avgMonthlyIncome + pretaxMonthly;
+  const savingsRate        = grossMonthlyIncome > 0
+    ? ((avgMonthlySavings + pretaxMonthly) / grossMonthlyIncome) * 100
+    : null;
 
   const cashRunwayMonths   = avgMonthlyExpenses > 0 ? balances.cash   / avgMonthlyExpenses : 0;
   const liquidRunwayMonths = avgMonthlyExpenses > 0 ? balances.liquid / avgMonthlyExpenses : 0;
@@ -176,7 +191,7 @@ export async function getFinancialHealth(
   const fireNumber  = annualSpend / (withdrawalRate / 100);
   const fireProgress = fireNumber > 0 ? Math.max(0, balances.netWorth) / fireNumber : 0;
   const yearsToFireVal = yearsToFire(
-    balances.netWorth, avgMonthlySavings, fireNumber, annualGrowthPct
+    balances.netWorth, avgMonthlySavings + pretaxMonthly, fireNumber, annualGrowthPct
   );
 
   return {
@@ -186,7 +201,11 @@ export async function getFinancialHealth(
     retirement: balances.retirement,
     loanDebt: balances.loanDebt,
     avgMonthlyExpenses,
+    avgMonthlyIncome,
     avgMonthlySavings,
+    pretaxMonthly,
+    grossMonthlyIncome,
+    savingsRate,
     cashRunwayMonths,
     liquidRunwayMonths,
     fireNumber,

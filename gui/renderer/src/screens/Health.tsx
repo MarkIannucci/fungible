@@ -82,6 +82,7 @@ export function Health() {
   const fireProgress = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
   const grossIncome = data.monthlyIncome + pretax;
   const savingsRate = grossIncome > 0 ? ((savings + pretax) / grossIncome) * 100 : null;
+  const rawSavingsRate = data.monthlyIncome > 0 ? (savings / data.monthlyIncome) * 100 : null;
   const netCash = data.cash - data.totalDebt;
   const remainingDebt = Math.max(0, data.totalDebt - data.cash);
   const debtMonths = savings > 0 ? remainingDebt / savings : null;
@@ -113,13 +114,17 @@ export function Health() {
                       : savingsRate >= 50
                         ? 'FIRE pace'
                         : 'on track'}
-              {savingsRate !== null && pretax > 0 ? ` (+${fmt(pretax)}/mo pretax)` : ''}
+              {savingsRate !== null && pretax > 0 && rawSavingsRate !== null
+                ? ` (${fmtPct(rawSavingsRate)} take-home)`
+                : ''}
             </span>
           </div>
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Monthly income</span>
             <span className={`num ${styles.metricValue}`}>{fmt(grossIncome)}</span>
-            <span className={`dim ${styles.metricHint}`}>avg past 12 months</span>
+            <span className={`dim ${styles.metricHint}`}>
+              avg past 12 months{pretax > 0 ? ` (${fmt(data.monthlyIncome)} take-home)` : ''}
+            </span>
           </div>
         </section>
 
