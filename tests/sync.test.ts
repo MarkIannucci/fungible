@@ -42,7 +42,7 @@ async function insertTx(id: string) {
 async function insertTag(name: string): Promise<number> {
   await db.execute({ sql: 'INSERT INTO tags (name) VALUES (?)', args: [name] });
   const r = await db.execute({ sql: 'SELECT id FROM tags WHERE name = ?', args: [name] });
-  return Number((r.rows[0] as { id: number }).id);
+  return Number((r.rows[0] as unknown as { id: number }).id);
 }
 
 describe('syncTransactions — removing tagged transactions', () => {
