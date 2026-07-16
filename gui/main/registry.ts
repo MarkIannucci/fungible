@@ -66,6 +66,7 @@ import {
   renameCategory,
 } from '../../core/rules.js';
 import { loadHealthData, yearsToFire, coastYears } from '../../core/health.js';
+import { getSetting, setSetting } from '../../core/settings.js';
 import {
   buildTrendViews,
   getPeriodTotals,
@@ -228,5 +229,9 @@ export const registry = {
       const { written } = writeEnvFile(updates);
       return { written };
     },
+  },
+  settings: {
+    getSetting,
+    setSetting,
   },
 } as const;

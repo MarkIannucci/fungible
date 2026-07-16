@@ -4,6 +4,7 @@ import type { Screen } from './App.js';
 import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { loadHealthData, yearsToFire, coastYears, type HealthData } from '../core/health.js';
+import { getSetting, setSetting, PRETAX_MONTHLY_KEY } from '../core/settings.js';
 import { getCategoryDriftData } from '../core/queries.js';
 import { getDriftWindows, getPeriodStart } from '../core/dateUtils.js';
 import { bucketDrift, type Scorecard } from '../core/scorecard.js';
@@ -32,7 +33,7 @@ const WITHDRAW_STEP         = 0.5;
 const GROWTH_STEP           = 1.0;
 const PROGRESS_BAR_WIDTH    = 22;
 
-const DIALS = ['spend', 'savings', 'withdrawal', 'growth'] as const;
+const DIALS = ['spend', 'savings', 'pretax', 'withdrawal', 'growth'] as const;
 type Dial = typeof DIALS[number];
 
 function progressBar(ratio: number, width = PROGRESS_BAR_WIDTH) {
@@ -51,14 +52,16 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const [dialIdx, setDialIdx]           = useState(0);
   const [monthlySpend, setMonthlySpend] = useState(SPEND_STEP);
   const [monthlySavings, setMonthlySavings] = useState(0);
+  const [pretaxSavings, setPretaxSavings] = useState(0);
   const [editMode, setEditMode]         = useState(false);
   const [editBuffer, setEditBuffer]     = useState('');
 
   useEffect(() => {
-    void loadHealthData().then((d) => {
+    void Promise.all([loadHealthData(), getSetting(PRETAX_MONTHLY_KEY)]).then(([d, pretax]) => {
       setData(d);
       setMonthlySpend(Math.max(SPEND_STEP, Math.round(d.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP));
       setMonthlySavings(Math.round(d.monthlySavings / SPEND_STEP) * SPEND_STEP);
+      setPretaxSavings(pretax ? Math.round(parseFloat(pretax) / SPEND_STEP) * SPEND_STEP : 0);
     });
   }, [refreshKey]);
 
@@ -80,6 +83,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   function currentDialValueStr(): string {
     if (currentDial === 'spend')      return String(monthlySpend);
     if (currentDial === 'savings')    return String(monthlySavings);
+    if (currentDial === 'pretax')     return String(pretaxSavings);
     if (currentDial === 'withdrawal') return String(withdrawal);
     if (currentDial === 'growth')     return String(growth);
     return '';
@@ -90,6 +94,11 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
     if (!isNaN(n)) {
       if (currentDial === 'spend')      setMonthlySpend(Math.max(SPEND_STEP, Math.round(n / SPEND_STEP) * SPEND_STEP));
       if (currentDial === 'savings')    setMonthlySavings(Math.round(n / SPEND_STEP) * SPEND_STEP);
+      if (currentDial === 'pretax') {
+        const newValue = Math.max(0, Math.round(n / SPEND_STEP) * SPEND_STEP);
+        setPretaxSavings(newValue);
+        void setSetting(PRETAX_MONTHLY_KEY, String(newValue));
+      }
       if (currentDial === 'withdrawal') setWithdrawal(parseFloat(Math.min(10, Math.max(0.5, n)).toFixed(1)));
       if (currentDial === 'growth')     setGrowth(parseFloat(Math.min(20, Math.max(0, n)).toFixed(1)));
     }
@@ -121,6 +130,13 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
     if (key.rightArrow) {
       if (currentDial === 'spend')      setMonthlySpend((s) => s + SPEND_STEP);
       if (currentDial === 'savings')    setMonthlySavings((s) => s + SPEND_STEP);
+      if (currentDial === 'pretax') {
+        setPretaxSavings((s) => {
+          const newValue = s + SPEND_STEP;
+          void setSetting(PRETAX_MONTHLY_KEY, String(newValue));
+          return newValue;
+        });
+      }
       if (currentDial === 'withdrawal') setWithdrawal((w) => parseFloat(Math.min(10, w + WITHDRAW_STEP).toFixed(1)));
       if (currentDial === 'growth')     setGrowth((g) => parseFloat(Math.min(20, g + GROWTH_STEP).toFixed(1)));
       return;
@@ -128,6 +144,13 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
     if (key.leftArrow) {
       if (currentDial === 'spend')      setMonthlySpend((s) => Math.max(SPEND_STEP, s - SPEND_STEP));
       if (currentDial === 'savings')    setMonthlySavings((s) => s - SPEND_STEP);
+      if (currentDial === 'pretax') {
+        setPretaxSavings((s) => {
+          const newValue = Math.max(0, s - SPEND_STEP);
+          void setSetting(PRETAX_MONTHLY_KEY, String(newValue));
+          return newValue;
+        });
+      }
       if (currentDial === 'withdrawal') setWithdrawal((w) => parseFloat(Math.max(0.5, w - WITHDRAW_STEP).toFixed(1)));
       if (currentDial === 'growth')     setGrowth((g) => parseFloat(Math.max(0, g - GROWTH_STEP).toFixed(1)));
       return;
@@ -135,6 +158,10 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
     if (input === 'r') {
       if (currentDial === 'spend')      setMonthlySpend(Math.max(SPEND_STEP, Math.round(data.avgMonthlyExpenses / SPEND_STEP) * SPEND_STEP));
       if (currentDial === 'savings')    setMonthlySavings(Math.round(data.monthlySavings / SPEND_STEP) * SPEND_STEP);
+      if (currentDial === 'pretax') {
+        setPretaxSavings(0);
+        void setSetting(PRETAX_MONTHLY_KEY, '0');
+      }
       if (currentDial === 'withdrawal') setWithdrawal(DEFAULT_WITHDRAWAL);
       if (currentDial === 'growth')     setGrowth(DEFAULT_GROWTH);
       return;
@@ -148,11 +175,11 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const annualSpend    = monthlySpend * 12;
   const fireNumber     = annualSpend / (withdrawal / 100);
   const fireProgress   = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
-  const years          = yearsToFire(data.netWorth, monthlySavings, fireNumber, growth);
+  const years          = yearsToFire(data.netWorth, monthlySavings + pretaxSavings, fireNumber, growth);
   const coast          = coastYears(data.netWorth, fireNumber, growth);
 
   const savingsRate = data.monthlyIncome > 0
-    ? (monthlySavings / data.monthlyIncome) * 100
+    ? ((monthlySavings + pretaxSavings) / data.monthlyIncome) * 100
     : null;
 
   const netCash        = data.cash - data.totalDebt;
@@ -163,6 +190,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const defaultSavings  = Math.round(data.monthlySavings / SPEND_STEP) * SPEND_STEP;
   const spendChanged    = monthlySpend !== defaultSpend;
   const savingsChanged  = monthlySavings !== defaultSavings;
+  const pretaxChanged   = pretaxSavings !== 0;
   const withdrawChanged = withdrawal !== DEFAULT_WITHDRAWAL;
   const growthChanged   = growth !== DEFAULT_GROWTH;
 
@@ -205,6 +233,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
                     : savingsRate >= 50
                       ? 'FIRE pace'
                       : 'on track'}
+            {pretaxSavings > 0 ? `  (+${fmt(pretaxSavings)}/mo pretax)` : ''}
           </Text>
         </Box>
         <Box gap={3}>
@@ -365,6 +394,15 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
             : currentDial === 'savings'
               ? (savingsChanged ? `default ${fmt(defaultSavings)} · [r] reset` : `avg surplus past 12 mo  ← → ±${fmt(SPEND_STEP)}`)
               : `avg surplus past 12 mo${savingsChanged ? ' (modified)' : ''}`}
+        />
+        <DialRow
+          label="Pretax savings" value={fmt(pretaxSavings)} selected={currentDial === 'pretax'}
+          editing={editMode && currentDial === 'pretax'} editBuffer={editBuffer}
+          description={editMode && currentDial === 'pretax'
+            ? 'Enter confirm  ·  Esc cancel'
+            : currentDial === 'pretax'
+              ? (pretaxChanged ? `default $0 · [r] reset` : `401k/HSA — not in transactions  ← → ±${fmt(SPEND_STEP)}`)
+              : `401k/HSA — not in transactions${pretaxChanged ? ' (modified)' : ''}`}
         />
         <DialRow
           label="Withdrawal rate" value={fmtPct(withdrawal)} selected={currentDial === 'withdrawal'}
