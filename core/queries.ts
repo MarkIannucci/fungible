@@ -92,7 +92,7 @@ export async function getMerchantSummary(
   const f = buildFilterClause(filter, 'transactions');
 
   const result = await db.execute({
-    sql: `SELECT COALESCE(display_name, name) as merchant, SUM(amount) as total, COUNT(*) as count
+    sql: `SELECT COALESCE(display_name, merchant_name, name) as merchant, SUM(amount) as total, COUNT(*) as count
           FROM transactions
           WHERE date >= ? AND date <= ? AND category = ?
             AND pending = 0 AND ignored = 0
@@ -370,7 +370,7 @@ export async function getSearchFilteredData(
 ): Promise<{ summary: MonthlySummary; flexData: FlexSummary }> {
   const f = buildFilterClause(filter, 't');
   const result = await db.execute({
-    sql: `SELECT COALESCE(t.display_name, t.name) as display, t.merchant_name, t.amount, t.category,
+    sql: `SELECT COALESCE(t.display_name, t.merchant_name, t.name) as display, t.merchant_name, t.amount, t.category,
             COALESCE(c.flexibility, 'untagged') as flex
           FROM transactions t
           LEFT JOIN categories c ON c.name = t.category
@@ -382,7 +382,7 @@ export async function getSearchFilteredData(
   const rows = result.rows as unknown as { display: string; merchant_name: string | null; amount: number; category: string; flex: string }[];
 
   const re = buildSearchRe(search);
-  const matches = rows.filter((r) => re.test(r.display) || (r.merchant_name ? re.test(r.merchant_name) : false));
+  const matches = rows.filter((r) => re.test(r.display));
 
   // Accumulate per-category outflow/inflow, then apply the hybrid rule: real
   // categories net (refunds reduce them), Uncategorized splits by flow (outflow =
@@ -528,8 +528,8 @@ export const SORT_ORDER_BY: Record<SortMode, string> = {
   'date-asc':      't.date ASC, t.id ASC',
   'amount-desc':   't.amount DESC',
   'amount-asc':    't.amount ASC',
-  'name-asc':      'COALESCE(t.display_name, t.name) ASC',
-  'name-desc':     'COALESCE(t.display_name, t.name) DESC',
+  'name-asc':      'COALESCE(t.display_name, t.merchant_name, t.name) ASC',
+  'name-desc':     'COALESCE(t.display_name, t.merchant_name, t.name) DESC',
   'category-asc':  't.category ASC, t.date DESC',
   'category-desc': 't.category DESC, t.date DESC',
 };
@@ -574,7 +574,7 @@ export async function getTransactions(filters: {
   const rows = result.rows as unknown as TxRow[];
   if (!search) return rows.slice(0, 200);
   const re = buildSearchRe(search);
-  return rows.filter((r) => re.test(r.display_name ?? r.name) || (r.merchant_name ? re.test(r.merchant_name) : false)).slice(0, 200);
+  return rows.filter((r) => re.test(r.display_name ?? r.merchant_name ?? r.name)).slice(0, 200);
 }
 
 export async function countSearchMatches(
@@ -583,13 +583,13 @@ export async function countSearchMatches(
   if (!search) return { count: 0, expenses: 0 };
   const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
-    sql: `SELECT COALESCE(display_name, name) as display, merchant_name, amount
+    sql: `SELECT COALESCE(display_name, merchant_name, name) as display, amount
           FROM transactions WHERE date >= ? AND date <= ?${f.clause} AND pending = 0 AND ignored = 0`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { display: string; merchant_name: string | null; amount: number }[];
+  const rows = result.rows as unknown as { display: string; amount: number }[];
   const re = buildSearchRe(search);
-  const matches = rows.filter((r) => re.test(r.display) || (r.merchant_name ? re.test(r.merchant_name) : false));
+  const matches = rows.filter((r) => re.test(r.display));
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 

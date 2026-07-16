@@ -297,7 +297,7 @@ export function Transactions() {
                 onClick={() => setEditTx(tx)}
               >
                 <td className={`num ${styles.tdDate}`}>{tx.date}</td>
-                <td className={styles.tdDesc}>{tx.display_name ?? tx.name}</td>
+                <td className={styles.tdDesc}>{tx.display_name ?? tx.merchant_name ?? tx.name}</td>
                 <td className={`num ${styles.tdAmount} ${!isIgnored && tx.amount < 0 ? 'pos' : ''}`}>
                   {fmtAmount(tx.amount)}
                 </td>

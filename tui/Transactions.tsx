@@ -502,7 +502,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
               <Text color={isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected}>
                 {tx.date}
               </Text>
-              <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.name, descW).padEnd(descW)}</Text>
+              <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW).padEnd(descW)}</Text>
               <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored}>
                 {fmt(tx.amount).padStart(10)}
               </Text>
