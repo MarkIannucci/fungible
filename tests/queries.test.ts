@@ -12,6 +12,7 @@ import {
   getHiddenCategories,
   getRecentTransactions,
   getMerchantSummary,
+  getSearchFilteredData,
   getOwnerRows,
   hasAccounts,
   getTransactions,
@@ -341,6 +342,54 @@ describe('getMerchantSummary', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].merchant).toBe('A');
     expect(rows[0].total).toBeCloseTo(90);
+  });
+
+  it('uses merchant_name as display when display_name is null', async () => {
+    await insertTx({ amount: 80, category: 'Food & Drink', name: 'STARBUCKS #12345', merchantName: 'Starbucks' });
+    const rows = await getMerchantSummary('Food & Drink', '2025-01-01', '2025-01-31');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].merchant).toBe('Starbucks');
+  });
+
+  it('prefers display_name over merchant_name', async () => {
+    await insertTx({ amount: 50, category: 'Food & Drink', name: 'LYFT *TRIP', merchantName: 'Lyft Technologies', displayName: 'Lyft' });
+    const rows = await getMerchantSummary('Food & Drink', '2025-01-01', '2025-01-31');
+    expect(rows[0].merchant).toBe('Lyft');
+  });
+
+  it('falls back to raw name when both display_name and merchant_name are null', async () => {
+    await insertTx({ amount: 60, category: 'Food & Drink', name: 'CORNER BAKERY' });
+    const rows = await getMerchantSummary('Food & Drink', '2025-01-01', '2025-01-31');
+    expect(rows[0].merchant).toBe('CORNER BAKERY');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getSearchFilteredData merchant_name fallback', () => {
+  it('matches search against merchant_name when display_name is null', async () => {
+    await insertTx({ amount: 40, category: 'Shopping', name: 'AMZN MKTP US*12345', merchantName: 'Amazon' });
+    await insertTx({ amount: 20, category: 'Shopping', name: 'TARGET 0123' });
+
+    const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', 'Amazon');
+    expect(summary.expenses).toBeCloseTo(40);
+  });
+
+  it('does not match raw name when merchant_name overrides the display', async () => {
+    // The raw name should not be searchable once merchant_name overrides it.
+    await insertTx({ amount: 40, category: 'Shopping', name: 'AMZN MKTP US*12345', merchantName: 'Amazon' });
+
+    const { summary: byRaw } = await getSearchFilteredData('2025-01-01', '2025-01-31', 'AMZN');
+    expect(byRaw.expenses).toBe(0);
+
+    const { summary: byMerchant } = await getSearchFilteredData('2025-01-01', '2025-01-31', 'Amazon');
+    expect(byMerchant.expenses).toBeCloseTo(40);
+  });
+
+  it('still matches display_name when both are set', async () => {
+    await insertTx({ amount: 30, category: 'Travel', name: 'LYFT *RIDE', merchantName: 'Lyft Technologies', displayName: 'Lyft' });
+
+    const { summary } = await getSearchFilteredData('2025-01-01', '2025-01-31', 'Lyft');
+    expect(summary.expenses).toBeCloseTo(30);
   });
 });
 
