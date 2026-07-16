@@ -67,7 +67,6 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [mode, setMode] = useState<Mode>('list');
   const { statusMsg, showStatus } = useStatusMessage();
   const [categories, setCategories] = useState<string[]>([]);
-  const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
 
   // Edit panel state
@@ -406,10 +405,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         syncAll(true)
           .then((results) => {
             const added = results.reduce((s, r) => s + r.added, 0);
-            setSyncMsg(`Synced — ${added} new`);
+            showStatus(`Synced — ${added} new`, 3000);
             load(search, true);
           })
-          .catch(() => setSyncMsg('Sync failed'))
+          .catch(() => showStatus('Sync failed', 3000))
           .finally(() => setSyncing(false));
         return;
       }
@@ -535,7 +534,6 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       <Divider />
       <Text dimColor>{txs.length} transactions{txs.length === 200 ? ' (limit 200)' : ''}</Text>
       {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
-      {syncMsg && <Text color={C_POSITIVE}>{syncMsg}</Text>}
 
       {mode === 'tag' && selected && (
         <ModalPanel borderColor={C_WARNING}>

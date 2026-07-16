@@ -46,7 +46,7 @@ export function fmtTimeAgo(ms: number | null): string {
   const diffHr = Math.floor(diffMin / 60);
   if (diffHr < 24) return `${diffHr} hr ago`;
   const diffDays = Math.floor(diffHr / 24);
-  return `${diffDays} days ago`;
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
 }
 
 export function fmtSpan(earliest: string | null, latest: string | null): string {

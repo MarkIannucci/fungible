@@ -71,8 +71,8 @@ export function Accounts() {
             </button>
           ))}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
-          <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing} style={{ marginLeft: 0 }}>
+        <div className={styles.syncRow}>
+          <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing}>
             {syncing ? 'Syncing…' : '⟳ Sync'}
           </button>
           {lastSynced !== undefined && (
