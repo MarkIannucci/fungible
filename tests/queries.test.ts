@@ -12,6 +12,7 @@ import {
   getHiddenCategories,
   getRecentTransactions,
   getMerchantSummary,
+  getLastSyncedAt,
   getOwnerRows,
   hasAccounts,
   getTransactions,
@@ -480,6 +481,48 @@ describe('hasAccounts', () => {
       args: [],
     });
     expect(await hasAccounts()).toBe(true);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getLastSyncedAt', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM plaid_items');
+  });
+
+  it('returns null when no plaid_items exist', async () => {
+    expect(await getLastSyncedAt()).toBeNull();
+  });
+
+  it('returns null when items exist but last_synced_at is unset', async () => {
+    await db.execute({
+      sql: "INSERT INTO plaid_items (item_id, access_token) VALUES ('i1', 'tok')",
+      args: [],
+    });
+    expect(await getLastSyncedAt()).toBeNull();
+  });
+
+  it('returns the timestamp when one item has been synced', async () => {
+    const ts = Date.now();
+    await db.execute({
+      sql: "INSERT INTO plaid_items (item_id, access_token, last_synced_at) VALUES ('i1', 'tok', ?)",
+      args: [ts],
+    });
+    expect(await getLastSyncedAt()).toBe(ts);
+  });
+
+  it('returns the maximum last_synced_at across multiple items', async () => {
+    const older = Date.now() - 60_000;
+    const newer = Date.now();
+    await db.execute({
+      sql: "INSERT INTO plaid_items (item_id, access_token, last_synced_at) VALUES ('i1', 'tok1', ?)",
+      args: [older],
+    });
+    await db.execute({
+      sql: "INSERT INTO plaid_items (item_id, access_token, last_synced_at) VALUES ('i2', 'tok2', ?)",
+      args: [newer],
+    });
+    expect(await getLastSyncedAt()).toBe(newer);
   });
 });
 
