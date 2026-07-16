@@ -80,7 +80,8 @@ export function Health() {
   const cashMonths = spend > 0 ? data.cash / spend : 0;
   const liquidMonths = spend > 0 ? data.liquid / spend : 0;
   const fireProgress = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
-  const savingsRate = data.monthlyIncome > 0 ? ((savings + pretax) / data.monthlyIncome) * 100 : null;
+  const grossIncome = data.monthlyIncome + pretax;
+  const savingsRate = grossIncome > 0 ? ((savings + pretax) / grossIncome) * 100 : null;
   const netCash = data.cash - data.totalDebt;
   const remainingDebt = Math.max(0, data.totalDebt - data.cash);
   const debtMonths = savings > 0 ? remainingDebt / savings : null;
@@ -117,7 +118,7 @@ export function Health() {
           </div>
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Monthly income</span>
-            <span className={`num ${styles.metricValue}`}>{fmt(data.monthlyIncome)}</span>
+            <span className={`num ${styles.metricValue}`}>{fmt(grossIncome)}</span>
             <span className={`dim ${styles.metricHint}`}>avg past 12 months</span>
           </div>
         </section>

@@ -174,8 +174,9 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
   const years          = yearsToFire(data.netWorth, monthlySavings + pretaxSavings, fireNumber, growth);
   const coast          = coastYears(data.netWorth, fireNumber, growth);
 
-  const savingsRate = data.monthlyIncome > 0
-    ? ((monthlySavings + pretaxSavings) / data.monthlyIncome) * 100
+  const grossIncome = data.monthlyIncome + pretaxSavings;
+  const savingsRate = grossIncome > 0
+    ? ((monthlySavings + pretaxSavings) / grossIncome) * 100
     : null;
 
   const netCash        = data.cash - data.totalDebt;
@@ -234,7 +235,7 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
         </Box>
         <Box gap={3}>
           <Text dimColor>{'Monthly income'.padEnd(L)}</Text>
-          <Text bold>{fmt(data.monthlyIncome).padStart(V)}</Text>
+          <Text bold>{fmt(grossIncome).padStart(V)}</Text>
           <Text dimColor>avg past 12 months</Text>
         </Box>
       </Box>
