@@ -370,7 +370,7 @@ export async function getSearchFilteredData(
 ): Promise<{ summary: MonthlySummary; flexData: FlexSummary }> {
   const f = buildFilterClause(filter, 't');
   const result = await db.execute({
-    sql: `SELECT COALESCE(t.display_name, t.merchant_name, t.name) as display, t.merchant_name, t.amount, t.category,
+    sql: `SELECT COALESCE(t.display_name, t.merchant_name, t.name) as display, t.amount, t.category,
             COALESCE(c.flexibility, 'untagged') as flex
           FROM transactions t
           LEFT JOIN categories c ON c.name = t.category
@@ -379,7 +379,7 @@ export async function getSearchFilteredData(
             AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { display: string; merchant_name: string | null; amount: number; category: string; flex: string }[];
+  const rows = result.rows as unknown as { display: string; amount: number; category: string; flex: string }[];
 
   const re = buildSearchRe(search);
   const matches = rows.filter((r) => re.test(r.display));
@@ -574,7 +574,10 @@ export async function getTransactions(filters: {
   const rows = result.rows as unknown as TxRow[];
   if (!search) return rows.slice(0, 200);
   const re = buildSearchRe(search);
-  return rows.filter((r) => re.test(r.display_name ?? r.merchant_name ?? r.name)).slice(0, 200);
+  return rows.filter((r) =>
+    re.test(r.display_name ?? r.merchant_name ?? r.name) ||
+    (!r.display_name && r.merchant_name !== null && re.test(r.name)),
+  ).slice(0, 200);
 }
 
 export async function countSearchMatches(
