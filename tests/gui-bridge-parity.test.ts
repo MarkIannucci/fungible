@@ -53,6 +53,11 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   setSyncResult: 'GUI will surface sync status in its own layer',
   getSyncFailures: 'GUI will surface sync status in its own layer',
   onSyncStatus: 'GUI will surface sync status in its own layer',
+
+  // Generic settings access — GUI uses typed wrappers (settings.getPretaxMonthly /
+  // settings.setPretaxMonthly) rather than the raw getSetting/setSetting functions.
+  getSetting: 'GUI exposes typed wrappers (getPretaxMonthly/setPretaxMonthly) via settings namespace instead of generic access',
+  setSetting: 'GUI exposes typed wrappers (getPretaxMonthly/setPretaxMonthly) via settings namespace instead of generic access',
 };
 
 function collectTuiCoreImports(): Map<string, string[]> {
