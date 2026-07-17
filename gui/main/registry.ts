@@ -26,6 +26,7 @@ import {
   getAllTagRules,
   getCategoryDetails,
   toggleHiddenCategory,
+  getLastSyncedAt,
 } from '../../core/queries.js';
 import {
   setTransactionCategory,
@@ -222,6 +223,7 @@ export const registry = {
     },
     // Initial hydration for a renderer that mounts after a background sync failed.
     getStatus: async () => getSyncFailures(),
+    getLastSyncedAt,
   },
   config: {
     writeEnv: async (updates: EnvUpdates): Promise<{ written: string[] }> => {

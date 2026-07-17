@@ -6,6 +6,7 @@ import {
   upsertCategoryRule, upsertNameRule,
   setTransactionCategoryBulk, clearOverridesBulk, setIgnoredBulk,
 } from '../core/transactions.js';
+import { syncAll } from '../core/sync.js';
 import {
   getTagOptions, getTransactionTagIds, getOrCreateTag,
   addTagToTransaction, removeTagFromTransaction, addTagToTransactions,
@@ -13,13 +14,14 @@ import {
 } from '../core/tags.js';
 import { applyCategoriesToAll } from '../core/categorize.js';
 import { countPatternMatches } from '../core/rule-utils.js';
-import { getTransactions, getAllCategories, getDataBounds, type TxRow, type SortMode } from '../core/queries.js';
+import { getTransactions, getAllCategories, getDataBounds, getLastSyncedAt, type TxRow, type SortMode } from '../core/queries.js';
 import { isFilterActive, filterSummary } from '../core/filters.js';
 import type { Screen, TxFilter } from './App.js';
 import { useFilter } from './FilterContext.js';
 import { useLoadGuard } from './useLoadGuard.js';
 import { handleNavKey } from './nav.js';
 import { Divider } from './fmt.js';
+import { fmtTimeAgo } from '../core/fmt.js';
 import { useTerminalWidth, MONTHS, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_MANUAL, C_ACCENT, C_DIM } from './ui.js';
 import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
@@ -66,6 +68,8 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [mode, setMode] = useState<Mode>('list');
   const { statusMsg, showStatus } = useStatusMessage();
   const [categories, setCategories] = useState<string[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState<number | null>(null);
 
   // Edit panel state
   const [editField, setEditField] = useState<EditField>('name');
@@ -94,7 +98,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     });
   }
 
-  useEffect(() => { void getDataBounds().then(setBounds); void getAllCategories().then(setCategories); }, []);
+  useEffect(() => { void getDataBounds().then(setBounds); void getAllCategories().then(setCategories); void getLastSyncedAt().then(setLastSynced); }, [refreshKey]);
   useEffect(() => { load(); }, [from, to, search, sort, txType, flex, sharedFilter, refreshKey]);
 
   const setTyping = useSetTyping();
@@ -403,6 +407,19 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         load(search);
         return;
       }
+      if (input === 'S' && !syncing) {
+        setSyncing(true);
+        syncAll(true)
+          .then((results) => {
+            const added = results.reduce((s, r) => s + r.added, 0);
+            showStatus(`Synced — ${added} new`, 3000);
+            load(search, true);
+            void getLastSyncedAt().then(setLastSynced);
+          })
+          .catch(() => showStatus('Sync failed', 3000))
+          .finally(() => setSyncing(false));
+        return;
+      }
     }
   }, { isActive: isActive !== false });
 
@@ -456,6 +473,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         <Text bold>
           Transactions
           {filterLabel ? <Text color={C_WARNING}>  {filterLabel}</Text> : null}
+          <Text dimColor>{'  · '}{syncing ? 'syncing…' : `last synced ${fmtTimeAgo(lastSynced)}`}</Text>
           {dl ? <Text>
             <Text color={C_WARNING}>{filterLabel ? '  · ' : '  '}</Text>
             <Text dimColor>← </Text>
@@ -466,7 +484,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  [x] delete`
+          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  [x] delete  ·  [S] sync`
           : '[/] search'}
       </Text>
 

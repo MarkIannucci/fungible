@@ -8,6 +8,7 @@ import type { LinkedAccount, CsvAccount } from '../../../../core/queries.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
+import { fmtTimeAgo } from '../../../../core/fmt.js';
 import styles from './Accounts.module.css';
 
 type Tab = 'accounts' | 'add-data' | 'dupes';
@@ -27,6 +28,7 @@ export function Accounts() {
   const accounts = useQuery(() => api.queries.getLinkedAccounts(), [reloadKey]) ?? [];
   const dupes = useQuery(() => api.accounts.getCsvPlaidDupeCandidates(), [reloadKey]) ?? [];
   const members = useQuery(() => api.profile.getHouseholdMembers(), [reloadKey]) ?? [];
+  const lastSynced = useQuery(() => api.sync.getLastSyncedAt(), [reloadKey]);
 
   const [editAcct, setEditAcct] = useState<LinkedAccount | null>(null);
   const [valueAcct, setValueAcct] = useState<LinkedAccount | null>(null);
@@ -84,9 +86,14 @@ export function Accounts() {
             </button>
           ))}
         </div>
-        <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing}>
-          {syncing ? 'Syncing…' : '⟳ Sync'}
-        </button>
+        <div className={styles.syncRow}>
+          <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing}>
+            {syncing ? 'Syncing…' : '⟳ Sync'}
+          </button>
+          {lastSynced !== undefined && (
+            <span className="dim">{fmtTimeAgo(lastSynced ?? null)}</span>
+          )}
+        </div>
       </div>
 
       {tab === 'accounts' && (

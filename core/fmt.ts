@@ -37,6 +37,18 @@ export function fmtCompactSigned(n: number): string {
 
 // Formats a tag's date span (ISO YYYY-MM-DD bounds) down to month granularity,
 // e.g. "2024-01 → 2025-06", collapsing to a single month when they match.
+export function fmtTimeAgo(ms: number | null): string {
+  if (ms === null) return 'never';
+  const diffMs = Date.now() - ms;
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 2) return 'just now';
+  if (diffMin < 60) return `${diffMin} min ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} hr ago`;
+  const diffDays = Math.floor(diffHr / 24);
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+}
+
 export function fmtSpan(earliest: string | null, latest: string | null): string {
   if (!earliest || !latest) return '—';
   const from = earliest.slice(0, 7);
