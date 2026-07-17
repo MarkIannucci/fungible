@@ -7,7 +7,7 @@ vi.mock('../core/db.js', async () => {
 
 import {
   getSetting, setSetting, getDefaultDaysRequested,
-  DEFAULT_START_DATE_KEY, MAX_DAYS_REQUESTED,
+  DEFAULT_START_DATE_KEY, MAX_DAYS_REQUESTED, PRETAX_MONTHLY_KEY,
 } from '../core/settings.js';
 
 describe('getSetting / setSetting', () => {
@@ -35,5 +35,29 @@ describe('getDefaultDaysRequested', () => {
   it('returns MAX_DAYS_REQUESTED for a date farther back than 730 days', async () => {
     await setSetting(DEFAULT_START_DATE_KEY, '2020-01-01');
     expect(await getDefaultDaysRequested()).toBe(MAX_DAYS_REQUESTED);
+  });
+});
+
+describe('PRETAX_MONTHLY_KEY', () => {
+  it('returns null when no pretax contribution is set', async () => {
+    expect(await getSetting(PRETAX_MONTHLY_KEY)).toBeNull();
+  });
+
+  it('stores and retrieves a pretax monthly value', async () => {
+    await setSetting(PRETAX_MONTHLY_KEY, '500');
+    expect(await getSetting(PRETAX_MONTHLY_KEY)).toBe('500');
+  });
+
+  it('upserts — updating the dial replaces the previous value', async () => {
+    await setSetting(PRETAX_MONTHLY_KEY, '400');
+    await setSetting(PRETAX_MONTHLY_KEY, '600');
+    expect(await getSetting(PRETAX_MONTHLY_KEY)).toBe('600');
+  });
+
+  it('persists independently of other settings keys', async () => {
+    await setSetting(PRETAX_MONTHLY_KEY, '350');
+    await setSetting(DEFAULT_START_DATE_KEY, '2023-01-01');
+    expect(await getSetting(PRETAX_MONTHLY_KEY)).toBe('350');
+    expect(await getSetting(DEFAULT_START_DATE_KEY)).toBe('2023-01-01');
   });
 });
