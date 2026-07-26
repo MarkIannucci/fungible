@@ -211,3 +211,48 @@ describe('applyCategoriesToAll', () => {
     expect(count).toBe(0);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────
+describe('account-scoped rules', () => {
+  async function insertScopedRule(priority: number, match_type: string, pattern: string, category: string, account_id: string | null) {
+    await db.execute({
+      sql: 'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount, account_id) VALUES (?, ?, ?, ?, NULL, NULL, ?)',
+      args: [priority, match_type, pattern, category, account_id],
+    });
+  }
+
+  it('account-scoped rule beats global rule at the same priority for its account', async () => {
+    await insertScopedRule(10, 'name', 'amazon', 'Shopping', null);
+    await insertScopedRule(10, 'name', 'amazon', 'Business Expenses', 'work');
+    expect(await categorize('AMAZON.COM', null, null, undefined, 'work')).toBe('Business Expenses');
+  });
+
+  it('global rule applies when no scoped rule matches the account', async () => {
+    await insertScopedRule(10, 'name', 'amazon', 'Shopping', null);
+    await insertScopedRule(10, 'name', 'amazon', 'Business Expenses', 'work');
+    expect(await categorize('AMAZON.COM', null, null, undefined, 'personal')).toBe('Shopping');
+  });
+
+  it('higher-priority global rule still beats a lower-priority scoped rule', async () => {
+    await insertScopedRule(5, 'name', 'amazon', 'Business Expenses', 'work');
+    await insertScopedRule(10, 'name', 'amazon', 'Shopping', null);
+    expect(await categorize('AMAZON.COM', null, null, undefined, 'work')).toBe('Shopping');
+  });
+
+  it('rule scoped to a different account is ignored', async () => {
+    await insertScopedRule(10, 'name', 'amazon', 'Business Expenses', 'work');
+    expect(await categorize('AMAZON.COM', null, null, undefined, 'personal')).toBe('Uncategorized');
+    expect(await categorize('AMAZON.COM', null, null, undefined, undefined)).toBe('Uncategorized');
+  });
+
+  it('applyCategoriesToAll applies scoped rules only to matching accounts', async () => {
+    await insertScopedRule(10, 'name', 'amazon', 'Business Expenses', 'work');
+    await db.execute({ sql: "INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored) VALUES ('w1','work','2025-01-01','AMAZON',10,'Uncategorized',0,0)" });
+    await db.execute({ sql: "INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored) VALUES ('p1','personal','2025-01-01','AMAZON',10,'Uncategorized',0,0)" });
+    await applyCategoriesToAll();
+    const w = (await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: ['w1'] })).rows[0] as unknown as { category: string };
+    const p = (await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: ['p1'] })).rows[0] as unknown as { category: string };
+    expect(w.category).toBe('Business Expenses');
+    expect(p.category).toBe('Uncategorized');
+  });
+});

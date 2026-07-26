@@ -78,6 +78,22 @@ export async function initDb() {
       FOREIGN KEY (transaction_id) REFERENCES transactions(id),
       FOREIGN KEY (tag_id) REFERENCES tags(id)
     )`,
+    `CREATE TABLE IF NOT EXISTS tag_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      priority INTEGER NOT NULL DEFAULT 0,
+      match_type TEXT NOT NULL CHECK(match_type IN ('name','regex','all')),
+      pattern TEXT NOT NULL DEFAULT '',
+      tag_id INTEGER NOT NULL,
+      account_id TEXT,
+      min_amount REAL,
+      max_amount REAL,
+      FOREIGN KEY (tag_id) REFERENCES tags(id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS tag_rule_suppressions (
+      transaction_id TEXT NOT NULL,
+      tag_id INTEGER NOT NULL,
+      PRIMARY KEY (transaction_id, tag_id)
+    )`,
     `CREATE TABLE IF NOT EXISTS balance_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       account_id TEXT NOT NULL,
@@ -110,6 +126,9 @@ export async function initDb() {
     'ALTER TABLE accounts ADD COLUMN owner TEXT',
     'ALTER TABLE accounts ADD COLUMN apr REAL',
     'ALTER TABLE accounts ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE accounts ADD COLUMN item_id TEXT',
+    'ALTER TABLE category_rules ADD COLUMN account_id TEXT',
+    'ALTER TABLE name_rules ADD COLUMN account_id TEXT',
   ];
   for (const sql of migrations) {
     try {

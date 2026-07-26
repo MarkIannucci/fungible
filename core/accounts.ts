@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
+import { applyTagRules } from './tag-rules.js';
 import { parseDate, generateTxId } from './csv.js';
 import type { CsvAccount } from './queries.js';
 
@@ -52,6 +53,8 @@ export async function deleteAccount(id: string): Promise<void> {
     { sql: 'DELETE FROM transaction_tags WHERE transaction_id IN (SELECT id FROM transactions WHERE account_id = ?)', args: [id] },
     { sql: 'DELETE FROM transactions WHERE account_id = ?', args: [id] },
     { sql: 'DELETE FROM balance_history WHERE account_id = ?', args: [id] },
+    { sql: 'DELETE FROM category_rules WHERE account_id = ?', args: [id] },
+    { sql: 'DELETE FROM name_rules WHERE account_id = ?', args: [id] },
     { sql: 'DELETE FROM accounts WHERE id = ?', args: [id] },
   ], 'write');
 }
@@ -75,6 +78,7 @@ export async function importCsvTransactions(
   const rules = await loadCategoryRules();
 
   let imported = 0, skipped = 0;
+  const newIds: string[] = [];
   for (const row of csvRows) {
     const rawDate = row[dateCol] ?? '';
     const name = row[nameCol] ?? '';
@@ -89,14 +93,16 @@ export async function importCsvTransactions(
     }
     if (!rawDate || !name || isNaN(amount)) { skipped++; continue; }
     const date = parseDate(rawDate);
-    const category = categorizeWithRules(rules, name, null, null);
+    const category = categorizeWithRules(rules, name, null, null, amount, account.id);
     const id = generateTxId(account.mask ?? account.id, date, name, amount);
     const result = await db.execute({
       sql: 'INSERT OR IGNORE INTO transactions (id, account_id, date, name, amount, category, raw_category, pending) VALUES (?, ?, ?, ?, ?, ?, NULL, 0)',
       args: [id, account.id, date, name, amount, category],
     });
-    if (result.rowsAffected > 0) imported++; else skipped++;
+    if (result.rowsAffected > 0) { imported++; newIds.push(id); } else skipped++;
   }
+  // Tag only genuinely new rows so a tag a user removed never returns.
+  await applyTagRules({ txIds: newIds });
   return { imported, skipped };
 }
 

@@ -1,7 +1,8 @@
-import { getPlaidClient } from './plaid.js';
+import { getPlaidClient, plaidErrorMessage } from './plaid.js';
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { applyNameRulesWithRules, loadNameRules } from './rename.js';
+import { applyTagRules } from './tag-rules.js';
 import { deduplicateCsvVsPlaid } from './dedup.js';
 import { decryptToken } from './crypto.js';
 import type { Transaction } from 'plaid';
@@ -37,10 +38,10 @@ export async function syncTransactions(accessToken: string, itemId: string) {
     accountsResponse.data.accounts.flatMap((acct) => {
       const rows: { sql: string; args: (string | number | null)[] }[] = [
         {
-          sql: `INSERT INTO accounts (id, name, type, subtype, mask)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET name=excluded.name`,
-          args: [acct.account_id, acct.name, acct.type, acct.subtype ?? null, acct.mask ?? null],
+          sql: `INSERT INTO accounts (id, name, type, subtype, mask, item_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET name=excluded.name, item_id=excluded.item_id`,
+          args: [acct.account_id, acct.name, acct.type, acct.subtype ?? null, acct.mask ?? null, itemId],
         },
       ];
       const balance = acct.balances.current;
@@ -64,8 +65,8 @@ export async function syncTransactions(accessToken: string, itemId: string) {
     await db.batch(
       [...added, ...modified].map((tx) => {
         const rawCategory = tx.personal_finance_category?.primary ?? null;
-        const category = categorizeWithRules(catRules, tx.name, tx.merchant_name ?? null, rawCategory, tx.amount);
-        const displayName = applyNameRulesWithRules(nameRules, tx.name, tx.amount);
+        const category = categorizeWithRules(catRules, tx.name, tx.merchant_name ?? null, rawCategory, tx.amount, tx.account_id);
+        const displayName = applyNameRulesWithRules(nameRules, tx.name, tx.amount, tx.account_id);
         return {
           sql: `INSERT INTO transactions (id, account_id, date, name, merchant_name, amount, category, raw_category, pending, display_name)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -86,12 +87,24 @@ export async function syncTransactions(accessToken: string, itemId: string) {
       }),
       'write',
     );
+
+    // Apply tag rules to new/changed rows. Suppression keeps removed tags gone,
+    // so re-asserting on modified/existing rows is safe.
+    await applyTagRules({ txIds: [...added, ...modified].map((tx) => tx.transaction_id) });
   }
 
-  // Remove deleted
+  // Remove deleted. Clear child rows first: transaction_tags has a FK
+  // (transaction_id → transactions.id), so deleting a tagged transaction
+  // directly fails with a FOREIGN KEY constraint. tag_rule_suppressions is
+  // keyed by transaction_id too (no FK, but clearing it avoids orphan rows).
+  // One batch keeps the three deletes atomic.
   if (removedIds.length > 0) {
     const placeholders = removedIds.map(() => '?').join(',');
-    await db.execute({ sql: `DELETE FROM transactions WHERE id IN (${placeholders})`, args: removedIds });
+    await db.batch([
+      { sql: `DELETE FROM transaction_tags WHERE transaction_id IN (${placeholders})`, args: removedIds },
+      { sql: `DELETE FROM tag_rule_suppressions WHERE transaction_id IN (${placeholders})`, args: removedIds },
+      { sql: `DELETE FROM transactions WHERE id IN (${placeholders})`, args: removedIds },
+    ], 'write');
   }
 
   // Save cursor and last_synced_at
@@ -113,20 +126,37 @@ export async function syncTransactions(accessToken: string, itemId: string) {
 
 const DEBOUNCE_MS = 15 * 60 * 1000;
 
-export async function syncAll(force = false) {
+export type SyncItemResult = {
+  itemId: string;
+  added: number; modified: number; removed: number; dupes: number;
+  skipped: boolean;
+  // Set when this item failed to sync; carries the extracted Plaid/error message
+  // so callers can report which item broke and why. One item failing does not
+  // abort the others.
+  error?: string;
+};
+
+export async function syncAll(force = false): Promise<SyncItemResult[]> {
   const itemsRes = await db.execute('SELECT item_id, access_token, last_synced_at FROM plaid_items');
   const items = itemsRes.rows as unknown as {
     item_id: string; access_token: string; last_synced_at: number | null;
   }[];
 
-  const results = [];
+  const results: SyncItemResult[] = [];
   for (const item of items) {
     if (!force && item.last_synced_at && Date.now() - Number(item.last_synced_at) < DEBOUNCE_MS) {
       results.push({ itemId: item.item_id, added: 0, modified: 0, removed: 0, dupes: 0, skipped: true });
       continue;
     }
-    const result = await syncTransactions(decryptToken(item.access_token), item.item_id);
-    results.push({ itemId: item.item_id, ...result, skipped: false });
+    try {
+      const result = await syncTransactions(decryptToken(item.access_token), item.item_id);
+      results.push({ itemId: item.item_id, ...result, skipped: false });
+    } catch (err) {
+      results.push({
+        itemId: item.item_id, added: 0, modified: 0, removed: 0, dupes: 0,
+        skipped: false, error: plaidErrorMessage(err),
+      });
+    }
   }
   return results;
 }

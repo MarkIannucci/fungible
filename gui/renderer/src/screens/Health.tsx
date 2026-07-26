@@ -49,13 +49,20 @@ export function Health() {
 
   const [monthlySpend, setMonthlySpend] = useState<number | null>(null);
   const [monthlySavings, setMonthlySavings] = useState<number | null>(null);
+  const [pretaxSavings, setPretaxSavings] = useState<number | null>(null);
   const [withdrawal, setWithdrawal] = useState(DEFAULT_WITHDRAWAL);
   const [growth, setGrowth] = useState(DEFAULT_GROWTH);
+
+  const pretaxRaw = useQuery(() => api.settings.getPretaxMonthly(), []);
+  useEffect(() => {
+    if (pretaxRaw !== undefined) setPretaxSavings(pretaxRaw ? roundToStep(parseFloat(pretaxRaw)) : 0);
+  }, [pretaxRaw]);
 
   const defaultSpend = data ? Math.max(SPEND_STEP, roundToStep(data.avgMonthlyExpenses)) : SPEND_STEP;
   const defaultSavings = data ? roundToStep(data.monthlySavings) : 0;
   const spend = monthlySpend ?? defaultSpend;
   const savings = monthlySavings ?? defaultSavings;
+  const pretax = pretaxSavings ?? 0;
 
   const annualSpend = spend * 12;
   const fireNumber = annualSpend / (withdrawal / 100);
@@ -64,16 +71,18 @@ export function Health() {
   const [coast, setCoast] = useState<number | null>(null);
   useEffect(() => {
     if (!data) return;
-    void api.health.yearsToFire(data.netWorth, savings, fireNumber, growth).then(setYears);
+    void api.health.yearsToFire(data.netWorth, savings + pretax, fireNumber, growth).then(setYears);
     void api.health.coastYears(data.netWorth, fireNumber, growth).then(setCoast);
-  }, [data, savings, fireNumber, growth]);
+  }, [data, savings, pretax, fireNumber, growth]);
 
   if (!data) return <p className="dim">Loading…</p>;
 
   const cashMonths = spend > 0 ? data.cash / spend : 0;
   const liquidMonths = spend > 0 ? data.liquid / spend : 0;
   const fireProgress = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
-  const savingsRate = data.monthlyIncome > 0 ? (savings / data.monthlyIncome) * 100 : null;
+  const grossIncome = data.monthlyIncome + pretax;
+  const savingsRate = grossIncome > 0 ? ((savings + pretax) / grossIncome) * 100 : null;
+  const rawSavingsRate = data.monthlyIncome > 0 ? (savings / data.monthlyIncome) * 100 : null;
   const netCash = data.cash - data.totalDebt;
   const remainingDebt = Math.max(0, data.totalDebt - data.cash);
   const debtMonths = savings > 0 ? remainingDebt / savings : null;
@@ -105,12 +114,17 @@ export function Health() {
                       : savingsRate >= 50
                         ? 'FIRE pace'
                         : 'on track'}
+              {savingsRate !== null && pretax > 0 && rawSavingsRate !== null
+                ? ` (${fmtPct(rawSavingsRate)} take-home)`
+                : ''}
             </span>
           </div>
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Monthly income</span>
-            <span className={`num ${styles.metricValue}`}>{fmt(data.monthlyIncome)}</span>
-            <span className={`dim ${styles.metricHint}`}>avg past 12 months</span>
+            <span className={`num ${styles.metricValue}`}>{fmt(grossIncome)}</span>
+            <span className={`dim ${styles.metricHint}`}>
+              avg past 12 months{pretax > 0 ? ` (${fmt(data.monthlyIncome)} take-home)` : ''}
+            </span>
           </div>
         </section>
 
@@ -252,6 +266,21 @@ export function Health() {
             signed
             onChange={setMonthlySavings}
             onReset={() => setMonthlySavings(null)}
+          />
+          <DollarDial
+            label="Monthly pretax savings"
+            value={pretax}
+            defaultValue={0}
+            min={0}
+            hint="401k/HSA — not in transactions"
+            onChange={(v) => {
+              setPretaxSavings(Math.max(0, v));
+              void api.settings.setPretaxMonthly(String(Math.max(0, v)));
+            }}
+            onReset={() => {
+              setPretaxSavings(0);
+              void api.settings.setPretaxMonthly('0');
+            }}
           />
           <SliderDial
             label="Withdrawal rate"

@@ -67,7 +67,8 @@ In the desktop app, pick **"Try Demo Mode"** from the app menu (macOS) or Help m
 ```bash
 brew tap tomfunk/fungible
 brew install fungible
-fungible --setup   # first-time setup wizard
+fungible --setup     # first-time setup wizard
+fungible --version   # print installed version
 fungible
 ```
 

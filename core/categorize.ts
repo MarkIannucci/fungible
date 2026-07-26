@@ -7,6 +7,7 @@ type Rule = {
   category: string;
   min_amount: number | null;
   max_amount: number | null;
+  account_id: string | null;
 };
 
 // Plaid's personal_finance_category → our simplified categories
@@ -50,11 +51,13 @@ export function categorizeWithRules(
   merchant: string | null,
   plaidCategory: string | null,
   amount?: number,
+  accountId?: string | null,
 ): string {
   const haystacks = [name.toLowerCase()];
   if (merchant && merchant.toLowerCase() !== name.toLowerCase()) haystacks.push(merchant.toLowerCase());
 
   for (const rule of rules) {
+    if (rule.account_id !== null && rule.account_id !== accountId) continue;
     if (!inAmountRange(amount, rule.min_amount, rule.max_amount)) continue;
     if (matchesPattern(rule.pattern, rule.match_type, haystacks)) return rule.category;
   }
@@ -69,7 +72,7 @@ export function categorizeWithRules(
 /** Load category rules from DB. */
 export async function loadCategoryRules(): Promise<Rule[]> {
   const result = await db.execute(
-    'SELECT match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC'
+    'SELECT match_type, pattern, category, min_amount, max_amount, account_id FROM category_rules ORDER BY priority DESC, (account_id IS NULL) ASC, id ASC'
   );
   return result.rows as unknown as Rule[];
 }
@@ -80,9 +83,10 @@ export async function categorize(
   merchant: string | null,
   plaidCategory: string | null,
   amount?: number,
+  accountId?: string | null,
 ): Promise<string> {
   const rules = await loadCategoryRules();
-  return categorizeWithRules(rules, name, merchant, plaidCategory, amount);
+  return categorizeWithRules(rules, name, merchant, plaidCategory, amount, accountId);
 }
 
 /** Re-categorize all transactions without a manual override. Returns count updated. */
@@ -90,16 +94,16 @@ export async function applyCategoriesToAll(): Promise<number> {
   const rules = await loadCategoryRules();
 
   const txRes = await db.execute(
-    'SELECT id, name, merchant_name, raw_category, amount, category FROM transactions WHERE manual_category IS NULL'
+    'SELECT id, account_id, name, merchant_name, raw_category, amount, category FROM transactions WHERE manual_category IS NULL'
   );
   const rows = txRes.rows as unknown as {
-    id: string; name: string; merchant_name: string | null;
+    id: string; account_id: string; name: string; merchant_name: string | null;
     raw_category: string | null; amount: number; category: string;
   }[];
 
   const updates: { sql: string; args: (string | number | null)[] }[] = [];
   for (const tx of rows) {
-    const cat = categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount);
+    const cat = categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount, tx.account_id);
     if (cat !== 'Uncategorized' && cat !== tx.category) {
       updates.push({ sql: 'UPDATE transactions SET category = ? WHERE id = ?', args: [cat, tx.id] });
     }

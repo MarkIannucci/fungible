@@ -440,7 +440,7 @@ export function Dashboard() {
                     <th className={styles.th}>Amount</th>
                     <th className={styles.th}>Δ typical</th>
                     <th className={styles.th}></th>
-                    <th className={styles.th}>Ratio</th>
+                    <th className={styles.th}>× med</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -567,7 +567,7 @@ export function Dashboard() {
                   <th className={styles.th}>Tier</th>
                   <th className={styles.th}>Amount</th>
                   <th className={styles.th}>Δ typical</th>
-                  <th className={styles.th}>Ratio</th>
+                  <th className={styles.th}>× med</th>
                 </tr>
               </thead>
               <tbody>

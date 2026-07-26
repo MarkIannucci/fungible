@@ -92,7 +92,7 @@ export async function getMerchantSummary(
   const f = buildFilterClause(filter, 'transactions');
 
   const result = await db.execute({
-    sql: `SELECT COALESCE(display_name, name) as merchant, SUM(amount) as total, COUNT(*) as count
+    sql: `SELECT COALESCE(display_name, merchant_name, name) as merchant, SUM(amount) as total, COUNT(*) as count
           FROM transactions
           WHERE date >= ? AND date <= ? AND category = ?
             AND pending = 0 AND ignored = 0
@@ -134,6 +134,12 @@ export async function getRecentTransactions(limit = 10): Promise<RecentTransacti
 export async function hasAccounts(): Promise<boolean> {
   const result = await db.execute('SELECT COUNT(*) as count FROM plaid_items');
   return Number((result.rows[0] as unknown as { count: number }).count) > 0;
+}
+
+export async function getLastSyncedAt(): Promise<number | null> {
+  const res = await db.execute('SELECT MAX(last_synced_at) AS ts FROM plaid_items');
+  const row = res.rows[0] as unknown as { ts: number | null };
+  return row?.ts ?? null;
 }
 
 export async function getUncategorizedCount(from: string, to: string, filter?: Filter): Promise<number> {
@@ -370,7 +376,7 @@ export async function getSearchFilteredData(
 ): Promise<{ summary: MonthlySummary; flexData: FlexSummary }> {
   const f = buildFilterClause(filter, 't');
   const result = await db.execute({
-    sql: `SELECT COALESCE(t.display_name, t.name) as display, t.merchant_name, t.amount, t.category,
+    sql: `SELECT COALESCE(t.display_name, t.merchant_name, t.name) as display, t.amount, t.category,
             COALESCE(c.flexibility, 'untagged') as flex
           FROM transactions t
           LEFT JOIN categories c ON c.name = t.category
@@ -379,10 +385,10 @@ export async function getSearchFilteredData(
             AND t.category NOT IN (SELECT category FROM hidden_categories)${f.clause}`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { display: string; merchant_name: string | null; amount: number; category: string; flex: string }[];
+  const rows = result.rows as unknown as { display: string; amount: number; category: string; flex: string }[];
 
   const re = buildSearchRe(search);
-  const matches = rows.filter((r) => re.test(r.display) || (r.merchant_name ? re.test(r.merchant_name) : false));
+  const matches = rows.filter((r) => re.test(r.display));
 
   // Accumulate per-category outflow/inflow, then apply the hybrid rule: real
   // categories net (refunds reduce them), Uncategorized splits by flow (outflow =
@@ -420,18 +426,29 @@ export async function getSearchFilteredData(
   return { summary: { income, expenses, net: income - expenses, byCategory }, flexData };
 }
 
-export type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null };
-export type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null };
+export type Rule = { id: number; priority: number; match_type: string; pattern: string; category: string; min_amount: number | null; max_amount: number | null; account_id: string | null };
+export type NameRule = { id: number; match_type: string; pattern: string; replacement: string; min_amount: number | null; max_amount: number | null; account_id: string | null };
+export type TagRuleRow = { id: number; priority: number; match_type: string; pattern: string; tag_id: number; tag_name: string; min_amount: number | null; max_amount: number | null; account_id: string | null };
 export type CategoryDetail = { name: string; flexibility: 'fixed' | 'flexible' | 'discretionary' | null };
 
 export async function getAllRules(): Promise<Rule[]> {
-  const result = await db.execute('SELECT id, priority, match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC, id ASC');
+  const result = await db.execute('SELECT id, priority, match_type, pattern, category, min_amount, max_amount, account_id FROM category_rules ORDER BY priority DESC, (account_id IS NULL) ASC, id ASC');
   return result.rows as unknown as Rule[];
 }
 
 export async function getAllNameRules(): Promise<NameRule[]> {
-  const result = await db.execute('SELECT id, match_type, pattern, replacement, min_amount, max_amount FROM name_rules ORDER BY id ASC');
+  const result = await db.execute('SELECT id, match_type, pattern, replacement, min_amount, max_amount, account_id FROM name_rules ORDER BY (account_id IS NULL) ASC, id ASC');
   return result.rows as unknown as NameRule[];
+}
+
+export async function getAllTagRules(): Promise<TagRuleRow[]> {
+  const result = await db.execute(
+    `SELECT tr.id, tr.priority, tr.match_type, tr.pattern, tr.tag_id, t.name AS tag_name,
+            tr.min_amount, tr.max_amount, tr.account_id
+     FROM tag_rules tr JOIN tags t ON t.id = tr.tag_id
+     ORDER BY tr.priority DESC, (tr.account_id IS NULL) ASC, tr.id ASC`
+  );
+  return result.rows as unknown as TagRuleRow[];
 }
 
 export async function getAllCategories(): Promise<string[]> {
@@ -517,8 +534,8 @@ export const SORT_ORDER_BY: Record<SortMode, string> = {
   'date-asc':      't.date ASC, t.id ASC',
   'amount-desc':   't.amount DESC',
   'amount-asc':    't.amount ASC',
-  'name-asc':      'COALESCE(t.display_name, t.name) ASC',
-  'name-desc':     'COALESCE(t.display_name, t.name) DESC',
+  'name-asc':      'COALESCE(t.display_name, t.merchant_name, t.name) ASC',
+  'name-desc':     'COALESCE(t.display_name, t.merchant_name, t.name) DESC',
   'category-asc':  't.category ASC, t.date DESC',
   'category-desc': 't.category DESC, t.date DESC',
 };
@@ -563,7 +580,10 @@ export async function getTransactions(filters: {
   const rows = result.rows as unknown as TxRow[];
   if (!search) return rows.slice(0, 200);
   const re = buildSearchRe(search);
-  return rows.filter((r) => re.test(r.display_name ?? r.name) || (r.merchant_name ? re.test(r.merchant_name) : false)).slice(0, 200);
+  return rows.filter((r) =>
+    re.test(r.display_name ?? r.merchant_name ?? r.name) ||
+    (!r.display_name && r.merchant_name !== null && re.test(r.name)),
+  ).slice(0, 200);
 }
 
 export async function countSearchMatches(
@@ -572,21 +592,21 @@ export async function countSearchMatches(
   if (!search) return { count: 0, expenses: 0 };
   const f = buildFilterClause(filter, 'transactions');
   const result = await db.execute({
-    sql: `SELECT COALESCE(display_name, name) as display, merchant_name, amount
+    sql: `SELECT COALESCE(display_name, merchant_name, name) as display, amount
           FROM transactions WHERE date >= ? AND date <= ?${f.clause} AND pending = 0 AND ignored = 0`,
     args: [from, to, ...f.args],
   });
-  const rows = result.rows as unknown as { display: string; merchant_name: string | null; amount: number }[];
+  const rows = result.rows as unknown as { display: string; amount: number }[];
   const re = buildSearchRe(search);
-  const matches = rows.filter((r) => re.test(r.display) || (r.merchant_name ? re.test(r.merchant_name) : false));
+  const matches = rows.filter((r) => re.test(r.display));
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 
-export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; last_synced: string | null; apr: number | null; excluded: boolean };
+export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; item_id: string | null; last_synced: string | null; apr: number | null; excluded: boolean };
 
 export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
   const result = await db.execute(`
-    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.apr, a.excluded,
+    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.item_id, a.apr, a.excluded,
       (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
     FROM accounts a
     ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END, a.name

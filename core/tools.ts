@@ -269,6 +269,7 @@ export const TOOL_DEFS: ToolDef[] = [
         priority:   { type: 'integer', description: 'Higher priority runs first (default 10)' },
         min_amount: { type: 'number', description: 'Minimum transaction amount (optional)' },
         max_amount: { type: 'number', description: 'Maximum transaction amount (optional)' },
+        account_id: { type: 'string', description: 'Optional account ID to scope the rule to a single account; omit for a global rule. Use list_accounts for IDs.' },
       },
       required: ['pattern', 'match_type', 'category'],
     },
@@ -295,6 +296,7 @@ export const TOOL_DEFS: ToolDef[] = [
         replacement: { type: 'string', description: 'Display name to show instead' },
         min_amount:  { type: 'number', description: 'Minimum transaction amount (optional)' },
         max_amount:  { type: 'number', description: 'Maximum transaction amount (optional)' },
+        account_id:  { type: 'string', description: 'Optional account ID to scope the rule to a single account; omit for a global rule. Use list_accounts for IDs.' },
       },
       required: ['pattern', 'match_type', 'replacement'],
     },
@@ -425,6 +427,7 @@ async function executeToolImpl(
   const num  = (k: string, def = 0)  => Number(input[k] ?? def);
   const bool = (k: string)            => Boolean(input[k]);
   const opt  = (k: string)            => input[k] !== undefined ? Number(input[k]) : null;
+  const optStr = (k: string)          => input[k] !== undefined && input[k] !== null ? String(input[k]) : null;
 
   switch (name) {
 
@@ -556,16 +559,19 @@ async function executeToolImpl(
         input['growth_rate']     ? num('growth_rate')     : 7,
       );
       const fmtM = (n: number) => Number.isFinite(n) && n < 999 ? `${n.toFixed(1)} months` : '∞';
+      const hasPretax = h.pretaxMonthly > 0;
       return [
         `Net worth: ${h.netWorth >= 0 ? '' : '-'}${fmt(h.netWorth, 0)}`,
         `Cash runway: ${fmtM(h.cashRunwayMonths)} (${fmt(h.cash, 0)} in checking/savings)`,
         `Liquid runway: ${fmtM(h.liquidRunwayMonths)} (${fmt(h.liquid, 0)} incl. brokerage)`,
         `Avg monthly expenses (12 mo): ${fmt(h.avgMonthlyExpenses, 0)}`,
-        `Avg monthly savings (12 mo): ${fmt(h.avgMonthlySavings, 0)}`,
+        `Avg monthly income (12 mo): ${fmt(h.avgMonthlyIncome, 0)} take-home${hasPretax ? ` · ${fmt(h.grossMonthlyIncome, 0)} gross (incl. ${fmt(h.pretaxMonthly, 0)}/mo pretax)` : ''}`,
+        `Avg monthly savings (12 mo): ${fmt(h.avgMonthlySavings, 0)} take-home${hasPretax ? ` · ${fmt(h.avgMonthlySavings + h.pretaxMonthly, 0)} gross (incl. pretax)` : ''}`,
+        h.savingsRate !== null ? `Savings rate: ${h.savingsRate.toFixed(1)}%${hasPretax ? ` incl. pretax (${((h.avgMonthlySavings / h.grossMonthlyIncome) * 100).toFixed(1)}% take-home only)` : ''}` : null,
         `FIRE number: ${fmt(h.fireNumber, 0)}`,
         `FIRE progress: ${(h.fireProgress * 100).toFixed(1)}%`,
-        `Years to FIRE: ${h.yearsToFire === null ? '100+' : h.yearsToFire === 0 ? 'Achieved!' : `~${Math.ceil(h.yearsToFire)}`}`,
-      ].join('\n');
+        `Years to FIRE: ${h.yearsToFire === null ? '100+' : h.yearsToFire === 0 ? 'Achieved!' : `~${Math.ceil(h.yearsToFire)}`}${hasPretax ? ' (pretax contributions included in savings rate)' : ''}`,
+      ].filter(Boolean).join('\n');
     }
 
     case 'get_scorecard': {
@@ -631,11 +637,15 @@ async function executeToolImpl(
 
     case 'list_rules': {
       const result = await db.execute(
-        'SELECT id, priority, match_type, pattern, category, min_amount, max_amount FROM category_rules ORDER BY priority DESC, id ASC'
+        `SELECT cr.id, cr.priority, cr.match_type, cr.pattern, cr.category, cr.min_amount, cr.max_amount,
+                cr.account_id, COALESCE(a.nickname, a.name) AS account_name
+         FROM category_rules cr LEFT JOIN accounts a ON a.id = cr.account_id
+         ORDER BY cr.priority DESC, (cr.account_id IS NULL) ASC, cr.id ASC`
       );
       const rules = result.rows as unknown as {
         id: number; priority: number; match_type: string; pattern: string;
         category: string; min_amount: number | null; max_amount: number | null;
+        account_id: string | null; account_name: string | null;
       }[];
       if (!rules.length) return 'No rules defined.';
       return rules.map((r) => {
@@ -643,22 +653,28 @@ async function executeToolImpl(
           ? ` [$${r.min_amount}–$${r.max_amount}]`
           : r.min_amount != null ? ` [≥$${r.min_amount}]`
           : r.max_amount != null ? ` [≤$${r.max_amount}]` : '';
-        return `[${r.id}] pri=${r.priority} ${r.match_type.padEnd(5)} "${r.pattern}"${amt} → ${r.category}`;
+        const scope = r.account_id ? ` @${r.account_name ?? r.account_id}` : '';
+        return `[${r.id}] pri=${r.priority} ${r.match_type.padEnd(5)} "${r.pattern}"${amt} → ${r.category}${scope}`;
       }).join('\n');
     }
 
     case 'list_name_rules': {
       const result = await db.execute(
-        'SELECT id, match_type, pattern, replacement, min_amount, max_amount FROM name_rules ORDER BY id ASC'
+        `SELECT nr.id, nr.match_type, nr.pattern, nr.replacement, nr.min_amount, nr.max_amount,
+                nr.account_id, COALESCE(a.nickname, a.name) AS account_name
+         FROM name_rules nr LEFT JOIN accounts a ON a.id = nr.account_id
+         ORDER BY (nr.account_id IS NULL) ASC, nr.id ASC`
       );
       const rules = result.rows as unknown as {
         id: number; match_type: string; pattern: string;
         replacement: string; min_amount: number | null; max_amount: number | null;
+        account_id: string | null; account_name: string | null;
       }[];
       if (!rules.length) return 'No name rules defined.';
       return rules.map((r) => {
         const amt = r.min_amount != null ? ` [≥$${r.min_amount}]` : r.max_amount != null ? ` [≤$${r.max_amount}]` : '';
-        return `[${r.id}] ${r.match_type.padEnd(5)} "${r.pattern}"${amt} → "${r.replacement}"`;
+        const scope = r.account_id ? ` @${r.account_name ?? r.account_id}` : '';
+        return `[${r.id}] ${r.match_type.padEnd(5)} "${r.pattern}"${amt} → "${r.replacement}"${scope}`;
       }).join('\n');
     }
 
@@ -791,8 +807,8 @@ async function executeToolImpl(
     case 'add_rule': {
       if (str('match_type') === 'regex') validateRegex(str('pattern'));
       await db.execute({
-        sql: 'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (?, ?, ?, ?, ?, ?)',
-        args: [input['priority'] ? num('priority') : 10, str('match_type'), str('pattern'), str('category'), opt('min_amount'), opt('max_amount')],
+        sql: 'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount, account_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        args: [input['priority'] ? num('priority') : 10, str('match_type'), str('pattern'), str('category'), opt('min_amount'), opt('max_amount'), optStr('account_id')],
       });
       const count = await applyCategoriesToAll();
       return `Rule added: "${str('pattern')}" → ${str('category')}\nRecategorized ${count} transactions.`;
@@ -812,8 +828,8 @@ async function executeToolImpl(
     case 'add_name_rule': {
       if (str('match_type') === 'regex') validateRegex(str('pattern'));
       await db.execute({
-        sql: 'INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES (?, ?, ?, ?, ?)',
-        args: [str('match_type'), str('pattern'), str('replacement'), opt('min_amount'), opt('max_amount')],
+        sql: 'INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount, account_id) VALUES (?, ?, ?, ?, ?, ?)',
+        args: [str('match_type'), str('pattern'), str('replacement'), opt('min_amount'), opt('max_amount'), optStr('account_id')],
       });
       const count = await rebuildDisplayNames();
       return `Name rule added: "${str('pattern')}" → "${str('replacement')}"\nUpdated ${count} transactions.`;

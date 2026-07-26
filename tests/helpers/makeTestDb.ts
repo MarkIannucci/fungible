@@ -11,7 +11,8 @@ const SCHEMA = `
     nickname TEXT,
     owner TEXT,
     apr REAL,
-    excluded INTEGER NOT NULL DEFAULT 0
+    excluded INTEGER NOT NULL DEFAULT 0,
+    item_id TEXT
   );
 
   CREATE TABLE transactions (
@@ -36,7 +37,8 @@ const SCHEMA = `
     pattern TEXT NOT NULL,
     category TEXT NOT NULL,
     min_amount REAL,
-    max_amount REAL
+    max_amount REAL,
+    account_id TEXT
   );
 
   CREATE TABLE name_rules (
@@ -45,7 +47,8 @@ const SCHEMA = `
     pattern TEXT NOT NULL,
     replacement TEXT NOT NULL,
     min_amount REAL,
-    max_amount REAL
+    max_amount REAL,
+    account_id TEXT
   );
 
   CREATE TABLE hidden_categories (category TEXT PRIMARY KEY);
@@ -61,6 +64,23 @@ const SCHEMA = `
   );
 
   CREATE TABLE transaction_tags (
+    transaction_id TEXT NOT NULL,
+    tag_id INTEGER NOT NULL,
+    PRIMARY KEY (transaction_id, tag_id)
+  );
+
+  CREATE TABLE tag_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    match_type TEXT NOT NULL,
+    pattern TEXT NOT NULL DEFAULT '',
+    tag_id INTEGER NOT NULL,
+    account_id TEXT,
+    min_amount REAL,
+    max_amount REAL
+  );
+
+  CREATE TABLE tag_rule_suppressions (
     transaction_id TEXT NOT NULL,
     tag_id INTEGER NOT NULL,
     PRIMARY KEY (transaction_id, tag_id)

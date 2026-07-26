@@ -110,6 +110,32 @@ describe('applyNameRules', () => {
   });
 });
 
+describe('account-scoped name rules', () => {
+  async function insertScopedRule(match_type: string, pattern: string, replacement: string, account_id: string | null) {
+    await db.execute({
+      sql: 'INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount, account_id) VALUES (?, ?, ?, NULL, NULL, ?)',
+      args: [match_type, pattern, replacement, account_id],
+    });
+  }
+
+  it('scoped rule beats a global rule for its account (scoped ordered first)', async () => {
+    await insertScopedRule('name', 'amazon', 'Amazon', null);
+    await insertScopedRule('name', 'amazon', 'Amazon Business', 'work');
+    expect(await applyNameRules('AMAZON.COM', undefined, 'work')).toBe('Amazon Business');
+  });
+
+  it('global rule applies when no scoped rule matches the account', async () => {
+    await insertScopedRule('name', 'amazon', 'Amazon', null);
+    await insertScopedRule('name', 'amazon', 'Amazon Business', 'work');
+    expect(await applyNameRules('AMAZON.COM', undefined, 'personal')).toBe('Amazon');
+  });
+
+  it('rule scoped to a different account is ignored', async () => {
+    await insertScopedRule('name', 'amazon', 'Amazon Business', 'work');
+    expect(await applyNameRules('AMAZON.COM', undefined, 'personal')).toBe('AMAZON.COM');
+  });
+});
+
 describe('rebuildDisplayNames', () => {
   async function insertTx(id: string, name: string, amount: number) {
     await db.execute({

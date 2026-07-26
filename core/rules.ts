@@ -1,20 +1,22 @@
 import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { rebuildDisplayNames } from './rename.js';
+import { applyTagRules, type TagMatchType } from './tag-rules.js';
+import { validateRegex } from './rule-utils.js';
 
 async function applyAll(): Promise<number> {
   const rules = await loadCategoryRules();
   const txRes = await db.execute(
-    'SELECT id, name, merchant_name, raw_category, amount, category FROM transactions WHERE manual_category IS NULL'
+    'SELECT id, account_id, name, merchant_name, raw_category, amount, category FROM transactions WHERE manual_category IS NULL'
   );
   const rows = txRes.rows as unknown as {
-    id: string; name: string; merchant_name: string | null;
+    id: string; account_id: string; name: string; merchant_name: string | null;
     raw_category: string | null; amount: number; category: string;
   }[];
 
   const updates: { sql: string; args: (string | number | null)[] }[] = [];
   for (const tx of rows) {
-    const cat = categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount);
+    const cat = categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount, tx.account_id);
     if (cat !== tx.category) {
       updates.push({ sql: 'UPDATE transactions SET category = ? WHERE id = ?', args: [cat, tx.id] });
     }
@@ -44,20 +46,24 @@ export type SaveCategoryRuleOpts = {
   category: string;
   minAmount: number | null;
   maxAmount: number | null;
+  accountId?: string | null;
   editingId?: number | null;
 };
 
 export async function saveCategoryRule(opts: SaveCategoryRuleOpts): Promise<number> {
-  const { pattern, matchType, category, minAmount, maxAmount, editingId } = opts;
+  const { pattern, matchType, category, minAmount, maxAmount, accountId = null, editingId } = opts;
+  // Validate before any write: a persisted bad regex would throw inside every
+  // later rule application (sync, import, re-categorize), not just this save.
+  if (matchType === 'regex') validateRegex(pattern);
   if (editingId != null) {
     await db.execute({
-      sql: 'UPDATE category_rules SET match_type = ?, pattern = ?, category = ?, min_amount = ?, max_amount = ? WHERE id = ?',
-      args: [matchType, pattern, category, minAmount, maxAmount, editingId],
+      sql: 'UPDATE category_rules SET match_type = ?, pattern = ?, category = ?, min_amount = ?, max_amount = ?, account_id = ? WHERE id = ?',
+      args: [matchType, pattern, category, minAmount, maxAmount, accountId, editingId],
     });
   } else {
     const existing = await db.execute({
-      sql: 'SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?',
-      args: [matchType, pattern],
+      sql: 'SELECT id FROM category_rules WHERE match_type = ? AND pattern = ? AND account_id IS ?',
+      args: [matchType, pattern, accountId],
     });
     if (existing.rows.length > 0) {
       const id = (existing.rows[0] as unknown as { id: number }).id;
@@ -67,8 +73,8 @@ export async function saveCategoryRule(opts: SaveCategoryRuleOpts): Promise<numb
       });
     } else {
       await db.execute({
-        sql: 'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount) VALUES (10, ?, ?, ?, ?, ?)',
-        args: [matchType, pattern, category, minAmount, maxAmount],
+        sql: 'INSERT INTO category_rules (priority, match_type, pattern, category, min_amount, max_amount, account_id) VALUES (10, ?, ?, ?, ?, ?, ?)',
+        args: [matchType, pattern, category, minAmount, maxAmount, accountId],
       });
     }
   }
@@ -81,23 +87,70 @@ export type SaveNameRuleOpts = {
   replacement: string;
   minAmount: number | null;
   maxAmount: number | null;
+  accountId?: string | null;
   editingId?: number | null;
 };
 
 export async function saveNameRule(opts: SaveNameRuleOpts): Promise<void> {
-  const { pattern, matchType, replacement, minAmount, maxAmount, editingId } = opts;
+  const { pattern, matchType, replacement, minAmount, maxAmount, accountId = null, editingId } = opts;
+  if (matchType === 'regex') validateRegex(pattern);
   if (editingId != null) {
     await db.execute({
-      sql: 'UPDATE name_rules SET match_type = ?, pattern = ?, replacement = ?, min_amount = ?, max_amount = ? WHERE id = ?',
-      args: [matchType, pattern, replacement, minAmount, maxAmount, editingId],
+      sql: 'UPDATE name_rules SET match_type = ?, pattern = ?, replacement = ?, min_amount = ?, max_amount = ?, account_id = ? WHERE id = ?',
+      args: [matchType, pattern, replacement, minAmount, maxAmount, accountId, editingId],
     });
   } else {
     await db.execute({
-      sql: 'INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount) VALUES (?, ?, ?, ?, ?)',
-      args: [matchType, pattern, replacement, minAmount, maxAmount],
+      sql: 'INSERT INTO name_rules (match_type, pattern, replacement, min_amount, max_amount, account_id) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [matchType, pattern, replacement, minAmount, maxAmount, accountId],
     });
   }
   await rebuildDisplayNames();
+}
+
+export async function deleteTagRule(id: number): Promise<void> {
+  // Leaves already-applied tags in place (mirrors category-rule delete).
+  await db.execute({ sql: 'DELETE FROM tag_rules WHERE id = ?', args: [id] });
+}
+
+export type SaveTagRuleOpts = {
+  matchType: TagMatchType;
+  pattern: string;
+  tagId: number;
+  minAmount: number | null;
+  maxAmount: number | null;
+  accountId?: string | null;
+  editingId?: number | null;
+};
+
+export async function saveTagRule(opts: SaveTagRuleOpts): Promise<number> {
+  const { matchType, pattern, tagId, minAmount, maxAmount, accountId = null, editingId } = opts;
+  if (matchType === 'regex') validateRegex(pattern);
+  const normPattern = matchType === 'all' ? '' : pattern;
+  if (editingId != null) {
+    await db.execute({
+      sql: 'UPDATE tag_rules SET match_type = ?, pattern = ?, tag_id = ?, min_amount = ?, max_amount = ?, account_id = ? WHERE id = ?',
+      args: [matchType, normPattern, tagId, minAmount, maxAmount, accountId, editingId],
+    });
+  } else {
+    const existing = await db.execute({
+      sql: 'SELECT id FROM tag_rules WHERE match_type = ? AND pattern = ? AND account_id IS ? AND tag_id = ?',
+      args: [matchType, normPattern, accountId, tagId],
+    });
+    if (existing.rows.length > 0) {
+      const id = (existing.rows[0] as unknown as { id: number }).id;
+      await db.execute({
+        sql: 'UPDATE tag_rules SET min_amount = ?, max_amount = ? WHERE id = ?',
+        args: [minAmount, maxAmount, id],
+      });
+    } else {
+      await db.execute({
+        sql: 'INSERT INTO tag_rules (priority, match_type, pattern, tag_id, min_amount, max_amount, account_id) VALUES (10, ?, ?, ?, ?, ?, ?)',
+        args: [matchType, normPattern, tagId, minAmount, maxAmount, accountId],
+      });
+    }
+  }
+  return applyTagRules();
 }
 
 export async function setCategoryFlexibility(name: string, flexibility: string | null): Promise<void> {

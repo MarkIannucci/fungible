@@ -44,8 +44,14 @@
   font-weight: 600;
 }
 
-.syncBtn {
+.syncRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
+}
+
+.syncBtn {
   padding: 6px 14px;
   border: 1px solid var(--border);
   border-radius: 6px;

@@ -7,6 +7,9 @@ export const MAX_DAYS_REQUESTED = 730;
 /** Settings key for the user's default Plaid history start date (YYYY-MM-DD). */
 export const DEFAULT_START_DATE_KEY = 'plaid_default_start_date';
 
+/** Settings key for the user's monthly pre-tax contributions (401k, HSA, etc.) in dollars. */
+export const PRETAX_MONTHLY_KEY = 'pretax_monthly';
+
 /**
  * Extra days added on top of the start-date calculation. Plaid's docs don't
  * specify the timezone used to compute the history window, so a small buffer

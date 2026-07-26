@@ -2,6 +2,7 @@ import { db } from './db.js';
 import { categorizeWithRules, loadCategoryRules } from './categorize.js';
 import { rebuildDisplayNames } from './rename.js';
 import { applyCategoriesToAll } from './categorize.js';
+import { validateRegex } from './rule-utils.js';
 
 // ── Single-transaction mutations ───────────────────────────────────────────────
 
@@ -14,15 +15,15 @@ export async function setTransactionCategory(id: string, category: string): Prom
 
 export async function clearTransactionOverride(id: string): Promise<void> {
   const result = await db.execute({
-    sql: 'SELECT name, merchant_name, raw_category, amount FROM transactions WHERE id = ?',
+    sql: 'SELECT account_id, name, merchant_name, raw_category, amount FROM transactions WHERE id = ?',
     args: [id],
   });
   if (result.rows.length === 0) return;
   const tx = result.rows[0] as unknown as {
-    name: string; merchant_name: string | null; raw_category: string | null; amount: number;
+    account_id: string; name: string; merchant_name: string | null; raw_category: string | null; amount: number;
   };
   const rules = await loadCategoryRules();
-  const cat = categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount);
+  const cat = categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount, tx.account_id);
   await db.execute({
     sql: 'UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?',
     args: [cat, id],
@@ -57,6 +58,9 @@ export async function upsertCategoryRule(
   matchType: 'name' | 'regex',
   category: string,
 ): Promise<number> {
+  // Validate before any write: a persisted bad regex would throw inside every
+  // later rule application (sync, import, re-categorize), not just this save.
+  if (matchType === 'regex') validateRegex(pattern);
   const existing = await db.execute({
     sql: 'SELECT id FROM category_rules WHERE match_type = ? AND pattern = ?',
     args: [matchType, pattern],
@@ -78,6 +82,7 @@ export async function upsertNameRule(
   matchType: 'name' | 'regex',
   replacement: string,
 ): Promise<void> {
+  if (matchType === 'regex') validateRegex(pattern);
   const existing = await db.execute({
     sql: 'SELECT id FROM name_rules WHERE match_type = ? AND pattern = ?',
     args: [matchType, pattern],
@@ -111,11 +116,11 @@ export async function clearOverridesBulk(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const placeholders = ids.map(() => '?').join(',');
   const txRes = await db.execute({
-    sql: `SELECT id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (${placeholders}) AND manual_category IS NOT NULL`,
+    sql: `SELECT id, account_id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (${placeholders}) AND manual_category IS NOT NULL`,
     args: ids,
   });
   const rows = txRes.rows as unknown as {
-    id: string; name: string; merchant_name: string | null;
+    id: string; account_id: string; name: string; merchant_name: string | null;
     raw_category: string | null; amount: number;
   }[];
   if (rows.length === 0) return;
@@ -123,7 +128,7 @@ export async function clearOverridesBulk(ids: string[]): Promise<void> {
   await db.batch(
     rows.map((tx) => ({
       sql: 'UPDATE transactions SET category = ?, manual_category = NULL WHERE id = ?',
-      args: [categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount), tx.id],
+      args: [categorizeWithRules(rules, tx.name, tx.merchant_name, tx.raw_category, tx.amount, tx.account_id), tx.id],
     })),
     'write',
   );
