@@ -12,6 +12,7 @@ import { isFilterActive } from '../../../../core/filters.js';
 import { useFilter } from '../hooks/useFilter.js';
 import { useLoadGuard } from '../hooks/useLoadGuard.js';
 import type { TagOption } from '../../../../core/tags.js';
+import { fmtTimeAgo } from '../../../../core/fmt.js';
 import styles from './Transactions.module.css';
 
 function fmtAmount(amount: number) {
@@ -40,9 +41,11 @@ export function Transactions() {
   const [sort, setSort] = useState<SortMode>('date-desc');
   const [reloadKey, setReloadKey] = useState(0);
   const reload = () => setReloadKey((k) => k + 1);
+  const [syncing, setSyncing] = useState(false);
 
   const bounds = useQuery(() => api.queries.getDataBounds(), []);
   const categories = useQuery(() => api.queries.getAllCategories(), [reloadKey]) ?? [];
+  const lastSynced = useQuery(() => api.sync.getLastSyncedAt(), [reloadKey]);
   const filterOptions = useQuery(() => api.queries.getFilterOptions(), [reloadKey]);
   const { filter: sharedFilter, setFilter, popFilter, canPop } = useFilter();
   const txs =
@@ -56,6 +59,21 @@ export function Transactions() {
   const [tagTx, setTagTx] = useState<TxRow | null>(null);
   const [bulkTag, setBulkTag] = useState(false);
   const [bulkCat, setBulkCat] = useState(false);
+
+  async function forceSync() {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const results = await api.sync.syncAll(true);
+      const added = results.reduce((s, r) => s + r.added, 0);
+      showStatus(`Sync done — ${added} new transaction${added === 1 ? '' : 's'}`, 4000);
+      reload();
+    } catch {
+      showStatus('Sync failed', 3000);
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   function sortHeader(col: SortCol, label: string, alignRight = false) {
     const active = sort.startsWith(col);
@@ -207,6 +225,14 @@ export function Transactions() {
             All
           </button>
         </div>
+        <div className={styles.syncRow}>
+          <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing}>
+            {syncing ? 'Syncing…' : '⟳ Sync'}
+          </button>
+          {lastSynced !== undefined && (
+            <span className="dim">Last synced {fmtTimeAgo(lastSynced ?? null)}</span>
+          )}
+        </div>
       </div>
 
       {(chips.length > 0 || dl) && (
@@ -297,7 +323,7 @@ export function Transactions() {
                 onClick={() => setEditTx(tx)}
               >
                 <td className={`num ${styles.tdDate}`}>{tx.date}</td>
-                <td className={styles.tdDesc}>{tx.display_name ?? tx.name}</td>
+                <td className={styles.tdDesc}>{tx.display_name ?? tx.merchant_name ?? tx.name}</td>
                 <td className={`num ${styles.tdAmount} ${!isIgnored && tx.amount < 0 ? 'pos' : ''}`}>
                   {fmtAmount(tx.amount)}
                 </td>

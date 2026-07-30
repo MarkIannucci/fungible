@@ -27,15 +27,19 @@ beforeEach(async () => {
 afterEach(() => cleanup());
 
 describe('GUI Health', () => {
-  it('renders snapshot, runway and retirement sections', async () => {
+  it('renders cash flow, retirement sections and stat cards', async () => {
     renderScreen(<Health />);
-    await waitFor(() => expect(screen.getByText('Snapshot')).toBeTruthy());
-    expect(screen.getByText('Runway')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('Cash Flow')).toBeTruthy());
     expect(screen.getByText('Retirement')).toBeTruthy();
-    expect(screen.getByText('Savings rate')).toBeTruthy();
     expect(screen.getByText('Monthly income')).toBeTruthy();
-    expect(screen.getByText('FIRE number')).toBeTruthy();
+    expect(screen.getByText('Savings rate')).toBeTruthy();
+    expect(screen.getByText('Cash runway')).toBeTruthy();
+    expect(screen.getByText('FIRE spend')).toBeTruthy();
     expect(screen.getByText('Coast FIRE')).toBeTruthy();
+    // Stat cards
+    expect(screen.getByText('Savings Rate')).toBeTruthy();
+    expect(screen.getByText('Net Worth')).toBeTruthy();
+    expect(screen.getByText('Years to FIRE')).toBeTruthy();
   });
 
   it('renders the four assumption dials', async () => {
@@ -64,7 +68,7 @@ describe('GUI Health', () => {
   it('hides the last-30-days panel when the trailing window has no drift', async () => {
     // Seed data is fixed in May 2026; the trailing 30 days (real clock) is empty.
     renderScreen(<Health />);
-    await waitFor(() => expect(screen.getByText('Snapshot')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Cash Flow')).toBeTruthy());
     expect(screen.queryByText(/Last 30 days/)).toBeNull();
   });
 
@@ -89,16 +93,17 @@ describe('GUI Health', () => {
     expect(navigate).toHaveBeenCalledWith('dashboard', { range: 'last30', scorecard: true });
   });
 
-  it('withdrawal slider changes the FIRE number', async () => {
+  it('withdrawal slider changes the FIRE target', async () => {
     renderScreen(<Health />);
-    await waitFor(() => expect(screen.getByText('FIRE number')).toBeTruthy());
-    const fireRow = screen.getByText('FIRE number').closest('div')!;
-    const before = fireRow.textContent;
+    await waitFor(() => expect(screen.getByText('Cash Flow')).toBeTruthy());
+    // "Net worth" metric in Retirement panel shows "X% of FIRE target" — changes with withdrawal rate
+    const netWorthRow = screen.getByText('Net worth').closest('div')!;
+    const before = netWorthRow.textContent;
     const wDial = screen.getByText('Withdrawal rate').closest('div')!.parentElement!;
     const slider = wDial.querySelector('input[type="range"]') as HTMLInputElement;
     fireEvent.change(slider, { target: { value: '8' } });
     await waitFor(() => {
-      const after = screen.getByText('FIRE number').closest('div')!.textContent;
+      const after = screen.getByText('Net worth').closest('div')!.textContent;
       expect(after).not.toBe(before);
     });
   });

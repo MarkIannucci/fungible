@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact } from '../core/fmt.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { fmt, fmtSigned, fmtPct, fmtMonths, fmtCompact, fmtTimeAgo } from '../core/fmt.js';
 import { bar, truncate } from '../tui/charUtils.js';
 
 describe('fmt', () => {
@@ -128,5 +128,48 @@ describe('truncate', () => {
 
   it('truncates strings over the limit with ellipsis', () => {
     expect(truncate('hello world', 8)).toBe('hello w…');
+  });
+});
+
+describe('fmtTimeAgo', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('returns "never" for null', () => {
+    expect(fmtTimeAgo(null)).toBe('never');
+  });
+
+  it('returns "just now" for under 2 minutes ago', () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    vi.setSystemTime(now + 90_000); // 90 seconds later
+    expect(fmtTimeAgo(now)).toBe('just now');
+  });
+
+  it('returns minutes for 2–59 minutes ago', () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    vi.setSystemTime(now + 5 * 60_000);
+    expect(fmtTimeAgo(now)).toBe('5 min ago');
+  });
+
+  it('returns hours for 1–23 hours ago', () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    vi.setSystemTime(now + 3 * 60 * 60_000);
+    expect(fmtTimeAgo(now)).toBe('3 hr ago');
+  });
+
+  it('returns singular "day" for exactly 1 day ago', () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    vi.setSystemTime(now + 24 * 60 * 60_000);
+    expect(fmtTimeAgo(now)).toBe('1 day ago');
+  });
+
+  it('returns plural "days" for multiple days ago', () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    vi.setSystemTime(now + 5 * 24 * 60 * 60_000);
+    expect(fmtTimeAgo(now)).toBe('5 days ago');
   });
 });

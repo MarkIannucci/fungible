@@ -26,6 +26,7 @@ import {
   getAllTagRules,
   getCategoryDetails,
   toggleHiddenCategory,
+  getLastSyncedAt,
 } from '../../core/queries.js';
 import {
   setTransactionCategory,
@@ -66,6 +67,7 @@ import {
   renameCategory,
 } from '../../core/rules.js';
 import { loadHealthData, yearsToFire, coastYears } from '../../core/health.js';
+import { getSetting, setSetting, PRETAX_MONTHLY_KEY } from '../../core/settings.js';
 import {
   buildTrendViews,
   getPeriodTotals,
@@ -90,6 +92,7 @@ import { getCsvPlaidDupeCandidates } from '../../core/dedup.js';
 import { applyCategoriesToAll } from '../../core/categorize.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
 import { syncAll } from '../../core/sync.js';
+import { setSyncResult, getSyncFailures } from '../../core/sync-status.js';
 import { loadHistory, deleteHistoryEntry, CANVAS_SPEC_PATH } from '../../core/canvas-history.js';
 import type { CanvasSpec } from '../../core/canvas-spec.js';
 import { writeEnvFile, type EnvUpdates } from '../../core/env-file.js';
@@ -212,12 +215,25 @@ export const registry = {
     },
   },
   sync: {
-    syncAll,
+    // Wrap so every user-triggered sync records its outcome in the shared store,
+    // which drives the renderer banner + row badges via the sync-status push.
+    syncAll: async (force?: boolean) => {
+      const results = await syncAll(force);
+      setSyncResult(results);
+      return results;
+    },
+    // Initial hydration for a renderer that mounts after a background sync failed.
+    getStatus: async () => getSyncFailures(),
+    getLastSyncedAt,
   },
   config: {
     writeEnv: async (updates: EnvUpdates): Promise<{ written: string[] }> => {
       const { written } = writeEnvFile(updates);
       return { written };
     },
+  },
+  settings: {
+    getPretaxMonthly: () => getSetting(PRETAX_MONTHLY_KEY),
+    setPretaxMonthly: (v: string) => setSetting(PRETAX_MONTHLY_KEY, v),
   },
 } as const;

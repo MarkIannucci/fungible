@@ -559,16 +559,19 @@ async function executeToolImpl(
         input['growth_rate']     ? num('growth_rate')     : 7,
       );
       const fmtM = (n: number) => Number.isFinite(n) && n < 999 ? `${n.toFixed(1)} months` : '∞';
+      const hasPretax = h.pretaxMonthly > 0;
       return [
         `Net worth: ${h.netWorth >= 0 ? '' : '-'}${fmt(h.netWorth, 0)}`,
         `Cash runway: ${fmtM(h.cashRunwayMonths)} (${fmt(h.cash, 0)} in checking/savings)`,
         `Liquid runway: ${fmtM(h.liquidRunwayMonths)} (${fmt(h.liquid, 0)} incl. brokerage)`,
         `Avg monthly expenses (12 mo): ${fmt(h.avgMonthlyExpenses, 0)}`,
-        `Avg monthly savings (12 mo): ${fmt(h.avgMonthlySavings, 0)}`,
+        `Avg monthly income (12 mo): ${fmt(h.avgMonthlyIncome, 0)} take-home${hasPretax ? ` · ${fmt(h.grossMonthlyIncome, 0)} gross (incl. ${fmt(h.pretaxMonthly, 0)}/mo pretax)` : ''}`,
+        `Avg monthly savings (12 mo): ${fmt(h.avgMonthlySavings, 0)} take-home${hasPretax ? ` · ${fmt(h.avgMonthlySavings + h.pretaxMonthly, 0)} gross (incl. pretax)` : ''}`,
+        h.savingsRate !== null ? `Savings rate: ${h.savingsRate.toFixed(1)}%${hasPretax ? ` incl. pretax (${((h.avgMonthlySavings / h.grossMonthlyIncome) * 100).toFixed(1)}% take-home only)` : ''}` : null,
         `FIRE number: ${fmt(h.fireNumber, 0)}`,
         `FIRE progress: ${(h.fireProgress * 100).toFixed(1)}%`,
-        `Years to FIRE: ${h.yearsToFire === null ? '100+' : h.yearsToFire === 0 ? 'Achieved!' : `~${Math.ceil(h.yearsToFire)}`}`,
-      ].join('\n');
+        `Years to FIRE: ${h.yearsToFire === null ? '100+' : h.yearsToFire === 0 ? 'Achieved!' : `~${Math.ceil(h.yearsToFire)}`}${hasPretax ? ' (pretax contributions included in savings rate)' : ''}`,
+      ].filter(Boolean).join('\n');
     }
 
     case 'get_scorecard': {

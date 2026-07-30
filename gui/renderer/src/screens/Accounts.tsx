@@ -2,11 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
+import { useSyncStatus } from '../hooks/useSyncStatus.js';
 import { Modal } from '../components/Modal.js';
 import type { LinkedAccount, CsvAccount } from '../../../../core/queries.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
+import { fmtTimeAgo } from '../../../../core/fmt.js';
 import styles from './Accounts.module.css';
 
 type Tab = 'accounts' | 'add-data' | 'dupes';
@@ -26,6 +28,7 @@ export function Accounts() {
   const accounts = useQuery(() => api.queries.getLinkedAccounts(), [reloadKey]) ?? [];
   const dupes = useQuery(() => api.accounts.getCsvPlaidDupeCandidates(), [reloadKey]) ?? [];
   const members = useQuery(() => api.profile.getHouseholdMembers(), [reloadKey]) ?? [];
+  const lastSynced = useQuery(() => api.sync.getLastSyncedAt(), [reloadKey]);
 
   const [editAcct, setEditAcct] = useState<LinkedAccount | null>(null);
   const [valueAcct, setValueAcct] = useState<LinkedAccount | null>(null);
@@ -35,14 +38,28 @@ export function Accounts() {
   const [linkOpen, setLinkOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const plaidConfigured = useQuery(() => api.plaid.isConfigured(), []) ?? false;
+  // Item ids that failed the most recent sync (from either the startup or the
+  // user-triggered path), pushed from main — used to badge account rows.
+  const { failingItems } = useSyncStatus();
 
   async function forceSync() {
     if (syncing) return;
     setSyncing(true);
     try {
       const results = await api.sync.syncAll(true);
-      const added = results.reduce((s, r) => s + r.added, 0);
-      showStatus(`Sync done — ${added} new transaction${added === 1 ? '' : 's'}`, 4000);
+      const failed = results.filter((r) => r.error);
+      if (failed.length > 0) {
+        // Row badges + global banner update from the sync-status push; here we
+        // just surface a transient toast naming the account(s) and the reason.
+        const desc = failed.map((r) => {
+          const names = accounts.filter((a) => a.item_id === r.itemId).map((a) => a.nickname ?? a.name);
+          return `${names.join(', ') || r.itemId}: ${r.error}`;
+        }).join('  ·  ');
+        showStatus(`Sync failed: ${desc}`, 8000);
+      } else {
+        const added = results.reduce((s, r) => s + r.added, 0);
+        showStatus(`Sync done — ${added} new transaction${added === 1 ? '' : 's'}`, 4000);
+      }
       reload();
     } catch {
       showStatus('Sync failed', 3000);
@@ -69,9 +86,14 @@ export function Accounts() {
             </button>
           ))}
         </div>
-        <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing}>
-          {syncing ? 'Syncing…' : '⟳ Sync'}
-        </button>
+        <div className={styles.syncRow}>
+          <button className={styles.syncBtn} onClick={() => void forceSync()} disabled={syncing}>
+            {syncing ? 'Syncing…' : '⟳ Sync'}
+          </button>
+          {lastSynced !== undefined && (
+            <span className="dim">{fmtTimeAgo(lastSynced ?? null)}</span>
+          )}
+        </div>
       </div>
 
       {tab === 'accounts' && (
@@ -105,7 +127,9 @@ export function Accounts() {
                       <td className="dim">{SUBTYPE_DISPLAY[raw] ?? raw}</td>
                       <td className="dim">{acct.institution_name ?? ''}</td>
                       <td>
-                        {acct.last_synced ? (
+                        {acct.item_id && failingItems.has(acct.item_id) ? (
+                          <span className="neg">⚠ sync failed</span>
+                        ) : acct.last_synced ? (
                           <span className="dim">synced <span className="pos">{fmtDate(acct.last_synced)}</span></span>
                         ) : (
                           <span className="warn">not synced</span>

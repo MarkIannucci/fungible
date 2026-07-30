@@ -33,7 +33,6 @@ export function Health() {
   const { navigate } = useNav();
   const data = useQuery(() => api.health.loadHealthData(), []);
 
-  // Trailing-30-day scorecard: which categories drifted from typical recently.
   const drift = useQuery(() => {
     const today = new Date();
     const w = getDriftWindows('last30', getPeriodStart('last30', today), today);
@@ -49,13 +48,20 @@ export function Health() {
 
   const [monthlySpend, setMonthlySpend] = useState<number | null>(null);
   const [monthlySavings, setMonthlySavings] = useState<number | null>(null);
+  const [pretaxSavings, setPretaxSavings] = useState<number | null>(null);
   const [withdrawal, setWithdrawal] = useState(DEFAULT_WITHDRAWAL);
   const [growth, setGrowth] = useState(DEFAULT_GROWTH);
+
+  const pretaxRaw = useQuery(() => api.settings.getPretaxMonthly(), []);
+  useEffect(() => {
+    if (pretaxRaw !== undefined) setPretaxSavings(pretaxRaw ? roundToStep(parseFloat(pretaxRaw)) : 0);
+  }, [pretaxRaw]);
 
   const defaultSpend = data ? Math.max(SPEND_STEP, roundToStep(data.avgMonthlyExpenses)) : SPEND_STEP;
   const defaultSavings = data ? roundToStep(data.monthlySavings) : 0;
   const spend = monthlySpend ?? defaultSpend;
   const savings = monthlySavings ?? defaultSavings;
+  const pretax = pretaxSavings ?? 0;
 
   const annualSpend = spend * 12;
   const fireNumber = annualSpend / (withdrawal / 100);
@@ -64,16 +70,18 @@ export function Health() {
   const [coast, setCoast] = useState<number | null>(null);
   useEffect(() => {
     if (!data) return;
-    void api.health.yearsToFire(data.netWorth, savings, fireNumber, growth).then(setYears);
+    void api.health.yearsToFire(data.netWorth, savings + pretax, fireNumber, growth).then(setYears);
     void api.health.coastYears(data.netWorth, fireNumber, growth).then(setCoast);
-  }, [data, savings, fireNumber, growth]);
+  }, [data, savings, pretax, fireNumber, growth]);
 
   if (!data) return <p className="dim">Loading…</p>;
 
   const cashMonths = spend > 0 ? data.cash / spend : 0;
   const liquidMonths = spend > 0 ? data.liquid / spend : 0;
   const fireProgress = fireNumber > 0 ? Math.max(0, data.netWorth) / fireNumber : 0;
-  const savingsRate = data.monthlyIncome > 0 ? (savings / data.monthlyIncome) * 100 : null;
+  const grossIncome = data.monthlyIncome + pretax;
+  const savingsRate = grossIncome > 0 ? ((savings + pretax) / grossIncome) * 100 : null;
+  const rawSavingsRate = data.monthlyIncome > 0 ? (savings / data.monthlyIncome) * 100 : null;
   const netCash = data.cash - data.totalDebt;
   const remainingDebt = Math.max(0, data.totalDebt - data.cash);
   const debtMonths = savings > 0 ? remainingDebt / savings : null;
@@ -83,9 +91,39 @@ export function Health() {
       <KeyHints hints="[1-9·0] screens" />
       <h1 className={styles.title}>Financial Health</h1>
 
-      <div className={styles.grid}>
-        <section className={styles.panel}>
-          <h2>Snapshot</h2>
+      {/* Three-number summary — the whole story at a glance */}
+      <div className={styles.cards}>
+        <div className={styles.card}>
+          <div className={styles.cardLabel}>Savings Rate</div>
+          {savingsRate === null ? (
+            <div className={`dim ${styles.cardValue}`}>—</div>
+          ) : (
+            <div className={`num ${savingsRateClass(savingsRate)} ${styles.cardValue}`}>{fmtPct(savingsRate)}</div>
+          )}
+        </div>
+        <div className={styles.card}>
+          <div className={styles.cardLabel}>Net Worth</div>
+          <div className={`num ${data.netWorth >= 0 ? 'pos' : 'neg'} ${styles.cardValue}`}>{fmtCompact(data.netWorth)}</div>
+        </div>
+        <div className={styles.card}>
+          <div className={styles.cardLabel}>Years to FIRE</div>
+          <div className={`num ${years === null ? 'warn' : years === 0 ? 'pos' : 'accent'} ${styles.cardValue}`}>
+            {years === null ? '100+ yr' : years === 0 ? 'Now!' : `~${Math.ceil(years)} yr`}
+          </div>
+        </div>
+      </div>
+
+      {/* Cash Flow + Retirement detail */}
+      <div className={styles.twoCol}>
+        <section className={`${styles.panel} ${styles.panelFlex}`}>
+          <h2>Cash Flow</h2>
+          <div className={styles.metric}>
+            <span className={styles.metricLabel}>Monthly income</span>
+            <span className={`num ${styles.metricValue}`}>{fmt(grossIncome)}</span>
+            <span className={`dim ${styles.metricHint}`}>
+              12-mo avg{pretax > 0 ? ` · ${fmtCompact(data.monthlyIncome)} take-home` : ''}
+            </span>
+          </div>
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Savings rate</span>
             {savingsRate === null ? (
@@ -105,106 +143,74 @@ export function Health() {
                       : savingsRate >= 50
                         ? 'FIRE pace'
                         : 'on track'}
+              {savingsRate !== null && pretax > 0 && rawSavingsRate !== null
+                ? ` (${fmtPct(rawSavingsRate)} take-home)`
+                : ''}
             </span>
           </div>
           <div className={styles.metric}>
-            <span className={styles.metricLabel}>Monthly income</span>
-            <span className={`num ${styles.metricValue}`}>{fmt(data.monthlyIncome)}</span>
-            <span className={`dim ${styles.metricHint}`}>avg past 12 months</span>
-          </div>
-        </section>
-
-        <section className={styles.panel}>
-          <h2>Runway</h2>
-          <div className={styles.metric}>
-            <span className={styles.metricLabel}>Cash</span>
+            <span className={styles.metricLabel}>Cash runway</span>
             <span className={`num ${runwayClass(cashMonths, 6, 3)} ${styles.metricValue}`}>{fmtMonths(cashMonths)}</span>
-            <span className={`dim ${styles.metricHint}`}>{fmt(data.cash)} in checking/savings</span>
+            <span className={`dim ${styles.metricHint}`}>{fmtCompact(data.cash)} in checking/savings</span>
           </div>
           <div className={styles.metric}>
-            <span className={styles.metricLabel}>Liquid</span>
+            <span className={styles.metricLabel}>Liquid runway</span>
             <span className={`num ${runwayClass(liquidMonths, 12, 6)} ${styles.metricValue}`}>{fmtMonths(liquidMonths)}</span>
-            <span className={`dim ${styles.metricHint}`}>{fmt(data.liquid)} incl. brokerage</span>
+            <span className={`dim ${styles.metricHint}`}>{fmtCompact(data.liquid)} incl. brokerage</span>
           </div>
+          {data.totalDebt > 0 && (
+            <div className={styles.metric}>
+              <span className={styles.metricLabel}>Debt</span>
+              <span className={`num ${netCash >= 0 ? 'pos' : 'neg'} ${styles.metricValue}`}>
+                {fmtCompact(data.totalDebt)}
+              </span>
+              <span className={`dim ${styles.metricHint}`}>
+                {netCash >= 0
+                  ? `covered — ${fmtCompact(netCash)} net cash`
+                  : `${fmtCompact(Math.abs(netCash))} more than cash`}
+              </span>
+            </div>
+          )}
+          {data.totalDebt > 0 && netCash < 0 && (
+            <div className={styles.metric}>
+              <span className={styles.metricLabel}>Debt-free in</span>
+              {debtMonths === null ? (
+                <span className={`neg ${styles.metricValue}`}>no surplus</span>
+              ) : (
+                <span className={`num ${debtMonths <= 6 ? 'pos' : debtMonths <= 24 ? 'warn' : ''} ${styles.metricValue}`}>
+                  {fmtMonths(debtMonths)}
+                </span>
+              )}
+              <span className={`dim ${styles.metricHint}`}>
+                {debtMonths !== null
+                  ? `${fmtCompact(remainingDebt)} remaining after cash`
+                  : 'increase savings to pay off debt'}
+              </span>
+            </div>
+          )}
         </section>
 
-        {scorecard && (scorecard.over.length > 0 || scorecard.under.length > 0) && (
-          <section className={styles.panel}>
-            <h2>Last 30 days · vs typical</h2>
-            {scorecard.over.length > 0 && (
-              <div className={styles.metric}>
-                <span className={styles.metricLabel}>Watch</span>
-                <span className={`neg ${styles.metricValue}`}>
-                  {scorecard.over.slice(0, 2).map((r) => `${r.category} ${fmtSigned(r.medianDelta, 0)}`).join('  ·  ')}
-                </span>
-              </div>
-            )}
-            {topUnder.length > 0 && (
-              <div className={styles.metric}>
-                <span className={styles.metricLabel}>Good</span>
-                <span className={`pos ${styles.metricValue}`}>
-                  {topUnder.map((r) => `${r.category} ${fmtSigned(r.medianDelta, 0)}`).join('  ·  ')}
-                </span>
-              </div>
-            )}
-            <div className={styles.metric}>
-              <span className={styles.metricLabel}>Net</span>
-              <span className={`num ${scorecard.net <= 0 ? 'pos' : 'warn'} ${styles.metricValue}`}>
-                {fmtSigned(scorecard.net, 0)}
-              </span>
-              <button
-                className={`dim ${styles.scorecardLink}`}
-                onClick={() => navigate('dashboard', { range: 'last30', scorecard: true })}
-              >
-                full scorecard →
-              </button>
-            </div>
-          </section>
-        )}
-
-        {data.totalDebt > 0 && (
-          <section className={styles.panel}>
-            <h2>Debt</h2>
-            <div className={styles.metric}>
-              <span className={styles.metricLabel}>Net cash</span>
-              <span className={`num ${netCash >= 0 ? 'pos' : 'neg'} ${styles.metricValue}`}>{fmtSigned(netCash)}</span>
-              <span className={`dim ${styles.metricHint}`}>
-                {netCash >= 0 ? 'could pay off now' : `${fmtCompact(data.cash)} cash · ${fmtCompact(data.totalDebt)} debt`}
-              </span>
-            </div>
-            {netCash < 0 && (
-              <div className={styles.metric}>
-                <span className={styles.metricLabel}>Debt-free in</span>
-                {debtMonths === null ? (
-                  <span className={`neg ${styles.metricValue}`}>no surplus</span>
-                ) : (
-                  <span className={`num ${debtMonths <= 6 ? 'pos' : debtMonths <= 24 ? 'warn' : ''} ${styles.metricValue}`}>
-                    {fmtMonths(debtMonths)}
-                  </span>
-                )}
-                <span className={`dim ${styles.metricHint}`}>
-                  {debtMonths !== null ? `${fmtCompact(remainingDebt)} remaining after cash` : 'increase savings to pay off debt'}
-                </span>
-              </div>
-            )}
-          </section>
-        )}
-
-        <section className={`${styles.panel} ${styles.panelWide}`}>
+        <section className={`${styles.panel} ${styles.panelFlex}`}>
           <h2>Retirement</h2>
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Net worth</span>
-            <span className={`num ${data.netWorth >= 0 ? 'pos' : 'neg'} ${styles.metricValue}`}>{fmtCompact(data.netWorth)}</span>
+            <span className={`num ${data.netWorth >= 0 ? 'pos' : 'neg'} ${styles.metricValue}`}>
+              {fmtCompact(data.netWorth)}
+            </span>
+            <span className={`dim ${styles.metricHint}`}>{fmtPct(fireProgress * 100)} of FIRE target</span>
+          </div>
+          <div className={styles.progressRow}>
+            <div className={styles.progressTrack}>
+              <div className={styles.progressFill} style={{ width: `${Math.min(100, fireProgress * 100)}%` }} />
+            </div>
+            <span className="dim" style={{ fontSize: '12px', whiteSpace: 'nowrap' }}>
+              {fmtCompact(fireNumber)} target
+            </span>
           </div>
           <div className={styles.metric}>
-            <span className={styles.metricLabel}>FIRE number</span>
-            <span className={`num ${styles.metricValue}`}>{fmtCompact(fireNumber)}</span>
-            <span className={styles.fireProgress}>
-              <span className={styles.progressTrack}>
-                <span className={styles.progressFill} style={{ width: `${Math.min(100, fireProgress * 100)}%` }} />
-              </span>
-              <span className="dim">{fmtPct(fireProgress * 100)}</span>
-            </span>
+            <span className={styles.metricLabel}>FIRE spend</span>
+            <span className={`num ${styles.metricValue}`}>{fmtCompact(annualSpend)}</span>
+            <span className={`dim ${styles.metricHint}`}>per year · {withdrawal}% withdrawal</span>
           </div>
           <div className={styles.metric}>
             <span className={styles.metricLabel}>Coast FIRE</span>
@@ -216,25 +222,61 @@ export function Health() {
               <span className={`accent num ${styles.metricValue}`}>~{Math.ceil(coast)} yr</span>
             )}
             <span className={`dim ${styles.metricHint}`}>
-              {coast === null ? 'need positive net worth' : coast === 0 ? 'growth alone covers retirement' : 'if you stop saving now'}
+              {coast === null
+                ? 'need positive net worth'
+                : coast === 0
+                  ? 'growth alone covers retirement'
+                  : 'if you stop saving now'}
             </span>
-          </div>
-          <div className={styles.metric}>
-            <span className={styles.metricLabel}>Est. years away</span>
-            {years === null ? (
-              <span className={`warn ${styles.metricValue}`}>100+ years</span>
-            ) : years === 0 ? (
-              <span className={`pos ${styles.metricValue}`}>Achieved!</span>
-            ) : (
-              <span className={`accent num ${styles.metricValue}`}>~{Math.ceil(years)} yr</span>
-            )}
           </div>
         </section>
       </div>
 
+      {scorecard && (scorecard.over.length > 0 || scorecard.under.length > 0) && (
+        <section className={`${styles.panel} ${styles.panelCompact}`}>
+          <h2>Last 30 days · vs typical</h2>
+          {scorecard.over.length > 0 && (
+            <div className={styles.scorecardRow}>
+              <span className={styles.scLabel}>Watch</span>
+              <span>
+                {scorecard.over.slice(0, 2).map((r, i) => (
+                  <React.Fragment key={r.category}>
+                    {i > 0 && <span className="dim"> · </span>}
+                    <span className="neg">{r.category} {fmtSigned(r.medianDelta, 0)}</span>
+                  </React.Fragment>
+                ))}
+              </span>
+            </div>
+          )}
+          {topUnder.length > 0 && (
+            <div className={styles.scorecardRow}>
+              <span className={styles.scLabel}>Good</span>
+              <span>
+                {topUnder.map((r, i) => (
+                  <React.Fragment key={r.category}>
+                    {i > 0 && <span className="dim"> · </span>}
+                    <span className="pos">{r.category} {fmtSigned(r.medianDelta, 0)}</span>
+                  </React.Fragment>
+                ))}
+              </span>
+            </div>
+          )}
+          <div className={styles.scorecardNetRow}>
+            <span className={styles.scLabel}>Net</span>
+            <span className={`num ${scorecard.net <= 0 ? 'pos' : 'warn'}`}>{fmtSigned(scorecard.net, 0)}</span>
+            <button
+              className={`dim ${styles.scorecardLink}`}
+              onClick={() => navigate('dashboard', { range: 'last30', scorecard: true })}
+            >
+              full scorecard →
+            </button>
+          </div>
+        </section>
+      )}
+
       <section className={styles.panel}>
         <h2>Assumptions</h2>
-        <div className={styles.dials}>
+        <div className={styles.dialsDollar}>
           <DollarDial
             label="Monthly spending"
             value={spend}
@@ -253,6 +295,23 @@ export function Health() {
             onChange={setMonthlySavings}
             onReset={() => setMonthlySavings(null)}
           />
+          <DollarDial
+            label="Pretax savings"
+            value={pretax}
+            defaultValue={0}
+            min={0}
+            hint="401k/HSA — not in transactions"
+            onChange={(v) => {
+              setPretaxSavings(Math.max(0, v));
+              void api.settings.setPretaxMonthly(String(Math.max(0, v)));
+            }}
+            onReset={() => {
+              setPretaxSavings(0);
+              void api.settings.setPretaxMonthly('0');
+            }}
+          />
+        </div>
+        <div className={styles.dialsRate}>
           <SliderDial
             label="Withdrawal rate"
             value={withdrawal}
@@ -301,12 +360,7 @@ function DollarDial({
   const changed = value !== defaultValue;
   return (
     <div className={styles.dial}>
-      <div className={styles.dialHeader}>
-        <span className={styles.dialLabel}>{label}</span>
-        <span className={`num ${signed && value < 0 ? 'neg' : ''} ${styles.dialValue}`}>
-          {signed ? fmtSigned(value, 0) : fmt(value, 0)}
-        </span>
-      </div>
+      <span className={styles.dialLabel}>{label}</span>
       <div className={styles.dialControls}>
         <button className={styles.stepBtn} onClick={() => onChange(value - SPEND_STEP)}>
           −

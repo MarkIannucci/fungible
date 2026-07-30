@@ -21,8 +21,8 @@ type Step =
   | 'seed-choice'
   | 'done';
 
-type PlaidEnv = 'sandbox' | 'development' | 'production';
-const PLAID_ENVS: PlaidEnv[] = ['sandbox', 'development', 'production'];
+type PlaidEnv = 'sandbox' | 'production';
+const PLAID_ENVS: PlaidEnv[] = ['sandbox', 'production'];
 
 const ENV_PATH = path.join(DATA_DIR, '.env');
 
@@ -55,7 +55,7 @@ export function Setup() {
   const [clientId, setClientId] = useState(existing['PLAID_CLIENT_ID'] ?? '');
   const [secret, setSecret] = useState(existing['PLAID_SECRET'] ?? '');
   const [plaidEnvIdx, setPlaidEnvIdx] = useState<number>(
-    Math.max(0, PLAID_ENVS.indexOf((existing['PLAID_ENV'] as PlaidEnv) ?? 'development'))
+    Math.max(0, PLAID_ENVS.indexOf((existing['PLAID_ENV'] as PlaidEnv) ?? 'sandbox'))
   );
 
   // Default history start date (persisted in DB settings)
@@ -294,7 +294,7 @@ export function Setup() {
       {step === 'plaid-env' && (
         <Box flexDirection="column" gap={1}>
           <Text bold>Plaid Environment</Text>
-          <Text dimColor>Use "development" for real bank data (free tier)</Text>
+          <Text dimColor>Use "sandbox" for testing, "production" for real bank data</Text>
           <Box marginTop={1} gap={2}>
             <Text>Environment: </Text>
             <Text dimColor>← </Text>
