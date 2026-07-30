@@ -24,6 +24,8 @@ import * as accountsApi from '../../core/accounts.js';
 import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
+import { SyncStatusProvider } from '../../tui/SyncStatusContext.js';
+import { setSyncResult, clearSyncFailures } from '../../core/sync-status.js';
 import { FilterProvider, useFilter } from '../../tui/FilterContext.js';
 import type { Filter } from '../../core/filters.js';
 import { TypingContext } from '../../tui/TypingContext.js';
@@ -1715,6 +1717,123 @@ describe('Accounts', () => {
     r.stdin.write('\r');                 // save → write rejects
     await waitFor(() => expect(frame(r)).toContain('Failed to update'));
     expect(frame(r)).not.toContain('Updated Test Checking');
+  });
+
+  // ── Sync state on the accounts list ───────────────────────────────────────
+  //
+  // Each case owns the whole list (the seeded accounts are cleared) so a frame
+  // assertion is unambiguous about which row it's reading. Frames are whitespace
+  // collapsed because a row can wrap at 80 columns.
+  describe('sync state', () => {
+    const flat = (r: ReturnType<typeof render>) => frame(r).replace(/\s+/g, ' ');
+
+    beforeEach(async () => {
+      await db.execute('DELETE FROM accounts');
+      await db.execute('DELETE FROM balance_history');
+      await db.execute('DELETE FROM plaid_items');
+      clearSyncFailures();
+    });
+    afterEach(() => clearSyncFailures());
+
+    // The Accounts screen reads failures through SyncStatusProvider; W omits it,
+    // so the badge cases need their own wrapper.
+    function accountsWithSyncStatus() {
+      return render(
+        <W>
+          <SyncStatusProvider>
+            <Accounts onNavigate={noop} showHints={false} />
+          </SyncStatusProvider>
+        </W>,
+      );
+    }
+
+    const addItem = (itemId: string, institution: string | null, lastSyncedAt: number | null) =>
+      db.execute({
+        sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
+        args: [itemId, 'tok', institution, lastSyncedAt],
+      });
+
+    it('renders a placeholder row for a linked but unsynced institution', async () => {
+      await addItem('item-new', 'Capital One', null);
+      const r = accounts();
+      await waitFor(() => {
+        const f = flat(r);
+        expect(f).toContain('Capital One');
+        expect(f).toContain('◷ awaiting first sync');
+      });
+    });
+
+    // The whole point of the placeholder: a fresh link is never met with
+    // "nothing here", which is what nearly caused a duplicate link attempt.
+    it('does not show the empty state when only a placeholder exists', async () => {
+      await addItem('item-new', 'Capital One', null);
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Capital One'));
+      expect(flat(r)).not.toContain('No accounts linked yet.');
+    });
+
+    it('a failing item outranks the awaiting-first-sync badge', async () => {
+      await addItem('item-new', 'Capital One', null);
+      setSyncResult([{ itemId: 'item-new', added: 0, modified: 0, removed: 0, dupes: 0, skipped: false, error: 'ITEM_LOGIN_REQUIRED' }]);
+      const r = accountsWithSyncStatus();
+      await waitFor(() => expect(flat(r)).toContain('⚠ sync failed'));
+      // The footer still names the institution as awaiting a first sync — it is.
+      // Only the row badge is under test, so match the glyph, not the phrase.
+      expect(flat(r)).not.toContain('◷ awaiting first sync');
+    });
+
+    it('Enter on a placeholder refuses to open the edit panel and says why', async () => {
+      await addItem('item-new', 'Capital One', null);
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('◷ awaiting first sync'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Not synced yet'));
+      expect(flat(r)).not.toContain('Edit:');
+    });
+
+    it('counts placeholders separately from accounts in the footer', async () => {
+      const ts = Date.now();
+      await addItem('item-synced', 'Chase', ts);
+      await addItem('item-new', 'Capital One', null);
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES ('acct-chase', 'Chase Checking', 'depository', 'checking', 'item-synced')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('1 account · 1 institution awaiting first sync'));
+    });
+
+    // Defect 4, end to end: sync writes a balance row only when
+    // balances.current is non-null, so this account has no balance_history at
+    // all. It used to read "not synced" forever despite its institution syncing
+    // fine — it must report the item's sync time instead.
+    it('reports the item sync time for a synced account with no balance snapshot', async () => {
+      await addItem('item-synced', 'Chase', Date.now() - 5 * 60_000);
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES ('acct-nobal', 'No Balance', 'depository', 'checking', 'item-synced')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('No Balance'));
+      expect(flat(r)).toContain('synced 5 min ago');
+      expect(flat(r)).not.toContain('not synced');
+    });
+
+    // A manual account has no Plaid item, so its balance-snapshot date is the
+    // only sync signal it has — the fallback branch must keep working.
+    it('a manual account still renders its balance-snapshot date', async () => {
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype) VALUES ('manual-house', 'House', 'other', null)`,
+        args: [],
+      });
+      await db.execute({
+        sql: `INSERT INTO balance_history (account_id, balance, date) VALUES ('manual-house', 500000, '2026-06-12')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('House'));
+      expect(flat(r)).toContain('synced Jun 12');
+    });
   });
 });
 

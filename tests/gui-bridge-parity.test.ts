@@ -51,6 +51,7 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   // Session-only sync-failure store (core/sync-status.ts) — the GUI will surface
   // sync status in its own layer (renderer state), not through the bridge.
   setSyncResult: 'GUI will surface sync status in its own layer',
+  mergeSyncResult: 'GUI will surface sync status in its own layer',
   getSyncFailures: 'GUI will surface sync status in its own layer',
   onSyncStatus: 'GUI will surface sync status in its own layer',
 

@@ -136,8 +136,20 @@ export type SyncItemResult = {
   error?: string;
 };
 
-export async function syncAll(force = false): Promise<SyncItemResult[]> {
-  const itemsRes = await db.execute('SELECT item_id, access_token, last_synced_at FROM plaid_items');
+/**
+ * Syncs every Plaid item, or just `itemIds` when given a non-empty list —
+ * used right after a link so the new institution syncs immediately instead of
+ * waiting for the next launch. Per-item error capture and the debounce are
+ * unchanged either way.
+ */
+export async function syncAll(force = false, itemIds?: string[]): Promise<SyncItemResult[]> {
+  const itemsRes = itemIds && itemIds.length > 0
+    ? await db.execute({
+        sql: `SELECT item_id, access_token, last_synced_at FROM plaid_items
+              WHERE item_id IN (${itemIds.map(() => '?').join(', ')})`,
+        args: itemIds,
+      })
+    : await db.execute('SELECT item_id, access_token, last_synced_at FROM plaid_items');
   const items = itemsRes.rows as unknown as {
     item_id: string; access_token: string; last_synced_at: number | null;
   }[];

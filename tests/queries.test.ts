@@ -666,3 +666,116 @@ describe('excluded accounts', () => {
     expect(linked.find((a) => a.id === 'brk')!.excluded).toBe(false);
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────
+describe('getLinkedAccounts — awaiting-first-sync placeholders', () => {
+  beforeEach(async () => {
+    await db.execute('DELETE FROM plaid_items');
+    await db.execute('DELETE FROM balance_history');
+  });
+
+  const addItem = (itemId: string, institution: string | null, lastSyncedAt: number | null) =>
+    db.execute({
+      sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
+      args: [itemId, 'tok', institution, lastSyncedAt],
+    });
+
+  const addAccount = (id: string, itemId: string | null, name = id) =>
+    db.execute({
+      sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES (?, ?, 'depository', 'checking', ?)`,
+      args: [id, name, itemId],
+    });
+
+  it('emits a placeholder for an unsynced item with no accounts rows', async () => {
+    await addItem('item-new', 'Capital One', null);
+    const rows = await getLinkedAccounts();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].awaitingFirstSync).toBe(true);
+    expect(rows[0].institution_name).toBe('Capital One');
+    expect(rows[0].name).toBe('Capital One');
+    expect(rows[0].id).toBe('item-new');
+    expect(rows[0].item_id).toBe('item-new');
+    expect(rows[0].item_last_synced_at).toBeNull();
+    expect(rows[0].last_synced).toBeNull();
+    expect(rows[0].type).toBe('other');
+    expect(rows[0].excluded).toBe(false);
+  });
+
+  it('names an institution-less item "New institution"', async () => {
+    await addItem('item-new', null, null);
+    const rows = await getLinkedAccounts();
+    expect(rows[0].name).toBe('New institution');
+  });
+
+  it('sorts placeholders ahead of real accounts', async () => {
+    await addItem('item-new', 'Capital One', null);
+    await addItem('item-old', 'Chase', Date.now());
+    await addAccount('acct-chase', 'item-old', 'Chase Checking');
+    const rows = await getLinkedAccounts();
+    expect(rows.map((r) => r.id)).toEqual(['item-new', 'acct-chase']);
+  });
+
+  it('emits no placeholder once the item has accounts rows', async () => {
+    await addItem('item-old', 'Chase', null);
+    await addAccount('acct-chase', 'item-old');
+    const rows = await getLinkedAccounts();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('acct-chase');
+    expect(rows[0].awaitingFirstSync).toBe(false);
+  });
+
+  // A sync that completed but whose accountsGet returned nothing stays a silent
+  // failure (unchanged behaviour) — it must not be mislabelled "awaiting first
+  // sync" forever. Also guards against deleteAccount, which leaves the
+  // plaid_items row behind, resurrecting the item as a placeholder.
+  it('emits no placeholder for a synced item with no accounts rows', async () => {
+    await addItem('item-empty', 'Empty Bank', Date.now());
+    expect(await getLinkedAccounts()).toEqual([]);
+  });
+
+  // accountsGet landed but the transaction upsert threw, so last_synced_at is
+  // still NULL. The real rows should render normally, not be duplicated.
+  it('emits only real rows when accounts exist but last_synced_at is NULL', async () => {
+    await addItem('item-partial', 'Chase', null);
+    await addAccount('acct-partial', 'item-partial');
+    const rows = await getLinkedAccounts();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].awaitingFirstSync).toBe(false);
+    expect(rows[0].item_last_synced_at).toBeNull();
+  });
+
+  it('emits exactly one placeholder for two items, one synced one not', async () => {
+    await addItem('item-synced', 'Chase', Date.now());
+    await addAccount('acct-chase', 'item-synced');
+    await addItem('item-new', 'Capital One', null);
+    const rows = await getLinkedAccounts();
+    expect(rows.filter((r) => r.awaitingFirstSync).map((r) => r.item_id)).toEqual(['item-new']);
+  });
+
+  it('returns item_last_synced_at as a number for Plaid accounts and null for CSV/manual', async () => {
+    const ts = Date.now();
+    await addItem('item-synced', 'Chase', ts);
+    await addAccount('acct-plaid', 'item-synced');
+    await addAccount('manual-thing', null);
+    const rows = await getLinkedAccounts();
+    const plaid = rows.find((r) => r.id === 'acct-plaid')!;
+    const manual = rows.find((r) => r.id === 'manual-thing')!;
+    expect(typeof plaid.item_last_synced_at).toBe('number');
+    expect(plaid.item_last_synced_at).toBe(ts);
+    expect(manual.item_last_synced_at).toBeNull();
+  });
+
+  // Defect-4 regression guard: core/sync.ts only writes a balance row when
+  // balances.current is non-null, so an account that synced fine but reported no
+  // balance has no balance_history at all. It must report its item's sync time
+  // rather than reading "not synced" forever.
+  it('reports item_last_synced_at for a synced account with zero balance_history rows', async () => {
+    const ts = Date.now();
+    await addItem('item-synced', 'Chase', ts);
+    await addAccount('acct-nobalance', 'item-synced');
+    const rows = await getLinkedAccounts();
+    expect(rows[0].last_synced).toBeNull();
+    expect(rows[0].item_last_synced_at).toBe(ts);
+    expect(rows[0].awaitingFirstSync).toBe(false);
+  });
+});
