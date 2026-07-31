@@ -1,10 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import React from 'react';
 import { render, cleanup } from 'ink-testing-library';
+import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 
 vi.mock('../../core/db.js', async () => {
   const { makeTestDb } = await import('../helpers/makeTestDb.js');
   return { db: await makeTestDb() };
+});
+
+// tui/Accounts.tsx is the only TUI screen that spawns anything (scripts/link.ts),
+// so stubbing spawn lets the link panel be driven without a real subprocess.
+vi.mock('node:child_process', async (importActual) => {
+  const actual = await importActual<typeof import('node:child_process')>();
+  return { ...actual, spawn: vi.fn() };
 });
 
 import { db } from '../../core/db.js';
@@ -19,7 +28,7 @@ import { FilterPanel } from '../../tui/FilterPanel.js';
 import { NetWorth } from '../../tui/NetWorth.js';
 import { Tags } from '../../tui/Tags.js';
 import { Rules } from '../../tui/Rules.js';
-import { Accounts } from '../../tui/Accounts.js';
+import { Accounts, extractLinkUrl } from '../../tui/Accounts.js';
 import * as accountsApi from '../../core/accounts.js';
 import * as syncApi from '../../core/sync.js';
 import { Health } from '../../tui/Health.js';
@@ -42,10 +51,23 @@ vi.mock('../../core/profile.js', async (importActual) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Stand-in for the scripts/link.ts child: emit on .stdout/.stderr to drive the panel. */
+function fakeLinkProcess() {
+  return Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  });
+}
+
 const ANSI_RE = /\x1b\[[0-9;]*[mGKHFABCDJ]/g;
 
 function frame(r: ReturnType<typeof render>): string {
   return (r.lastFrame() ?? '').replace(ANSI_RE, '');
+}
+
+/** Whitespace-collapsed frame — rows and panels wrap at 80 columns. */
+function flat(r: ReturnType<typeof render>): string {
+  return frame(r).replace(/\s+/g, ' ');
 }
 
 async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
@@ -1720,14 +1742,108 @@ describe('Accounts', () => {
     expect(frame(r)).not.toContain('Updated Test Checking');
   });
 
+  // The link URL is printed once by scripts/link.ts and then buried by later
+  // status lines ("Waiting for you to connect…"), which share the single
+  // linkMsg slot. It has to be captured from the chunk and pinned separately —
+  // on Linux there is no `open`, so it is the only way into the Plaid flow.
+  describe('link URL capture', () => {
+    it('extracts the URL from the line link.ts prints', () => {
+      expect(extractLinkUrl('Opening http://localhost:4747 …')).toBe('http://localhost:4747');
+    });
+
+    it('finds the URL anywhere in a multi-line chunk, not just the last line', () => {
+      const chunk = 'Opening http://localhost:4747 …\nWaiting for you to connect in the browser…\n';
+      // The last line is what becomes linkMsg, so a last-line-only scan would miss it.
+      expect(chunk.trim().split('\n').pop()).not.toContain('localhost');
+      expect(extractLinkUrl(chunk)).toBe('http://localhost:4747');
+    });
+
+    it('returns null for status lines that carry no URL', () => {
+      expect(extractLinkUrl('Saving institution…')).toBeNull();
+      expect(extractLinkUrl('Creating Plaid link token…')).toBeNull();
+    });
+
+    it('reads whatever port link.ts is using rather than assuming one', () => {
+      expect(extractLinkUrl('Opening http://localhost:8080 …')).toBe('http://localhost:8080');
+    });
+
+    // The regression the user hit: the URL scrolled away behind the next status
+    // line, leaving nothing to click while the ticker counted up.
+    it('keeps the URL on screen after later status lines replace the message', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');                                  // → Add Data
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('l');                                   // → history-window prompt
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');                                  // → starts the link
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.stdout.emit('data', Buffer.from('Opening http://localhost:4747 …\n'));
+      await waitFor(() => expect(flat(r)).toContain('http://localhost:4747'));
+
+      // This line takes over linkMsg — the URL must survive it.
+      proc.stdout.emit('data', Buffer.from('Waiting for you to connect in the browser…\n'));
+      await waitFor(() => expect(flat(r)).toContain('Waiting for you to connect'));
+      expect(flat(r)).toContain('http://localhost:4747');
+
+      // Still there several status lines later.
+      proc.stdout.emit('data', Buffer.from('Account link received from Chase — exchanging token…\n'));
+      await waitFor(() => expect(flat(r)).toContain('exchanging token'));
+      expect(flat(r)).toContain('http://localhost:4747');
+    });
+
+    // Same defect shape: the generic exit-code line used to bury the stderr
+    // reason, so a crash reported only that it happened, never why.
+    it('keeps the stderr reason instead of replacing it with the exit code', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('l');
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.stderr.emit('data', Buffer.from('Error: listen EADDRINUSE: address already in use 127.0.0.1:4747\n'));
+      await waitFor(() => expect(flat(r)).toContain('EADDRINUSE'));
+      proc.emit('close', 1);
+
+      await waitFor(() => expect(flat(r)).toContain('Press Enter to return.'));
+      expect(flat(r)).toContain('EADDRINUSE');
+      expect(flat(r)).not.toContain('Process exited with code 1');
+    });
+
+    it('still reports a bare exit code when the child said nothing on stderr', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('l');
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.emit('close', 1);
+      await waitFor(() => expect(flat(r)).toContain('Process exited with code 1'));
+    });
+  });
+
   // ── Sync state on the accounts list ───────────────────────────────────────
   //
   // Each case owns the whole list (the seeded accounts are cleared) so a frame
   // assertion is unambiguous about which row it's reading. Frames are whitespace
   // collapsed because a row can wrap at 80 columns.
   describe('sync state', () => {
-    const flat = (r: ReturnType<typeof render>) => frame(r).replace(/\s+/g, ' ');
-
     beforeEach(async () => {
       await db.execute('DELETE FROM accounts');
       await db.execute('DELETE FROM balance_history');

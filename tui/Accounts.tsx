@@ -63,6 +63,13 @@ const SUBTYPES: Record<string, string[]> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Pulls the local link server's URL out of a stdout chunk from scripts/link.ts.
+ *  It's printed once, early, and later status lines would otherwise scroll it
+ *  away — so we capture it and pin it for the life of the link. */
+export function extractLinkUrl(chunk: string): string | null {
+  return chunk.match(/https?:\/\/localhost:\d+/)?.[0] ?? null;
+}
+
 function fmtDate(d: string | null): string {
   if (!d) return 'never';
   const dt = new Date(d + 'T12:00:00');
@@ -102,6 +109,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [addStep, setAddStep] = useState<AddStep>('landing');
   const [linkStatus, setLinkStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [linkMsg, setLinkMsg] = useState('');
+  // Held separately from linkMsg, which every new status line overwrites. On
+  // Linux there is no `open`/`xdg-open`, so the browser never launches itself
+  // and this URL is the user's only way into the Plaid flow.
+  const [linkUrl, setLinkUrl] = useState('');
+  // Last stderr text from the link subprocess. Read from the long-lived close
+  // handler, so it's a ref rather than state.
+  const linkErrRef = useRef('');
   const [daysInput, setDaysInput] = useState(String(MAX_DAYS_REQUESTED));
   const [daysError, setDaysError] = useState('');
   // Default history window derived from the start date set during setup.
@@ -363,6 +377,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function startPlaidLink(days = 730) {
     setLinkStatus('running');
     setLinkMsg('Opening browser…');
+    setLinkUrl('');
+    linkErrRef.current = '';
     const node = process.execPath;
     const script = new URL('../scripts/link.ts', import.meta.url).pathname;
     const child = spawn(node, [
@@ -374,12 +390,19 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       env: { ...process.env, PLAID_DAYS_REQUESTED: String(days) },
     });
     child.stdout.on('data', (data: Buffer) => {
-      const line = data.toString().trim().split('\n').pop() ?? '';
+      const chunk = data.toString();
+      const url = extractLinkUrl(chunk);
+      if (url) setLinkUrl(url);
+      // Only the last line of the chunk becomes the status; the URL above is
+      // captured from the whole chunk so it survives being scrolled past.
+      const line = chunk.trim().split('\n').pop() ?? '';
       if (line) setLinkMsg(line);
     });
     child.stderr.on('data', (data: Buffer) => {
+      const text = data.toString().trim();
+      linkErrRef.current = text;
       setLinkStatus('error');
-      setLinkMsg(data.toString().trim());
+      setLinkMsg(text);
     });
     child.on('close', (code: number) => {
       if (code === 0) {
@@ -395,7 +418,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         });
       } else if (code !== null) {
         setLinkStatus('error');
-        setLinkMsg(`Process exited with code ${code}. Press Enter to continue.`);
+        // Keep the stderr reason if we captured one — it says *why* the link
+        // failed, where a bare exit code says only that it did. The panel
+        // already offers "Press Enter to return" for the error state.
+        if (!linkErrRef.current) setLinkMsg(`Process exited with code ${code}. Press Enter to continue.`);
       }
     });
   }
@@ -966,6 +992,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text color={linkStatus === 'done' ? C_POSITIVE : linkStatus === 'error' ? C_NEGATIVE : C_WARNING}>
                 {linkStatus === 'running' ? '⟳ ' : ''}{linkMsg}<Text dimColor>{elapsedSuffix}</Text>
               </Text>
+              {linkStatus === 'running' && linkUrl && (
+                <Text>Open this link if your browser didn't: <Text color={C_ACCENT}>{linkUrl}</Text></Text>
+              )}
               {linkStatus === 'running' && (
                 <Text dimColor>Complete the Plaid flow in your browser, then return here.</Text>
               )}
