@@ -1835,6 +1835,23 @@ describe('Accounts', () => {
       await waitFor(() => expect(flat(r)).toMatch(/Syncing…\s+[2-9]\d*s/), 6000);
     });
 
+    // The step name has to actually reach the screen, not just be emitted by
+    // core — this is the whole point of threading onProgress into the TUI.
+    it('renders the current sync step as the sync reports it', async () => {
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(async (_force, _ids, onProgress) => {
+        onProgress?.('item-x', { phase: 'transactions', page: 1, fetched: 1234 });
+        await new Promise((res) => setTimeout(res, 40));
+        onProgress?.('item-x', { phase: 'dedup' });
+        return new Promise(() => []) as never;   // stay pending on the last step
+      });
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('No accounts linked yet.'));
+      r.stdin.write('s');
+      await waitFor(() => expect(flat(r)).toContain('Fetching transactions… 1,234 so far'));
+      await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
+    });
+
     // A manual account has no Plaid item, so its balance-snapshot date is the
     // only sync signal it has — the fallback branch must keep working.
     it('a manual account still renders its balance-snapshot date', async () => {

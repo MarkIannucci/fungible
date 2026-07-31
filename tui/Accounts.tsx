@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { spawn } from 'node:child_process';
-import { syncAll, type SyncItemResult } from '../core/sync.js';
+import { syncAll, describeSyncProgress, type SyncItemResult, type SyncProgress } from '../core/sync.js';
 import { setSyncResult, mergeSyncResult } from '../core/sync-status.js';
 import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
@@ -246,11 +246,18 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     }).join('  ·  ');
   }
 
+  // Names the step the sync is currently on. Without this the label sits on
+  // "Syncing…" for the whole run, which on a large backfill is minutes of the
+  // UI looking identical to a hang.
+  function reportProgress(_itemId: string, p: SyncProgress) {
+    setSyncMsg(describeSyncProgress(p));
+  }
+
   function forceSync() {
     syncStatusRef.current = 'syncing';   // visible before the re-render lands
     setSyncStatus('syncing');
     setSyncMsg('Syncing…');
-    syncAll(true).then((results) => {
+    syncAll(true, undefined, reportProgress).then((results) => {
       const failed = results.filter((r) => r.error);
       // Feed the shared store: updates the row badges here and the global banner.
       // A clean run stores an empty set, clearing both.
@@ -282,7 +289,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     syncStatusRef.current = 'syncing';   // visible before the re-render lands
     setSyncStatus('syncing');
     setSyncMsg('Syncing new institution…');
-    syncAll(true, itemIds).then((results) => {
+    syncAll(true, itemIds, reportProgress).then((results) => {
       const failed = results.filter((r) => r.error);
       mergeSyncResult(results, itemIds);
       void loadAccounts();
