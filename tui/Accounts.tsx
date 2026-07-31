@@ -183,8 +183,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
     return () => clearInterval(t);
   }, [busyPhase]);
-  // Only shown once it's long enough to be worth reassuring about.
+  // Only shown once it's long enough to be worth reassuring about, and pinned to
+  // the line for the phase it's actually timing — otherwise the sync's counter
+  // renders next to the finished link message and reads as a stalled link.
   const elapsedSuffix = busyPhase && elapsed >= 2 ? `  ${elapsed}s` : '';
+  const linkElapsed = busyPhase === 'link' ? elapsedSuffix : '';
+  const syncElapsed = busyPhase === 'sync' ? elapsedSuffix : '';
 
   const setTyping = useSetTyping();
   const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'manual-name', 'manual-value', 'new-acct-name']);
@@ -206,9 +210,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Resolves to the loaded list so callers can act on it — the post-link handler
   // reads the placeholder rows to learn which items need a first sync.
   async function loadAccounts(): Promise<LinkedAccount[]> {
-    const [accts, dupeRows] = await Promise.all([getLinkedAccounts(), getCsvPlaidDupeCandidates()]);
+    const accts = await getLinkedAccounts();
     setLinkedAccounts(accts);
-    setDupes(dupeRows);
+    // Deliberately not awaited. The dupe scan is an unindexed self-join over the
+    // whole transactions table — measured at 5s for 20k rows and 49s for 40k
+    // once CSV imports are present. Nothing here needs it, and awaiting it after
+    // a link delayed the sync itself by that much, which read as a hang.
+    void getCsvPlaidDupeCandidates().then(setDupes);
     return accts;
   }
   useEffect(() => { void loadAccounts(); }, [refreshKey]);
@@ -867,7 +875,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             {realAcctCount} account{realAcctCount !== 1 ? 's' : ''}
             {awaitingCount > 0 && ` · ${awaitingCount} institution${awaitingCount !== 1 ? 's' : ''} awaiting first sync`}
           </Text>
-          {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{elapsedSuffix}</Text></Text>}
+          {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{syncElapsed}</Text></Text>}
           {acctMsg && <Text color={C_POSITIVE}>{acctMsg}</Text>}
           {acctErr && <Text color={C_NEGATIVE}>{acctErr}</Text>}
 
@@ -970,7 +978,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
                 </Text>
               </Box>
-              {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{elapsedSuffix}</Text></Text></Box>}
+              {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{syncElapsed}</Text></Text></Box>}
               <Box marginTop={1}><Text dimColor>Tab or Esc to go back</Text></Box>
             </Box>
           )}
@@ -990,13 +998,22 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Link Bank Account</Text>
               <Text color={linkStatus === 'done' ? C_POSITIVE : linkStatus === 'error' ? C_NEGATIVE : C_WARNING}>
-                {linkStatus === 'running' ? '⟳ ' : ''}{linkMsg}<Text dimColor>{elapsedSuffix}</Text>
+                {linkStatus === 'running' ? '⟳ ' : ''}{linkMsg}<Text dimColor>{linkElapsed}</Text>
               </Text>
               {linkStatus === 'running' && linkUrl && (
                 <Text>Open this link if your browser didn't: <Text color={C_ACCENT}>{linkUrl}</Text></Text>
               )}
               {linkStatus === 'running' && (
                 <Text dimColor>Complete the Plaid flow in your browser, then return here.</Text>
+              )}
+              {/* The post-link sync runs while this panel is still on screen, so
+                  its steps have to be reported here too — otherwise the panel
+                  shows a finished link message with a counter ticking beside it
+                  and no sign of what is actually running. */}
+              {syncMsg && (
+                <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>
+                  {syncStatus === 'syncing' ? '⟳ ' : ''}{syncMsg}<Text dimColor>{syncElapsed}</Text>
+                </Text>
               )}
               {(linkStatus === 'done' || linkStatus === 'error') && (
                 <Text dimColor>Press Enter to return.</Text>

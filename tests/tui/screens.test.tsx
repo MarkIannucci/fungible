@@ -1820,6 +1820,38 @@ describe('Accounts', () => {
       expect(flat(r)).not.toContain('Process exited with code 1');
     });
 
+    // The post-link sync runs while the link panel is still on screen. It used
+    // to render only linkMsg, so every sync step was invisible and the elapsed
+    // counter sat next to the finished link message — indistinguishable from a
+    // link that had stalled.
+    it('shows sync progress on the link panel after the link completes', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(async (_f, _ids, onProgress) => {
+        onProgress?.('item-x', { phase: 'transactions', page: 1, fetched: 4321 });
+        return new Promise(() => []) as never;
+      });
+      // A placeholder row, so the close handler finds an item to sync.
+      await db.execute({
+        sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES (?, ?, ?)',
+        args: ['item-x', 'tok', 'Progress Bank'],
+      });
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('l');
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.emit('close', 0);
+      await waitFor(() => expect(flat(r)).toContain('Bank connected!'));
+      // Still on the link panel — the sync step must be visible from here.
+      await waitFor(() => expect(flat(r)).toContain('Fetching transactions… 4,321 so far'));
+    });
+
     it('still reports a bare exit code when the child said nothing on stderr', async () => {
       const proc = fakeLinkProcess();
       vi.mocked(spawn).mockReturnValue(proc as never);
