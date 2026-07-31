@@ -21,6 +21,7 @@ import { Tags } from '../../tui/Tags.js';
 import { Rules } from '../../tui/Rules.js';
 import { Accounts } from '../../tui/Accounts.js';
 import * as accountsApi from '../../core/accounts.js';
+import * as syncApi from '../../core/sync.js';
 import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
@@ -1817,6 +1818,21 @@ describe('Accounts', () => {
       await waitFor(() => expect(flat(r)).toContain('No Balance'));
       expect(flat(r)).toContain('synced 5 min ago');
       expect(flat(r)).not.toContain('not synced');
+    });
+
+    // A long sync must show it is still alive. Without this the label is frozen
+    // for the whole run and there's no way to tell working from hung — which is
+    // what makes people kill the terminal mid-link.
+    it('ticks elapsed seconds while a sync is in flight', async () => {
+      // Hold syncAll pending so the syncing state persists long enough to observe.
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(() => new Promise(() => {}));
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('No accounts linked yet.'));
+      r.stdin.write('s');
+      await waitFor(() => expect(flat(r)).toContain('Syncing…'));
+      // Suppressed below 2s, then counts up.
+      await waitFor(() => expect(flat(r)).toMatch(/Syncing…\s+[2-9]\d*s/), 6000);
     });
 
     // A manual account has no Plaid item, so its balance-snapshot date is the

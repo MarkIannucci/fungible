@@ -155,6 +155,23 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
 
+  // Elapsed-seconds ticker for the two phases that block on the network (the
+  // Plaid link subprocess, then the sync). A static label can't distinguish
+  // "still working" from "hung", which is what makes people kill the terminal
+  // mid-link. Keyed on the phase so the count restarts when link hands off to
+  // sync rather than running straight through both.
+  const busyPhase = linkStatus === 'running' ? 'link' : syncStatus === 'syncing' ? 'sync' : null;
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    setElapsed(0);
+    if (!busyPhase) return;
+    const start = Date.now();
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [busyPhase]);
+  // Only shown once it's long enough to be worth reassuring about.
+  const elapsedSuffix = busyPhase && elapsed >= 2 ? `  ${elapsed}s` : '';
+
   const setTyping = useSetTyping();
   const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'manual-name', 'manual-value', 'new-acct-name']);
   const TEXT_INPUT_MODES = new Set<AcctMode>(['edit', 'update-value']);
@@ -817,7 +834,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             {realAcctCount} account{realAcctCount !== 1 ? 's' : ''}
             {awaitingCount > 0 && ` · ${awaitingCount} institution${awaitingCount !== 1 ? 's' : ''} awaiting first sync`}
           </Text>
-          {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}</Text>}
+          {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{elapsedSuffix}</Text></Text>}
           {acctMsg && <Text color={C_POSITIVE}>{acctMsg}</Text>}
           {acctErr && <Text color={C_NEGATIVE}>{acctErr}</Text>}
 
@@ -920,7 +937,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
                 </Text>
               </Box>
-              {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}</Text></Box>}
+              {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{elapsedSuffix}</Text></Text></Box>}
               <Box marginTop={1}><Text dimColor>Tab or Esc to go back</Text></Box>
             </Box>
           )}
@@ -940,7 +957,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Link Bank Account</Text>
               <Text color={linkStatus === 'done' ? C_POSITIVE : linkStatus === 'error' ? C_NEGATIVE : C_WARNING}>
-                {linkStatus === 'running' ? '⟳ ' : ''}{linkMsg}
+                {linkStatus === 'running' ? '⟳ ' : ''}{linkMsg}<Text dimColor>{elapsedSuffix}</Text>
               </Text>
               {linkStatus === 'running' && (
                 <Text dimColor>Complete the Plaid flow in your browser, then return here.</Text>
