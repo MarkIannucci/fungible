@@ -20,6 +20,7 @@ import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
 import { fmtSyncedAt } from '../core/fmt.js';
 import { handleNavKey } from './nav.js';
+import { useLoadGuard } from './useLoadGuard.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
 import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, EditTextField, EditToggleField } from './components/index.js';
 
@@ -168,6 +169,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
+  // The dupe scan runs detached from loadAccounts, so the view can be opened
+  // while it is still running. Without this an in-flight scan renders as
+  // "No duplicate candidates found." — a false all-clear, and most likely
+  // right after a CSV import, which is when duplicates are most expected.
+  const [dupesLoading, setDupesLoading] = useState(false);
+  // Reloads can overlap (a mutation refresh landing during a slow scan), so an
+  // earlier scan must not overwrite a later one's result.
+  const dupesGuard = useLoadGuard();
 
   // Elapsed-seconds ticker for the two phases that block on the network (the
   // Plaid link subprocess, then the sync). A static label can't distinguish
@@ -215,8 +224,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     // Deliberately not awaited. The dupe scan is an unindexed self-join over the
     // whole transactions table — measured at 5s for 20k rows and 49s for 40k
     // once CSV imports are present. Nothing here needs it, and awaiting it after
-    // a link delayed the sync itself by that much, which read as a hang.
-    void getCsvPlaidDupeCandidates().then(setDupes);
+    // a link delayed the sync itself by that much, which read as a hang. The
+    // Dupes view reports it as still running instead of claiming a clean result.
+    const token = dupesGuard.begin();
+    setDupesLoading(true);
+    void getCsvPlaidDupeCandidates()
+      .then((rows) => { if (dupesGuard.isLatest(token)) setDupes(rows); })
+      .finally(() => { if (dupesGuard.isLatest(token)) setDupesLoading(false); });
     return accts;
   }
   useEffect(() => { void loadAccounts(); }, [refreshKey]);
@@ -801,7 +815,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           <Text bold color={mainView === 'accounts' ? C_ACCENT : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
           <Text bold color={mainView === 'add-data' ? C_ACCENT : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
           <Text bold color={mainView === 'dupes' ? C_ACCENT : undefined} dimColor={mainView !== 'dupes'}>
-            Dupes{dupes.length > 0 ? ` (${dupes.length})` : ''}
+            Dupes{dupesLoading && dupes.length === 0 ? ' …' : dupes.length > 0 ? ` (${dupes.length})` : ''}
           </Text>
           {showHints && <Text dimColor>[Tab]</Text>}
         </Box>
@@ -936,7 +950,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {/* ── Dupes view ────────────────────────────────────────────────── */}
       {mainView === 'dupes' && (
         <Box flexDirection="column" marginTop={1}>
-          {dupes.length === 0 ? (
+          {dupesLoading && dupes.length === 0 ? (
+            <Text color={C_WARNING}>⟳ Checking for duplicates… <Text dimColor>(scans every transaction; can take a while on a large history)</Text></Text>
+          ) : dupes.length === 0 ? (
             <Text color={C_POSITIVE}>No duplicate candidates found.</Text>
           ) : (
             dupes.map((pair, i) => {

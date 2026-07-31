@@ -31,6 +31,7 @@ import { Rules } from '../../tui/Rules.js';
 import { Accounts, extractLinkUrl } from '../../tui/Accounts.js';
 import * as accountsApi from '../../core/accounts.js';
 import * as syncApi from '../../core/sync.js';
+import * as dedupApi from '../../core/dedup.js';
 import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
@@ -1867,6 +1868,41 @@ describe('Accounts', () => {
 
       proc.emit('close', 1);
       await waitFor(() => expect(flat(r)).toContain('Process exited with code 1'));
+    });
+  });
+
+  // The dupe scan runs detached from loadAccounts so it can't delay the
+  // post-link sync. That means the Dupes view can be opened mid-scan, and it
+  // must not report a clean result it doesn't have yet.
+  describe('dupe scan in flight', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('reports the scan as running instead of claiming no duplicates', async () => {
+      vi.spyOn(dedupApi, 'getCsvPlaidDupeCandidates').mockImplementation(() => new Promise(() => {}));
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');                                   // → Add Data
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('\t');                                   // → Dupes
+      await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
+      expect(flat(r)).not.toContain('No duplicate candidates found.');
+    });
+
+    it('reports the clean result once the scan finishes', async () => {
+      let finish: (v: never[]) => void = () => {};
+      vi.spyOn(dedupApi, 'getCsvPlaidDupeCandidates')
+        .mockImplementation(() => new Promise((res) => { finish = res as never; }));
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('\t');
+      await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
+
+      finish([]);
+      await waitFor(() => expect(flat(r)).toContain('No duplicate candidates found.'));
     });
   });
 
