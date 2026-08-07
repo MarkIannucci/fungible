@@ -127,7 +127,7 @@ export function Health() {
                         ? 'FIRE pace'
                         : 'on track'}
               {savingsRate !== null && pretax > 0 && rawSavingsRate !== null
-                ? ` (${fmtPct(rawSavingsRate)} take-home)`
+                ? ` · ${fmtPct(rawSavingsRate)} take-home`
                 : ''}
             </span>
           </div>
@@ -144,12 +144,12 @@ export function Health() {
           {data.totalDebt > 0 && (
             <div className={styles.metric}>
               <span className={styles.metricLabel}>Debt</span>
-              <span className={`num ${netCash >= 0 ? 'pos' : 'neg'} ${styles.metricValue}`}>
+              <span className={`num neg ${styles.metricValue}`}>
                 {fmtCompact(data.totalDebt)}
               </span>
               <span className={`dim ${styles.metricHint}`}>
                 {netCash >= 0
-                  ? `covered — ${fmtCompact(netCash)} net cash`
+                  ? `covered · ${fmtCompact(netCash)} net cash`
                   : `${fmtCompact(Math.abs(netCash))} more than cash`}
               </span>
             </div>
