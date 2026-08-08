@@ -23,7 +23,7 @@ import { App } from '../../gui/renderer/src/App.js';
 
 beforeEach(async () => {
   localStorage.clear();
-  for (const tbl of ['transactions', 'accounts', 'categories', 'tags', 'transaction_tags',
+  for (const tbl of ['transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
                      'category_rules', 'name_rules', 'hidden_categories', 'balance_history',
                      'household_members']) {
     await db.execute(`DELETE FROM ${tbl}`);

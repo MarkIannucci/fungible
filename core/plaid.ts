@@ -11,8 +11,14 @@ export function getPlaidClient(): PlaidApi {
     throw new Error('Plaid is not configured. Add PLAID_CLIENT_ID and PLAID_SECRET to your .env file.');
   }
   const env = process.env.PLAID_ENV ?? 'sandbox';
+  const basePath = PlaidEnvironments[env as keyof typeof PlaidEnvironments];
+  if (!basePath) {
+    throw new Error(
+      `PLAID_ENV="${env}" is not a valid Plaid environment. Valid values: ${Object.keys(PlaidEnvironments).join(', ')}.`
+    );
+  }
   const config = new Configuration({
-    basePath: PlaidEnvironments[env as keyof typeof PlaidEnvironments],
+    basePath,
     baseOptions: {
       headers: {
         'PLAID-CLIENT-ID': clientId,

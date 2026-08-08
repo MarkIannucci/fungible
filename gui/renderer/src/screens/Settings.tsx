@@ -158,7 +158,7 @@ const CONFIG_FIELDS: ConfigField[] = [
   { key: 'OPENAI_API_KEY', label: 'OpenAI API Key', hint: 'Alternate agent provider', secret: true },
 ];
 
-const PLAID_ENVS = ['sandbox', 'development', 'production'] as const;
+const PLAID_ENVS = ['sandbox', 'production'] as const;
 
 function ConfigPanel({ showStatus }: { showStatus: (msg: string) => void }) {
   const [values, setValues] = useState<Record<string, string>>({});
@@ -216,7 +216,7 @@ function ConfigPanel({ showStatus }: { showStatus: (msg: string) => void }) {
       <div className={styles.configRow}>
         <label className={styles.configLabel}>
           Plaid Environment
-          <span className={styles.configHint}>"development" for real bank data on the free tier</span>
+          <span className={styles.configHint}>"sandbox" for testing, "production" for real bank data</span>
         </label>
         <select value={plaidEnv} onChange={(e) => setPlaidEnv(e.target.value)}>
           <option value="">(unchanged)</option>
