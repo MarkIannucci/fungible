@@ -87,6 +87,23 @@ const SCHEMA = `
     PRIMARY KEY (transaction_id, tag_id)
   );
 
+  CREATE TABLE tag_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    match_type TEXT NOT NULL,
+    pattern TEXT NOT NULL DEFAULT '',
+    tag_id INTEGER NOT NULL,
+    account_id TEXT,
+    min_amount REAL,
+    max_amount REAL
+  );
+
+  CREATE TABLE tag_rule_suppressions (
+    transaction_id TEXT NOT NULL,
+    tag_id INTEGER NOT NULL,
+    PRIMARY KEY (transaction_id, tag_id)
+  );
+
   CREATE TABLE sync_state (account_id TEXT PRIMARY KEY, cursor TEXT);
 
   CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
