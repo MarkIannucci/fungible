@@ -666,3 +666,41 @@ describe('excluded accounts', () => {
     expect(linked.find((a) => a.id === 'brk')!.excluded).toBe(false);
   });
 });
+
+describe('getNetWorthHistory accountIds filter', () => {
+  // Plaid-style IDs: long base64-ish strings that SQLite treats as column names if unquoted.
+  const CHECKING_ID = 'BxBXbRRy44Tb64eKQ4E5tz76vBdkVQ7rY7jKz';
+  const BROKERAGE_ID = 'vzdd8YqX7oUMn13YOMNphPA6wejQ4mFVnBXNL';
+
+  beforeEach(async () => {
+    await db.execute('DELETE FROM accounts');
+    await db.execute('DELETE FROM balance_history');
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES (?, 'Checking', 'depository', 'checking', 0)", args: [CHECKING_ID] });
+    await db.execute({ sql: "INSERT INTO accounts (id, name, type, subtype, excluded) VALUES (?, 'Brokerage', 'investment', 'brokerage', 0)", args: [BROKERAGE_ID] });
+    await db.execute({ sql: 'INSERT INTO balance_history (account_id, balance, date) VALUES (?, 5000, ?)',  args: [CHECKING_ID,  '2025-01-31'] });
+    await db.execute({ sql: 'INSERT INTO balance_history (account_id, balance, date) VALUES (?, 80000, ?)', args: [BROKERAGE_ID, '2025-01-31'] });
+  });
+
+  it('returns all accounts when no filter is given', async () => {
+    const hist = await getNetWorthHistory('month');
+    expect(hist).toHaveLength(1);
+    expect(hist[0].assets).toBe(85000);
+  });
+
+  it('filters to a single account by Plaid-style string id without SQL error', async () => {
+    const hist = await getNetWorthHistory('month', [CHECKING_ID]);
+    expect(hist).toHaveLength(1);
+    expect(hist[0].assets).toBe(5000);
+  });
+
+  it('filters to a subset of accounts', async () => {
+    const hist = await getNetWorthHistory('month', [BROKERAGE_ID]);
+    expect(hist).toHaveLength(1);
+    expect(hist[0].assets).toBe(80000);
+  });
+
+  it('returns empty when accountIds is an empty array', async () => {
+    const hist = await getNetWorthHistory('month', []);
+    expect(hist).toHaveLength(0);
+  });
+});
