@@ -765,6 +765,41 @@ describe('getLinkedAccounts — awaiting-first-sync placeholders', () => {
     expect(manual.item_last_synced_at).toBeNull();
   });
 
+  // Only CSV import and the demo seeder ever write accounts.institution_name;
+  // the Plaid path records it on plaid_items, so every linked account read it
+  // back blank. It now falls back to the item's name through the join.
+  it('falls back to the item institution when the account row has none', async () => {
+    await addItem('item-chase', 'Chase', Date.now());
+    await addAccount('acct-plaid', 'item-chase');
+    const rows = await getLinkedAccounts();
+    expect(rows.find((r) => r.id === 'acct-plaid')!.institution_name).toBe('Chase');
+  });
+
+  it('keeps a CSV/manual account own institution, which has no item to inherit from', async () => {
+    await db.execute({
+      sql: `INSERT INTO accounts (id, name, type, institution_name) VALUES ('csv-1', 'Imported', 'depository', 'Ally')`,
+      args: [],
+    });
+    const rows = await getLinkedAccounts();
+    expect(rows.find((r) => r.id === 'csv-1')!.institution_name).toBe('Ally');
+  });
+
+  it('prefers the account own institution over the item when both are set', async () => {
+    await addItem('item-chase', 'Chase', Date.now());
+    await db.execute({
+      sql: `INSERT INTO accounts (id, name, type, item_id, institution_name) VALUES ('acct-both', 'A', 'depository', 'item-chase', 'Renamed Bank')`,
+      args: [],
+    });
+    const rows = await getLinkedAccounts();
+    expect(rows.find((r) => r.id === 'acct-both')!.institution_name).toBe('Renamed Bank');
+  });
+
+  it('leaves institution null when neither the account nor an item supplies one', async () => {
+    await addAccount('manual-thing', null);
+    const rows = await getLinkedAccounts();
+    expect(rows.find((r) => r.id === 'manual-thing')!.institution_name).toBeNull();
+  });
+
   // Defect-4 regression guard: core/sync.ts only writes a balance row when
   // balances.current is non-null, so an account that synced fine but reported no
   // balance has no balance_history at all. It must report its item's sync time

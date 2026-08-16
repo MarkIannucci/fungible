@@ -2036,6 +2036,22 @@ describe('Accounts', () => {
       await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
     });
 
+    // You can't tell two same-named accounts at different banks apart in the
+    // edit panel without this. The account row's own institution_name is NULL
+    // for everything Plaid links, so the name has to come from the item.
+    it('names the institution in the edit panel, inherited from the item', async () => {
+      await addItem('item-chase', 'Chase', Date.now());
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, mask, item_id) VALUES ('acct-plaid', 'Plaid Checking', 'depository', 'checking', '0000', 'item-chase')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Plaid Checking'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Edit: Plaid Checking'));
+      expect(flat(r)).toContain('Chase');
+    });
+
     // A manual account has no Plaid item, so its balance-snapshot date is the
     // only sync signal it has — the fallback branch must keep working.
     it('a manual account still renders its balance-snapshot date', async () => {

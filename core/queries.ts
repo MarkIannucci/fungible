@@ -624,7 +624,14 @@ export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
   // function already maps rows, so concatenating in TS reads clearer.
   const [result, bare] = await Promise.all([
     db.execute(`
-      SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.item_id, a.apr, a.excluded,
+      SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.mask, a.item_id, a.apr, a.excluded,
+        -- accounts.institution_name is only ever written by CSV import and the
+        -- demo seeder; the Plaid path records the name on plaid_items and never
+        -- copies it down, leaving every linked account's institution blank.
+        -- Reading through the join fixes that for existing rows with no
+        -- migration and no backfill, and CSV/manual accounts (no item) keep
+        -- their own value.
+        COALESCE(a.institution_name, pi.institution_name) as institution_name,
         (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced,
         pi.last_synced_at as item_last_synced_at
       FROM accounts a

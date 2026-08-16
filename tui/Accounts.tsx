@@ -923,8 +923,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {/* Unified edit panel */}
           {acctMode === 'edit' && selectedAcct && (() => {
             const isDebt = editType === 'credit' || editType === 'loan';
+            // Institution is often the only thing distinguishing two same-named
+            // accounts at different banks (a "Plaid Checking" at each), so the
+            // panel names it alongside the mask.
             return (
-              <ModalPanel title={`Edit: ${selectedAcct.name}${selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}`}>
+              <ModalPanel title={`Edit: ${selectedAcct.name}${selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}${selectedAcct.institution_name ? `  ·  ${selectedAcct.institution_name}` : ''}`}>
                 <Box marginTop={1} flexDirection="column" gap={1}>
                   <EditTextField label="Nickname" labelWidth={10} active={editField === 'nickname'} value={editNickname} color={C_WARNING} placeholder="none" emptyText="none" />
                   {ownerMembers.length > 0
