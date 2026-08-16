@@ -155,21 +155,7 @@ async function main() {
 
           log(`✓ Connected: ${institutionName ?? itemId} — returning to fungible…`);
 
-          // Everything is saved by this point; all that's left is to exit so the
-          // TUI's close handler can start the sync.
-          //
-          // server.close() alone is not enough: it stops new connections but
-          // waits for existing ones, and a browser leaves sockets open — both
-          // idle keep-alive sockets and speculative ones that connect without
-          // ever sending a request. Node won't reap those promptly (a socket
-          // that sends no bytes isn't covered by keepAliveTimeout), so this step
-          // hung for over a minute in production and indefinitely in a test.
-          // Drop the sockets explicitly, then exit rather than waiting on the
-          // event loop to drain.
-          setTimeout(() => {
-            server.closeAllConnections();
-            server.close(() => process.exit(0));
-          }, 1000);
+          setTimeout(() => server.close(), 1000);
         } catch (e: any) {
           // Also to stderr: the TUI flags the panel as failed on stderr, so the
           // user sees the reason instead of the last progress line sitting there
