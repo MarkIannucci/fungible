@@ -66,7 +66,8 @@ const SCHEMA = `
   CREATE TABLE transaction_tags (
     transaction_id TEXT NOT NULL,
     tag_id INTEGER NOT NULL,
-    PRIMARY KEY (transaction_id, tag_id)
+    PRIMARY KEY (transaction_id, tag_id),
+    FOREIGN KEY (transaction_id) REFERENCES transactions(id)
   );
 
   CREATE TABLE tag_rules (
@@ -115,6 +116,7 @@ const SCHEMA = `
 
 export async function makeTestDb() {
   const db = createClient({ url: ':memory:' });
+  await db.execute('PRAGMA foreign_keys = ON');
   // Execute each statement separately (libsql in-memory doesn't support multi-statement strings)
   for (const stmt of SCHEMA.split(';').map((s) => s.trim()).filter(Boolean)) {
     await db.execute(stmt);

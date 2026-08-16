@@ -687,7 +687,7 @@ export async function getCsvAccounts(): Promise<CsvAccount[]> {
   return result.rows as unknown as CsvAccount[];
 }
 
-export type AccountBalance    = { name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };
+export type AccountBalance    = { id: string; name: string; nickname: string | null; type: string; subtype: string | null; balance: number; excluded: boolean };
 
 // SQLite has no boolean type — integer 0/1 columns are coerced here.
 const toBool = (v: unknown): boolean => Number(v) === 1;
@@ -695,7 +695,8 @@ export type HistoryRow        = { date: string; assets: number; liabilities: num
 export type NetWorthPeriod    = { period: string; assets: number; liabilities: number; net_worth: number };
 export type NetWorthGranularity = 'day' | 'week' | 'month' | 'quarter' | 'year';
 
-export async function getNetWorthHistory(granularity: NetWorthGranularity = 'month'): Promise<NetWorthPeriod[]> {
+export async function getNetWorthHistory(granularity: NetWorthGranularity = 'month', accountIds?: string[]): Promise<NetWorthPeriod[]> {
+  if (accountIds !== undefined && accountIds.length === 0) return [];
   const periodExpr: Record<NetWorthGranularity, string> = {
     day:     `strftime('%Y-%m-%d', date)`,
     week:    `strftime('%Y-W%W', date)`,
@@ -704,7 +705,12 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
     year:    `strftime('%Y', date)`,
   };
   const expr = periodExpr[granularity];
-  const result = await db.execute(`
+  const filterArgs = accountIds ?? [];
+  const filterClause = filterArgs.length > 0
+    ? ` AND a.id IN (${filterArgs.map(() => '?').join(',')})`
+    : '';
+  const result = await db.execute({
+    sql: `
     WITH period_last AS (
       SELECT
         ${expr} AS period,
@@ -729,10 +735,12 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
       END) AS net_worth
     FROM period_last pl
     JOIN accounts a ON a.id = pl.account_id
-    WHERE pl.rn = 1 AND a.excluded = 0
+    WHERE pl.rn = 1 AND a.excluded = 0${filterClause}
     GROUP BY pl.period
     ORDER BY pl.period ASC
-  `);
+  `,
+    args: filterArgs,
+  });
   return (result.rows as unknown as { period: string; assets: number; liabilities: number; net_worth: number }[]).map((r) => ({
     period:      r.period,
     assets:      Number(r.assets),
@@ -744,7 +752,7 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
 export async function getAccountsWithBalances(): Promise<{ accounts: AccountBalance[]; history: HistoryRow[] }> {
   const [acctResult, histResult] = await Promise.all([
     db.execute(`
-      SELECT a.name, a.nickname, a.type, a.subtype, a.excluded, bh.balance
+      SELECT a.id, a.name, a.nickname, a.type, a.subtype, a.excluded, bh.balance
       FROM accounts a
       JOIN balance_history bh ON bh.account_id = a.id
       WHERE bh.date = (SELECT MAX(date) FROM balance_history WHERE account_id = a.id)

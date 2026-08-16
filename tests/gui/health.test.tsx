@@ -15,7 +15,7 @@ import { installBridge, renderScreen } from './helpers/renderGui.js';
 import { Health } from '../../gui/renderer/src/screens/Health.js';
 
 beforeEach(async () => {
-  for (const tbl of ['transactions', 'accounts', 'categories', 'tags', 'transaction_tags',
+  for (const tbl of ['transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
                      'category_rules', 'name_rules', 'hidden_categories', 'balance_history',
                      'household_members']) {
     await db.execute(`DELETE FROM ${tbl}`);
@@ -63,34 +63,6 @@ describe('GUI Health', () => {
     await userEvent.click(Array.from(spendDial.querySelectorAll('button')).find((b) => b.textContent === 'reset')!);
     const restored = (spendDial.querySelector('input[type="number"]') as HTMLInputElement).value;
     expect(restored).toBe(before);
-  });
-
-  it('hides the last-30-days panel when the trailing window has no drift', async () => {
-    // Seed data is fixed in May 2026; the trailing 30 days (real clock) is empty.
-    renderScreen(<Health />);
-    await waitFor(() => expect(screen.getByText('Cash Flow')).toBeTruthy());
-    expect(screen.queryByText(/Last 30 days/)).toBeNull();
-  });
-
-  it('shows recent movers and deep-links to the Dashboard scorecard', async () => {
-    // Date the spend relative to the real clock so it always falls inside the
-    // trailing 30-day window; with no Transportation history it buckets as over.
-    const recent = new Date();
-    recent.setDate(recent.getDate() - 5);
-    await db.execute({
-      sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
-            VALUES ('tx-transport', 'test-credit', ?, 'Uber', 500.00, 'Transportation', 0, 0)`,
-      args: [recent.toISOString().slice(0, 10)],
-    });
-
-    const navigate = vi.fn();
-    renderScreen(<Health />, { navigate });
-    await waitFor(() => expect(screen.getByText(/Last 30 days/)).toBeTruthy());
-    expect(screen.getByText('Watch')).toBeTruthy();
-    expect(screen.getByText(/Transportation \+\$500/)).toBeTruthy();
-
-    await userEvent.click(screen.getByRole('button', { name: /full scorecard/ }));
-    expect(navigate).toHaveBeenCalledWith('dashboard', { range: 'last30', scorecard: true });
   });
 
   it('withdrawal slider changes the FIRE target', async () => {

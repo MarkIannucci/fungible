@@ -99,7 +99,7 @@ const noop = () => {};
 
 beforeEach(async () => {
   vi.mocked(loadProfile).mockResolvedValue(null); // no household members unless a test sets one
-  for (const tbl of ['transactions', 'accounts', 'categories', 'tags', 'transaction_tags',
+  for (const tbl of ['transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
                      'category_rules', 'name_rules', 'hidden_categories', 'balance_history']) {
     await db.execute(`DELETE FROM ${tbl}`);
   }
