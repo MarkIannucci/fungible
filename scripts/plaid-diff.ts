@@ -1,8 +1,21 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+import path from 'node:path';
+import { DATA_DIR } from '../core/paths.js';
 import { initDb, db } from '../core/db.js';
-import { getPlaidClient, plaidErrorMessage } from '../core/plaid.js';
+import { getPlaidClient, isPlaidConfigured, plaidErrorMessage } from '../core/plaid.js';
 import { decryptToken } from '../core/crypto.js';
 import type { Transaction } from 'plaid';
+
+// dotenv never overwrites a variable that is already set, so the first load of a
+// given key wins: a repo-local .env takes precedence for development, and
+// ~/.fungible/.env — where `fungible --setup` and the GUI settings screen write
+// credentials — fills in anything it did not define. Reading both is what makes
+// this script work whether it is run from the repo or against a real install.
+// Nothing here reads PLAID_* at import time (core/plaid.ts resolves them per
+// call), so running these after the imports above is safe.
+const ENV_PATH = path.join(DATA_DIR, '.env');
+config({ quiet: true });
+config({ path: ENV_PATH, quiet: true });
 
 /**
  * Read-only diagnostic: ask Plaid what it holds for an item over a date range
@@ -198,6 +211,14 @@ function line(date: string, amount: number, name: string, account: string, suffi
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const { start, end } = resolveWindow(args);
+
+  if (!isPlaidConfigured()) {
+    throw new Error(
+      'Plaid is not configured — no PLAID_CLIENT_ID / PLAID_SECRET found.\n'
+      + `Looked in ./.env and ${ENV_PATH}.\n`
+      + 'Run `npm run setup` to store them, or set FUNGIBLE_DATA_DIR if your install lives elsewhere.',
+    );
+  }
 
   await initDb();
   const item = await resolveItem(args.itemId);
