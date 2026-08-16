@@ -1,10 +1,12 @@
 import { config } from 'dotenv';
 import path from 'node:path';
+import readline from 'node:readline/promises';
+import { pathToFileURL } from 'node:url';
 import { DATA_DIR } from '../core/paths.js';
 import { initDb, db } from '../core/db.js';
 import { getPlaidClient, isPlaidConfigured, plaidErrorMessage } from '../core/plaid.js';
 import { decryptToken } from '../core/crypto.js';
-import type { Transaction } from 'plaid';
+import type { AccountBase, Transaction } from 'plaid';
 
 // dotenv never overwrites a variable that is already set, so the first load of a
 // given key wins: a repo-local .env takes precedence for development, and
@@ -34,7 +36,8 @@ config({ path: ENV_PATH, quiet: true });
 
 type Args = {
   itemId?: string;
-  accountId?: string;
+  accountIds: string[];
+  allAccounts: boolean;
   start?: string;
   end?: string;
   days?: number;
@@ -42,7 +45,7 @@ type Args = {
 };
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { verbose: false };
+  const args: Args = { accountIds: [], allAccounts: false, verbose: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const next = () => {
@@ -52,7 +55,10 @@ function parseArgs(argv: string[]): Args {
     };
     switch (arg) {
       case '--item': args.itemId = next(); break;
-      case '--account': args.accountId = next(); break;
+      // Repeatable and comma-separated, so `--account a --account b` and
+      // `--account a,b` both work.
+      case '--account': args.accountIds.push(...next().split(',').map((s) => s.trim()).filter(Boolean)); break;
+      case '--all-accounts': args.allAccounts = true; break;
       case '--start': args.start = next(); break;
       case '--end': args.end = next(); break;
       case '--days': args.days = Number(next()); break;
@@ -60,6 +66,9 @@ function parseArgs(argv: string[]): Args {
       case '--help': case '-h': usage(); process.exit(0); break;
       default: throw new Error(`Unknown argument: ${arg}`);
     }
+  }
+  if (args.allAccounts && args.accountIds.length > 0) {
+    throw new Error('--all-accounts and --account are mutually exclusive.');
   }
   return args;
 }
@@ -71,13 +80,19 @@ Diff what Plaid holds for an item against the local database.
   npm run plaid-diff -- [options]
 
 Options:
-  --item <item_id>       Plaid item to check. Optional if only one is linked.
-  --account <acct_id>    Narrow to a single account (Plaid account_id).
+  --item <item_id>       Plaid item to check. Prompts if more than one is linked.
+  --account <acct_id>    Narrow to specific accounts (Plaid account_id). Repeatable
+                         and comma-separated. Prompts if the item has several and
+                         neither this nor --all-accounts is given.
+  --all-accounts         Check every account on the item without prompting.
   --start <YYYY-MM-DD>   Start of window. Defaults to --days back from --end.
   --end <YYYY-MM-DD>     End of window. Defaults to today.
   --days <n>             Window size when --start is omitted. Default 30.
   --verbose, -v          List every matched transaction, not just differences.
   --help, -h             Show this message.
+
+Without a TTY (piped, cron, CI) the prompts are skipped: --item becomes required
+when several items are linked, and all accounts are checked by default.
 `.trim());
 }
 
@@ -102,9 +117,94 @@ function resolveWindow(args: Args): { start: string; end: string } {
   return { start, end };
 }
 
+// ── prompting ────────────────────────────────────────────────────────────────
+
+/** Prompts are only offered on a real terminal. Piped into a file, run from cron
+ *  or CI, there is nobody to answer, so callers fall back to flags/defaults. */
+const interactive = process.stdin.isTTY && process.stdout.isTTY;
+
+async function ask(question: string): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    // On Ctrl-D readline closes without ever settling question()'s promise, so
+    // race it against 'close' to fail loudly instead of hanging.
+    const answer = await new Promise<string>((resolve, reject) => {
+      rl.once('close', () => reject(new Error('Input closed before an answer was given.')));
+      rl.question(question).then(resolve, reject);
+    });
+    return answer.trim();
+  } finally {
+    rl.close();
+  }
+}
+
+export type SelectMode = { multi: boolean; defaultAll: boolean };
+
+/**
+ * Turn a typed answer into zero-based indices, or an error message to show
+ * before re-asking. Split out from the prompt loop so the fiddly parts —
+ * "all", duplicates, out-of-range, multiple numbers in single mode — are
+ * testable without a terminal.
+ */
+export function parseSelection(
+  answer: string, optionCount: number, { multi, defaultAll }: SelectMode,
+): { indices: number[] } | { error: string } {
+  const trimmed = answer.trim();
+  const all = () => ({ indices: Array.from({ length: optionCount }, (_, i) => i) });
+
+  if (multi) {
+    if (trimmed === '' && defaultAll) return all();
+    if (/^(a|all)$/i.test(trimmed)) return all();
+  }
+
+  const tokens = trimmed.split(/[,\s]+/).filter(Boolean);
+  if (tokens.length === 0) return { error: multi ? 'Enter at least one number.' : 'Enter a number.' };
+  if (!multi && tokens.length > 1) return { error: 'Enter a single number.' };
+
+  const indices: number[] = [];
+  for (const token of tokens) {
+    // Number('') is 0 and Number('1.5') is not an integer; both must be rejected.
+    const n = Number(token);
+    if (!Number.isInteger(n) || n < 1 || n > optionCount) {
+      return { error: `"${token}" is not a number between 1 and ${optionCount}.` };
+    }
+    if (!indices.includes(n - 1)) indices.push(n - 1);
+  }
+  return { indices };
+}
+
+/**
+ * Numbered chooser. Re-asks on bad input rather than exiting — the user is here
+ * to find a missing transaction, and losing the run to a typo is worse than
+ * asking twice. EOF (Ctrl-D) has no answer to re-ask for, so it aborts.
+ */
+async function choose<T>(
+  label: string, options: T[], render: (o: T) => string, mode: SelectMode,
+): Promise<T[]> {
+  console.log(`\n${label}`);
+  options.forEach((o, i) => console.log(`  ${String(i + 1).padStart(2)}. ${render(o)}`));
+  const hint = mode.multi
+    ? `\nWhich? (numbers separated by commas, "all"${mode.defaultAll ? ', or Enter for all' : ''}): `
+    : '\nWhich? (number): ';
+
+  for (;;) {
+    const answer = await ask(hint);
+    const result = parseSelection(answer, options.length, mode);
+    if ('error' in result) {
+      console.log(result.error);
+      continue;
+    }
+    return result.indices.map((i) => options[i]);
+  }
+}
+
 // ── item resolution ──────────────────────────────────────────────────────────
 
 type ItemRow = { item_id: string; access_token: string; institution_name: string | null; days_requested: number | null };
+
+function describeItem(i: ItemRow): string {
+  return `${i.institution_name ?? '(unknown institution)'}  ${i.item_id}`;
+}
 
 async function resolveItem(itemId?: string): Promise<ItemRow> {
   const res = await db.execute(
@@ -118,18 +218,60 @@ async function resolveItem(itemId?: string): Promise<ItemRow> {
     if (!match) {
       throw new Error(
         `No linked item with item_id "${itemId}". Linked items:\n`
-        + items.map((i) => `  ${i.item_id}  ${i.institution_name ?? '(unknown institution)'}`).join('\n'),
+        + items.map((i) => `  ${describeItem(i)}`).join('\n'),
       );
     }
     return match;
   }
-  if (items.length > 1) {
+  if (items.length === 1) return items[0];
+
+  if (!interactive) {
     throw new Error(
       'Multiple items are linked — pass --item <item_id>:\n'
-      + items.map((i) => `  ${i.item_id}  ${i.institution_name ?? '(unknown institution)'}`).join('\n'),
+      + items.map((i) => `  ${describeItem(i)}`).join('\n'),
     );
   }
-  return items[0];
+  const [chosen] = await choose('Which item?', items, describeItem, { multi: false, defaultAll: false });
+  return chosen;
+}
+
+// ── account resolution ───────────────────────────────────────────────────────
+
+function describeAccount(a: AccountBase): string {
+  const mask = a.mask ? ` ••${a.mask}` : '';
+  const kind = [a.type, a.subtype].filter(Boolean).join('/');
+  return `${a.name}${mask}  (${kind})`;
+}
+
+/**
+ * Decide which of the item's accounts to diff. Returns `undefined` to mean "all
+ * of them", which is passed through as an omitted `account_ids` rather than an
+ * explicit list of every id — Plaid rejects account_ids for accounts that do not
+ * support transactions, so naming them all can fail where omitting cannot.
+ */
+async function resolveAccounts(accessToken: string, args: Args): Promise<AccountBase[] | undefined> {
+  const accounts = (await getPlaidClient().accountsGet({ access_token: accessToken })).data.accounts;
+  if (accounts.length === 0) throw new Error('Plaid reports no accounts on this item.');
+
+  if (args.accountIds.length > 0) {
+    const byId = new Map(accounts.map((a) => [a.account_id, a]));
+    const unknown = args.accountIds.filter((id) => !byId.has(id));
+    if (unknown.length > 0) {
+      throw new Error(
+        `No account on this item with account_id ${unknown.map((u) => `"${u}"`).join(', ')}. Available:\n`
+        + accounts.map((a) => `  ${a.account_id}  ${describeAccount(a)}`).join('\n'),
+      );
+    }
+    return args.accountIds.map((id) => byId.get(id)!);
+  }
+
+  if (args.allAccounts || accounts.length === 1 || !interactive) return undefined;
+
+  const picked = await choose(
+    `This item has ${accounts.length} accounts.`, accounts, describeAccount,
+    { multi: true, defaultAll: true },
+  );
+  return picked.length === accounts.length ? undefined : picked;
 }
 
 // ── fetching ─────────────────────────────────────────────────────────────────
@@ -142,12 +284,11 @@ const PAGE_SIZE = 500; // Plaid's maximum for /transactions/get
  * transaction_id and stops on an empty page rather than trusting the total.
  */
 async function fetchPlaidTransactions(
-  accessToken: string, start: string, end: string, accountId?: string,
+  accessToken: string, start: string, end: string, accountIds?: string[],
 ): Promise<{ transactions: Transaction[]; accountIds: string[]; accountNames: Map<string, string> }> {
   const client = getPlaidClient();
   const byId = new Map<string, Transaction>();
   const accountNames = new Map<string, string>();
-  let accountIds: string[] = [];
   let offset = 0;
   let total = Infinity;
 
@@ -159,7 +300,7 @@ async function fetchPlaidTransactions(
       options: {
         count: PAGE_SIZE,
         offset,
-        ...(accountId ? { account_ids: [accountId] } : {}),
+        ...(accountIds && accountIds.length > 0 ? { account_ids: accountIds } : {}),
       },
     });
     const data = response.data;
@@ -167,13 +308,12 @@ async function fetchPlaidTransactions(
     for (const acct of data.accounts) {
       accountNames.set(acct.account_id, `${acct.name}${acct.mask ? ` ••${acct.mask}` : ''}`);
     }
-    accountIds = [...accountNames.keys()];
     if (data.transactions.length === 0) break;
     for (const tx of data.transactions) byId.set(tx.transaction_id, tx);
     offset += data.transactions.length;
   }
 
-  return { transactions: [...byId.values()], accountIds, accountNames };
+  return { transactions: [...byId.values()], accountIds: [...accountNames.keys()], accountNames };
 }
 
 type LocalRow = {
@@ -222,23 +362,20 @@ async function main() {
 
   await initDb();
   const item = await resolveItem(args.itemId);
+  const accessToken = decryptToken(item.access_token);
+  const selected = await resolveAccounts(accessToken, args);
+  const selectedIds = selected?.map((a) => a.account_id);
 
-  console.log(`Item:      ${item.item_id}  ${item.institution_name ?? '(unknown institution)'}`);
+  console.log(`\nItem:      ${describeItem(item)}`);
   console.log(`Window:    ${start} → ${end}`);
   console.log(`History:   days_requested = ${item.days_requested ?? '(unset — Plaid default is 90)'}`);
-  if (args.accountId) console.log(`Account:   ${args.accountId}`);
+  console.log(`Accounts:  ${selected ? selected.map(describeAccount).join('\n           ') : 'all on this item'}`);
   console.log();
 
   const { transactions: plaidTxs, accountIds, accountNames } =
-    await fetchPlaidTransactions(decryptToken(item.access_token), start, end, args.accountId);
+    await fetchPlaidTransactions(accessToken, start, end, selectedIds);
 
-  if (args.accountId && !accountNames.has(args.accountId)) {
-    throw new Error(`Plaid returned no account matching --account "${args.accountId}" on this item.`);
-  }
-
-  const localRows = await fetchLocalTransactions(
-    args.accountId ? [args.accountId] : accountIds, start, end,
-  );
+  const localRows = await fetchLocalTransactions(selectedIds ?? accountIds, start, end);
   const localById = new Map(localRows.map((r) => [r.id, r]));
   const plaidById = new Map(plaidTxs.map((t) => [t.transaction_id, t]));
 
@@ -332,9 +469,12 @@ async function main() {
   }
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error(`\n${plaidErrorMessage(err)}`);
-    process.exit(1);
-  });
+// Only run when executed directly, so tests can import parseSelection.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error(`\n${plaidErrorMessage(err)}`);
+      process.exit(1);
+    });
+}
