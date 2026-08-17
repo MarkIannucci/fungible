@@ -1,24 +1,11 @@
-import { config } from 'dotenv';
-import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
-import { DATA_DIR } from '../core/paths.js';
 import { initDb, db } from '../core/db.js';
 import { getPlaidClient, isPlaidConfigured, plaidErrorMessage } from '../core/plaid.js';
 import { decryptToken } from '../core/crypto.js';
+import { ENV_PATH, loadEnv, csvCell, writeCsv, slug, money, truncate } from './lib/plaid-script.js';
 import type { AccountBase, Transaction } from 'plaid';
-
-// dotenv never overwrites a variable that is already set, so the first load of a
-// given key wins: a repo-local .env takes precedence for development, and
-// ~/.fungible/.env — where `fungible --setup` and the GUI settings screen write
-// credentials — fills in anything it did not define. Reading both is what makes
-// this script work whether it is run from the repo or against a real install.
-// Nothing here reads PLAID_* at import time (core/plaid.ts resolves them per
-// call), so running these after the imports above is safe.
-const ENV_PATH = path.join(DATA_DIR, '.env');
-config({ quiet: true });
-config({ path: ENV_PATH, quiet: true });
 
 /**
  * Read-only diagnostic: ask Plaid what it holds for an item over a date range
@@ -352,14 +339,6 @@ async function fetchLocalTransactions(accountIds: string[], start: string, end: 
 
 // ── csv export ───────────────────────────────────────────────────────────────
 
-/** RFC 4180 quoting: wrap in quotes and double any internal quote, but only
- *  when the value actually needs it — merchant names carry commas routinely. */
-export function csvCell(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  const s = String(value);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
 const CSV_COLUMNS = [
   'transaction_id', 'account_id', 'account_name', 'date', 'authorized_date',
   'name', 'merchant_name', 'original_description', 'amount', 'iso_currency_code',
@@ -383,55 +362,36 @@ function writeTransactionsCsv(
   const rows = [...transactions].sort((a, b) =>
     a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
 
-  const lines = [CSV_COLUMNS.join(',')];
-  for (const tx of rows) {
-    lines.push([
-      tx.transaction_id,
-      tx.account_id,
-      accountNames.get(tx.account_id) ?? '',
-      tx.date,
-      tx.authorized_date,
-      tx.name,
-      tx.merchant_name,
-      tx.original_description,
-      tx.amount,
-      tx.iso_currency_code,
-      tx.pending,
-      tx.pending_transaction_id,
-      tx.payment_channel,
-      tx.personal_finance_category?.primary,
-      tx.personal_finance_category?.detailed,
-      tx.category?.join(' > '),
-      tx.check_number,
-      localIds.has(tx.transaction_id) ? 'yes' : 'no',
-    ].map(csvCell).join(','));
-  }
-
-  fs.mkdirSync(path.dirname(path.resolve(filePath)), { recursive: true });
-  fs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf8');
-  return rows.length;
-}
-
-/** Filesystem-safe stem from the institution name, for the default filename. */
-function slug(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'plaid';
+  return writeCsv(filePath, CSV_COLUMNS, rows.map((tx) => [
+    tx.transaction_id,
+    tx.account_id,
+    accountNames.get(tx.account_id) ?? '',
+    tx.date,
+    tx.authorized_date,
+    tx.name,
+    tx.merchant_name,
+    tx.original_description,
+    tx.amount,
+    tx.iso_currency_code,
+    tx.pending,
+    tx.pending_transaction_id,
+    tx.payment_channel,
+    tx.personal_finance_category?.primary,
+    tx.personal_finance_category?.detailed,
+    tx.category?.join(' > '),
+    tx.check_number,
+    localIds.has(tx.transaction_id) ? 'yes' : 'no',
+  ]));
 }
 
 // ── reporting ────────────────────────────────────────────────────────────────
-
-function money(amount: number): string {
-  return amount.toFixed(2).padStart(10);
-}
-
-function truncate(s: string, width: number): string {
-  return s.length <= width ? s.padEnd(width) : `${s.slice(0, width - 1)}…`;
-}
 
 function line(date: string, amount: number, name: string, account: string, suffix = ''): string {
   return `  ${date}  ${money(amount)}  ${truncate(name, 38)}  ${truncate(account, 24)}${suffix}`;
 }
 
 async function main() {
+  loadEnv();
   const args = parseArgs(process.argv.slice(2));
   const { start, end } = resolveWindow(args);
 

@@ -13,7 +13,8 @@ const { TEST_DATA_DIR } = vi.hoisted(() => {
 // module load. Point that at a temp dir so importing it never touches ~/.fungible.
 vi.mock('../core/paths.js', () => ({ DATA_DIR: TEST_DATA_DIR }));
 
-import { parseSelection, csvCell } from '../scripts/plaid-diff.js';
+import { parseSelection } from '../scripts/plaid-diff.js';
+import { csvCell } from '../scripts/lib/plaid-script.js';
 
 afterAll(() => {
   const fs = require('fs') as typeof import('fs');

@@ -21,6 +21,7 @@
     "link": "node --import tsx/esm scripts/link.ts",
     "import-csv": "node --import tsx/esm scripts/import-csv.ts",
     "plaid-diff": "node --import tsx/esm scripts/plaid-diff.ts",
+    "plaid-balances": "node --import tsx/esm scripts/plaid-balances.ts",
     "seed-rules": "node --import tsx/esm scripts/seed-rules.ts",
     "mcp": "node --import tsx/esm mcp/server.ts",
     "api": "node --import tsx/esm api/server.ts",
