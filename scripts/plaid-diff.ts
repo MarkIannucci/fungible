@@ -1,4 +1,5 @@
 import { config } from 'dotenv';
+import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { pathToFileURL } from 'node:url';
@@ -42,6 +43,8 @@ type Args = {
   end?: string;
   days?: number;
   verbose: boolean;
+  // true = "write a CSV, pick the name for me"; a string is an explicit path.
+  csv?: string | true;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -53,6 +56,14 @@ function parseArgs(argv: string[]): Args {
       if (v === undefined) throw new Error(`${arg} requires a value`);
       return v;
     };
+    // Consumes the next token only if it looks like a value rather than the
+    // next flag, so `--csv` and `--csv out.csv` both work.
+    const optional = () => {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith('-')) return undefined;
+      i++;
+      return v;
+    };
     switch (arg) {
       case '--item': args.itemId = next(); break;
       // Repeatable and comma-separated, so `--account a --account b` and
@@ -62,6 +73,7 @@ function parseArgs(argv: string[]): Args {
       case '--start': args.start = next(); break;
       case '--end': args.end = next(); break;
       case '--days': args.days = Number(next()); break;
+      case '--csv': args.csv = optional() ?? true; break;
       case '--verbose': case '-v': args.verbose = true; break;
       case '--help': case '-h': usage(); process.exit(0); break;
       default: throw new Error(`Unknown argument: ${arg}`);
@@ -88,6 +100,10 @@ Options:
   --start <YYYY-MM-DD>   Start of window. Defaults to --days back from --end.
   --end <YYYY-MM-DD>     End of window. Defaults to today.
   --days <n>             Window size when --start is omitted. Default 30.
+  --csv [path]           Write every transaction /transactions/get returned to a
+                         CSV, one row each, with an in_local_db column. Path is
+                         optional — omitted, it names the file after the
+                         institution and window in the current directory.
   --verbose, -v          List every matched transaction, not just differences.
   --help, -h             Show this message.
 
@@ -334,6 +350,73 @@ async function fetchLocalTransactions(accountIds: string[], start: string, end: 
   return res.rows as unknown as LocalRow[];
 }
 
+// ── csv export ───────────────────────────────────────────────────────────────
+
+/** RFC 4180 quoting: wrap in quotes and double any internal quote, but only
+ *  when the value actually needs it — merchant names carry commas routinely. */
+export function csvCell(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  const s = String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+const CSV_COLUMNS = [
+  'transaction_id', 'account_id', 'account_name', 'date', 'authorized_date',
+  'name', 'merchant_name', 'original_description', 'amount', 'iso_currency_code',
+  'pending', 'pending_transaction_id', 'payment_channel',
+  'pfc_primary', 'pfc_detailed', 'legacy_category', 'check_number', 'in_local_db',
+] as const;
+
+/**
+ * Dump exactly what /transactions/get returned, one row per transaction, so it
+ * can be diffed against the bank's own export in a spreadsheet.
+ *
+ * `date` is the posted date Plaid filters the window on; `authorized_date` is
+ * when the card was actually swiped. Banks routinely backdate one relative to
+ * the other, which is the most common reason a transaction looks absent from a
+ * window it should be in — hence both columns.
+ */
+function writeTransactionsCsv(
+  transactions: Transaction[], accountNames: Map<string, string>,
+  localIds: Set<string>, filePath: string,
+): number {
+  const rows = [...transactions].sort((a, b) =>
+    a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+
+  const lines = [CSV_COLUMNS.join(',')];
+  for (const tx of rows) {
+    lines.push([
+      tx.transaction_id,
+      tx.account_id,
+      accountNames.get(tx.account_id) ?? '',
+      tx.date,
+      tx.authorized_date,
+      tx.name,
+      tx.merchant_name,
+      tx.original_description,
+      tx.amount,
+      tx.iso_currency_code,
+      tx.pending,
+      tx.pending_transaction_id,
+      tx.payment_channel,
+      tx.personal_finance_category?.primary,
+      tx.personal_finance_category?.detailed,
+      tx.category?.join(' > '),
+      tx.check_number,
+      localIds.has(tx.transaction_id) ? 'yes' : 'no',
+    ].map(csvCell).join(','));
+  }
+
+  fs.mkdirSync(path.dirname(path.resolve(filePath)), { recursive: true });
+  fs.writeFileSync(filePath, lines.join('\n') + '\n', 'utf8');
+  return rows.length;
+}
+
+/** Filesystem-safe stem from the institution name, for the default filename. */
+function slug(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'plaid';
+}
+
 // ── reporting ────────────────────────────────────────────────────────────────
 
 function money(amount: number): string {
@@ -413,6 +496,16 @@ async function main() {
   console.log(`Plaid returned ${plaidTxs.length} transaction(s) across ${accountIds.length} account(s).`);
   console.log(`Local database has ${localRows.length} row(s) in the same window `
     + `(${csvRows.length} CSV-sourced, ${ignoredRows.length} flagged ignored).`);
+
+  if (args.csv) {
+    const filePath = args.csv === true
+      ? `plaid-${slug(item.institution_name ?? 'item')}-${start}_${end}.csv`
+      : args.csv;
+    const written = writeTransactionsCsv(
+      plaidTxs, accountNames, new Set(localRows.map((r) => r.id)), filePath,
+    );
+    console.log(`Wrote ${written} row(s) to ${path.resolve(filePath)}`);
+  }
   console.log();
 
   if (missing.length > 0) {

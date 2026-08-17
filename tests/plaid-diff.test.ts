@@ -13,7 +13,7 @@ const { TEST_DATA_DIR } = vi.hoisted(() => {
 // module load. Point that at a temp dir so importing it never touches ~/.fungible.
 vi.mock('../core/paths.js', () => ({ DATA_DIR: TEST_DATA_DIR }));
 
-import { parseSelection } from '../scripts/plaid-diff.js';
+import { parseSelection, csvCell } from '../scripts/plaid-diff.js';
 
 afterAll(() => {
   const fs = require('fs') as typeof import('fs');
@@ -73,5 +73,38 @@ describe('parseSelection', () => {
 
   it('collapses duplicates while preserving the order they were typed', () => {
     expect(parseSelection('3,1,3', 3, MULTI)).toEqual({ indices: [2, 0] });
+  });
+});
+
+describe('csvCell', () => {
+  it('leaves ordinary values unquoted', () => {
+    expect(csvCell('Starbucks')).toBe('Starbucks');
+    expect(csvCell(4.5)).toBe('4.5');
+    expect(csvCell(false)).toBe('false');
+    expect(csvCell(0)).toBe('0');
+  });
+
+  it('renders null and undefined as an empty field', () => {
+    // Plaid leaves merchant_name, authorized_date and check_number null on most
+    // rows; they must not become the strings "null"/"undefined" in the file.
+    expect(csvCell(null)).toBe('');
+    expect(csvCell(undefined)).toBe('');
+  });
+
+  it('quotes values containing a comma — merchant names do this routinely', () => {
+    expect(csvCell('SQ *COFFEE, INC')).toBe('"SQ *COFFEE, INC"');
+  });
+
+  it('quotes and doubles embedded quotes', () => {
+    expect(csvCell('THE "REAL" DEAL')).toBe('"THE ""REAL"" DEAL"');
+  });
+
+  it('quotes values containing newlines or carriage returns', () => {
+    expect(csvCell('line1\nline2')).toBe('"line1\nline2"');
+    expect(csvCell('line1\r\nline2')).toBe('"line1\r\nline2"');
+  });
+
+  it('does not quote a bare apostrophe or spaces', () => {
+    expect(csvCell("Trader Joe's")).toBe("Trader Joe's");
   });
 });
