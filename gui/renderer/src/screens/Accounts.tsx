@@ -33,6 +33,7 @@ export function Accounts() {
   const [editAcct, setEditAcct] = useState<LinkedAccount | null>(null);
   const [valueAcct, setValueAcct] = useState<LinkedAccount | null>(null);
   const [deleteAcct, setDeleteAcct] = useState<LinkedAccount | null>(null);
+  const [replayAcct, setReplayAcct] = useState<LinkedAccount | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [csvOpen, setCsvOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
@@ -63,6 +64,28 @@ export function Accounts() {
       reload();
     } catch {
       showStatus('Sync failed', 3000);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  // Clears the item's cursor so Plaid resends its whole history on the sync that
+  // main runs immediately after.
+  async function replayItem(acct: LinkedAccount) {
+    if (syncing || !acct.item_id) return;
+    const label = acct.institution_name ?? acct.nickname ?? acct.name;
+    setReplayAcct(null);
+    setSyncing(true);
+    try {
+      const result = await api.sync.replayItemHistory(acct.item_id);
+      if (result?.error) {
+        showStatus(`Replay failed: ${label} — ${result.error}`, 8000);
+      } else {
+        showStatus(`Replayed ${label} — ${result?.added ?? 0} transaction${result?.added === 1 ? '' : 's'} restored`, 4000);
+      }
+      reload();
+    } catch {
+      showStatus(`Replay failed: ${label}`, 3000);
     } finally {
       setSyncing(false);
     }
@@ -164,6 +187,19 @@ export function Accounts() {
                             }}
                           >
                             edit
+                          </button>
+                        )}
+                        {!awaiting && acct.item_id && (
+                          <button
+                            className={styles.rowBtn}
+                            disabled={syncing}
+                            title="Clear the sync cursor and replay this connection's full Plaid history"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setReplayAcct(acct);
+                            }}
+                          >
+                            replay
                           </button>
                         )}
                         {!awaiting && (
@@ -307,6 +343,28 @@ export function Accounts() {
             reload();
           }}
         />
+      )}
+
+      {replayAcct && (
+        <Modal title="Replay all transactions" onClose={() => setReplayAcct(null)} accent="var(--warning)">
+          <p>
+            <span className="accent">{replayAcct.institution_name ?? replayAcct.nickname ?? replayAcct.name}</span>{' '}
+            <span className="dim">— every account on this connection</span>
+          </p>
+          <p className="dim">
+            Clears the sync cursor so Plaid resends its full history from the beginning.
+            Restores transactions this database dropped; it cannot recover ones Plaid
+            itself is missing. Existing rows are updated in place, not duplicated.
+          </p>
+          <div className={styles.modalActions}>
+            <button className={styles.btnSecondary} onClick={() => setReplayAcct(null)}>
+              Cancel
+            </button>
+            <button className={styles.btnPrimary} disabled={syncing} onClick={() => void replayItem(replayAcct)}>
+              Replay
+            </button>
+          </div>
+        </Modal>
       )}
 
       {deleteAcct && (

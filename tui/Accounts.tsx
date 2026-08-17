@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { spawn } from 'node:child_process';
-import { syncAll, describeSyncProgress, type SyncItemResult, type SyncProgress } from '../core/sync.js';
+import { syncAll, resetItemCursor, describeSyncProgress, type SyncItemResult, type SyncProgress } from '../core/sync.js';
 import { setSyncResult, mergeSyncResult } from '../core/sync-status.js';
 import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
@@ -27,7 +27,7 @@ import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, Edi
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type MainView = 'accounts' | 'add-data' | 'dupes';
-type AcctMode = 'list' | 'edit' | 'update-value' | 'confirm-delete';
+type AcctMode = 'list' | 'edit' | 'update-value' | 'confirm-delete' | 'confirm-replay';
 type EditField = 'nickname' | 'owner' | 'type' | 'subtype' | 'apr' | 'excluded';
 
 type AddStep =
@@ -319,12 +319,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   }
 
   /** Sync just the given items — used right after a link so the new institution
-   *  syncs immediately. Mirrors forceSync but merges its outcome so another
-   *  institution's failure badge survives a scoped run. */
-  function syncItems(itemIds: string[]) {
+   *  syncs immediately, and by the cursor replay. Mirrors forceSync but merges
+   *  its outcome so another institution's failure badge survives a scoped run. */
+  function syncItems(itemIds: string[], openingMsg = 'Syncing new institution…') {
     syncStatusRef.current = 'syncing';   // visible before the re-render lands
     setSyncStatus('syncing');
-    setSyncMsg('Syncing new institution…');
+    setSyncMsg(openingMsg);
     syncAll(true, itemIds, reportProgress).then((results) => {
       const failed = results.filter((r) => r.error);
       mergeSyncResult(results, itemIds);
@@ -342,6 +342,16 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       setSyncMsg(`Sync failed — ${plaidErrorMessage(err)}`);
       setSyncStatus('error');
     });
+  }
+
+  /** Clear the selected item's cursor, then replay its whole history through the
+   *  scoped sync — which already reports progress and merges the outcome. */
+  async function replayItem() {
+    const acct = linkedAccounts[acctCursor];
+    setAcctMode('list');
+    if (!acct?.item_id) return;
+    await resetItemCursor(acct.item_id);
+    syncItems([acct.item_id], 'Replaying full history…');
   }
 
   function saveNewAcct() {
@@ -587,6 +597,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         return;
       }
 
+      if (acctMode === 'confirm-replay') {
+        if (key.escape || input === 'n') { setAcctMode('list'); return; }
+        if (input === 'y') { void replayItem(); return; }
+        return;
+      }
+
       // list mode
       if (key.escape) { onNavigate('dashboard'); return; }
       if (key.tab) { setMainView('add-data'); return; }
@@ -620,6 +636,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         setDaysInput(String(defaultDays));
         setDaysError('');
         setAddStep('link-days');
+        return;
+      }
+      // Replaying needs a real Plaid item; a placeholder row has one but nothing
+      // to show for it yet, and its first sync already starts from scratch.
+      if (input === 'R' && linkedAccounts[acctCursor]?.item_id
+          && !linkedAccounts[acctCursor].awaitingFirstSync && syncStatus !== 'syncing') {
+        setAcctMode('confirm-replay');
         return;
       }
       if (input === 's' && syncStatus !== 'syncing') { forceSync(); return; }
@@ -823,7 +846,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {showHints && <Box justifyContent="flex-end">
         <Text dimColor>
           {mainView === 'accounts' && acctMode === 'list'
-            ? `↑↓ select  ·  Enter edit${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}  ·  [x] delete  ·  [s] sync`
+            ? `↑↓ select  ·  Enter edit${selectedAcct?.id.startsWith('manual-') ? '  ·  [v] update value' : '  ·  [r] repair link'}${selectedAcct?.item_id && !selectedAcct.awaitingFirstSync ? '  ·  [R] replay all' : ''}  ·  [x] delete  ·  [s] sync`
             : mainView === 'accounts' && acctMode === 'edit'
             ? '↑↓ field  ·  ← → change  ·  Enter save  ·  Esc cancel'
             : mainView === 'dupes'
@@ -892,6 +915,28 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{syncElapsed}</Text></Text>}
           {acctMsg && <Text color={C_POSITIVE}>{acctMsg}</Text>}
           {acctErr && <Text color={C_NEGATIVE}>{acctErr}</Text>}
+
+          {/* Confirm-replay panel */}
+          {acctMode === 'confirm-replay' && selectedAcct && (
+            <ModalPanel title="Replay all transactions" borderColor={C_WARNING}>
+              <Box marginTop={1} flexDirection="column">
+                <Text>
+                  <Text color={C_ACCENT}>{selectedAcct.institution_name ?? selectedAcct.nickname ?? selectedAcct.name}</Text>
+                  <Text dimColor> — every account on this connection</Text>
+                </Text>
+                <Box marginTop={1} flexDirection="column">
+                  <Text dimColor>Clears the sync cursor so Plaid resends its full history</Text>
+                  <Text dimColor>from the beginning. Restores transactions we dropped;</Text>
+                  <Text dimColor>cannot recover ones Plaid itself is missing.</Text>
+                  <Text dimColor>Existing rows are updated in place, not duplicated.</Text>
+                </Box>
+              </Box>
+              <Box marginTop={1} gap={4}>
+                <Text color={C_WARNING}>[y] Replay</Text>
+                <Text color={C_POSITIVE}>[n] / Esc cancel</Text>
+              </Box>
+            </ModalPanel>
+          )}
 
           {/* Confirm-delete panel */}
           {acctMode === 'confirm-delete' && selectedAcct && (

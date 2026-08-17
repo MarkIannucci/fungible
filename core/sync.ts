@@ -175,6 +175,21 @@ export type SyncItemResult = {
 };
 
 /**
+ * Forget how far we have consumed an item's /transactions/sync change feed, so
+ * the next sync starts from the beginning of its history and Plaid resends
+ * every transaction it currently holds as `added`. Pair it with a scoped
+ * syncAll(true, [itemId]) to replay immediately.
+ *
+ * Every write in syncTransactions is an upsert, so replaying is idempotent: it
+ * restores rows the database lost without disturbing manual categories or tag
+ * suppressions. It cannot recover transactions Plaid itself is missing — that
+ * needs a relinked item.
+ */
+export async function resetItemCursor(itemId: string): Promise<void> {
+  await db.execute({ sql: 'DELETE FROM sync_state WHERE account_id = ?', args: [itemId] });
+}
+
+/**
  * Syncs every Plaid item, or just `itemIds` when given a non-empty list —
  * used right after a link so the new institution syncs immediately instead of
  * waiting for the next launch. Per-item error capture and the debounce are

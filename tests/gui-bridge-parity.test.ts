@@ -52,6 +52,7 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   // sync status in its own layer (renderer state), not through the bridge.
   setSyncResult: 'GUI will surface sync status in its own layer',
   mergeSyncResult: 'GUI will surface sync status in its own layer',
+  resetItemCursor: 'GUI composes it with a scoped sync in main as sync.replayItemHistory (the progress callback cannot cross IPC)',
   // Pure formatter for syncAll's onProgress steps. The callback itself can't
   // cross the IPC bridge, so the GUI would push progress over a channel and
   // format it renderer-side rather than calling this through the registry.

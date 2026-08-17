@@ -2067,6 +2067,157 @@ describe('Accounts', () => {
       await waitFor(() => expect(flat(r)).toContain('House'));
       expect(flat(r)).toContain('synced Jun 12');
     });
+
+    // ── Cursor replay ──────────────────────────────────────────────────────
+    // [R] clears the item's sync cursor so Plaid resends its whole history. It
+    // needs a real Plaid item, and it routes through the scoped sync so other
+    // institutions keep their failure badges.
+
+    async function addLinkedAccount() {
+      await addItem('item-chase', 'Chase', Date.now());
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, mask, item_id)
+              VALUES ('acct-plaid', 'Plaid Checking', 'depository', 'checking', '0000', 'item-chase')`,
+        args: [],
+      });
+    }
+
+    it('[R] opens the replay confirmation, named by institution', async () => {
+      await addLinkedAccount();
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Plaid Checking'));
+      r.stdin.write('R');
+      await waitFor(() => expect(flat(r)).toContain('Replay all transactions'));
+      // The cursor is per-item, so the panel has to name the connection rather
+      // than the single row the user happened to be sitting on.
+      expect(flat(r)).toContain('Chase');
+      expect(flat(r)).toContain('every account on this connection');
+    });
+
+    it('confirming clears the cursor and syncs only that item', async () => {
+      await addLinkedAccount();
+      await db.execute({
+        sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)',
+        args: ['item-chase', 'stale-cursor'],
+      });
+      const spy = vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
+        { itemId: 'item-chase', added: 7, modified: 0, removed: 0, dupes: 0, skipped: false },
+      ]);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Plaid Checking'));
+      r.stdin.write('R');
+      await waitFor(() => expect(flat(r)).toContain('Replay all transactions'));
+      r.stdin.write('y');
+
+      await waitFor(() => expect(spy).toHaveBeenCalled());
+      // Scoped to this item — a whole-DB sync would re-fetch every institution.
+      expect(spy.mock.calls[0][1]).toEqual(['item-chase']);
+      // The cursor must be gone BEFORE the sync runs, or Plaid resumes instead
+      // of replaying. Asserting after the call proves the ordering held.
+      const rows = await db.execute({ sql: 'SELECT cursor FROM sync_state WHERE account_id = ?', args: ['item-chase'] });
+      expect(rows.rows).toHaveLength(0);
+      await waitFor(() => expect(flat(r)).toContain('7 new transactions'));
+    });
+
+    it('labels the run as a replay until the first step is reported', async () => {
+      await addLinkedAccount();
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(() => new Promise(() => {}));
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Plaid Checking'));
+      r.stdin.write('R');
+      await waitFor(() => expect(flat(r)).toContain('Replay all transactions'));
+      r.stdin.write('y');
+
+      // Distinct from the post-link "Syncing new institution…" the scoped sync
+      // otherwise opens with — a replay is not a new connection.
+      await waitFor(() => expect(flat(r)).toContain('Replaying full history…'));
+    });
+
+    it('reports replay progress as the sync reports it', async () => {
+      await addLinkedAccount();
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(async (_force, _ids, onProgress) => {
+        onProgress?.('item-chase', { phase: 'transactions', page: 1, fetched: 4200 });
+        return new Promise(() => []) as never;   // stay pending on the step
+      });
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Plaid Checking'));
+      r.stdin.write('R');
+      await waitFor(() => expect(flat(r)).toContain('Replay all transactions'));
+      r.stdin.write('y');
+
+      // A full replay is the longest sync this app runs, so the step name
+      // reaching the screen is what separates "working" from "hung".
+      await waitFor(() => expect(flat(r)).toContain('Fetching transactions… 4,200 so far'));
+    });
+
+    it('cancelling with [n] leaves the cursor in place', async () => {
+      await addLinkedAccount();
+      await db.execute({
+        sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)',
+        args: ['item-chase', 'stale-cursor'],
+      });
+      const spy = vi.spyOn(syncApi, 'syncAll');
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Plaid Checking'));
+      r.stdin.write('R');
+      await waitFor(() => expect(flat(r)).toContain('Replay all transactions'));
+      r.stdin.write('n');
+
+      await waitFor(() => expect(flat(r)).not.toContain('Replay all transactions'));
+      expect(spy).not.toHaveBeenCalled();
+      const rows = await db.execute({ sql: 'SELECT cursor FROM sync_state WHERE account_id = ?', args: ['item-chase'] });
+      expect((rows.rows[0] as unknown as { cursor: string }).cursor).toBe('stale-cursor');
+    });
+
+    it('surfaces a failed replay without claiming success', async () => {
+      await addLinkedAccount();
+      vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
+        { itemId: 'item-chase', added: 0, modified: 0, removed: 0, dupes: 0, skipped: false, error: 'ITEM_LOGIN_REQUIRED' },
+      ]);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Plaid Checking'));
+      r.stdin.write('R');
+      await waitFor(() => expect(flat(r)).toContain('Replay all transactions'));
+      r.stdin.write('y');
+
+      await waitFor(() => expect(flat(r)).toContain('ITEM_LOGIN_REQUIRED'));
+      expect(flat(r)).not.toContain('new transactions');
+    });
+
+    it('[R] is inert on a placeholder row awaiting its first sync', async () => {
+      // Nothing to replay: the first sync already starts from scratch.
+      await addItem('item-new', 'Capital One', null);
+      const spy = vi.spyOn(syncApi, 'syncAll');
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('◷ awaiting first sync'));
+      r.stdin.write('R');
+
+      await new Promise((res) => setTimeout(res, 30));
+      expect(flat(r)).not.toContain('Replay all transactions');
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('[R] is inert on a manual account with no Plaid item', async () => {
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype) VALUES ('manual-house', 'House', 'other', null)`,
+        args: [],
+      });
+      const spy = vi.spyOn(syncApi, 'syncAll');
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('House'));
+      r.stdin.write('R');
+
+      await new Promise((res) => setTimeout(res, 30));
+      expect(flat(r)).not.toContain('Replay all transactions');
+      expect(spy).not.toHaveBeenCalled();
+    });
   });
 });
 
