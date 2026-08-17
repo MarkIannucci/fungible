@@ -2086,8 +2086,9 @@ describe('Accounts', () => {
 
   // ── Links tab ──────────────────────────────────────────────────────────────
   // Connection-level view: one row per Plaid item, not per account. The actions
-  // that belong to an item (repair now, update mode and replace later) live here
-  // rather than on an account row, where they implied a scope they never had.
+  // that belong to an item (updating its credentials now, replacing a connection
+  // later) live here rather than on an account row, where they implied a scope
+  // they never had.
   describe('links tab', () => {
     beforeEach(async () => {
       await db.execute('DELETE FROM accounts');
@@ -2158,14 +2159,15 @@ describe('Accounts', () => {
       expect(flat(r)).not.toContain('full replay pending');
     });
 
-    it('[r] opens the link flow from the Links view', async () => {
+    // Pressing [u] spawns the Plaid subprocess, so the behaviour it drives is
+    // covered in tests/tui/accounts-update-link.test.tsx, which mocks the spawn.
+    it('offers [u] update link on a connection row', async () => {
       await addItem('item-a', 'Chase', Date.now());
       await addAccount('acct-1', 'item-a');
 
       const r = accounts();
       await tabTo(r, 'links');
-      r.stdin.write('r');
-      await waitFor(() => expect(flat(r)).toContain('Transaction History Window'));
+      expect(flat(r)).toContain('[u] update link');
     });
 
     it('empty state points at Add Data', async () => {
@@ -2174,14 +2176,15 @@ describe('Accounts', () => {
       expect(flat(r)).toContain('No bank connections yet.');
     });
 
-    it('repair is no longer offered from an account row', async () => {
+    it('the link action is no longer offered from an account row', async () => {
       await addItem('item-a', 'Chase', Date.now());
       await addAccount('acct-1', 'item-a');
 
       const r = accounts({ showHints: true });
       await waitFor(() => expect(flat(r)).toContain('acct-1'));
       // It moved to the Links tab; the accounts hint must not still advertise it.
-      expect(flat(r)).not.toContain('[r] repair link');
+      expect(flat(r)).not.toContain('update link');
+      expect(flat(r)).not.toContain('repair link');
     });
   });
 });
