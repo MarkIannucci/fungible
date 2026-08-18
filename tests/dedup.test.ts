@@ -13,7 +13,7 @@ async function csvTx(opts: { name: string; amount: number; date?: string; accoun
   seq++;
   const id = `csv-${seq}`;
   await db.execute({
-    sql: 'INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored) VALUES (?, ?, ?, ?, ?, 0, 0)',
+    sql: "INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored, source) VALUES (?, ?, ?, ?, ?, 0, 0, 'csv')",
     args: [id, opts.accountId ?? 'acct1', opts.date ?? '2025-01-15', opts.name, opts.amount],
   });
   return id;
@@ -22,7 +22,7 @@ async function plaidTx(opts: { name: string; amount: number; date?: string; acco
   seq++;
   const id = `plaid-${seq}`;
   await db.execute({
-    sql: 'INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored) VALUES (?, ?, ?, ?, ?, 0, 0)',
+    sql: "INSERT INTO transactions (id, account_id, date, name, amount, pending, ignored, source) VALUES (?, ?, ?, ?, ?, 0, 0, 'plaid')",
     args: [id, opts.accountId ?? 'acct1', opts.date ?? '2025-01-15', opts.name, opts.amount],
   });
   return id;
@@ -148,8 +148,8 @@ describe('deduplicateCsvVsPlaid', () => {
     });
   });
 
-  describe('ID prefix enforcement', () => {
-    it('only removes csv- prefixed transactions, never Plaid', async () => {
+  describe('source enforcement', () => {
+    it('only removes CSV-sourced transactions, never Plaid', async () => {
       const plaid = await plaidTx({ name: 'AMAZON', amount: 50 });
       await csvTx({ name: 'AMAZON', amount: 50 });
       await deduplicateCsvVsPlaid();

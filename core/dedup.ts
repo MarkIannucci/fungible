@@ -10,12 +10,17 @@ export type DupePair = {
   accountName: string;
 };
 
+// Both sides are matched on transactions.source rather than on the `csv-` id
+// prefix they used to be read from. The prefix still exists as an id namespace,
+// but it is no longer the answer to "where did this row come from" — and the old
+// `plaid.id NOT LIKE 'csv-%'` half encoded "anything that isn't CSV is Plaid",
+// which stops being true the moment a third writer exists.
 const MATCH_SQL = `
   csv.account_id = plaid.account_id
   AND csv.amount = plaid.amount
   AND ABS(JULIANDAY(csv.date) - JULIANDAY(plaid.date)) <= 3
-  AND csv.id   LIKE 'csv-%'
-  AND plaid.id NOT LIKE 'csv-%'
+  AND csv.source   = 'csv'
+  AND plaid.source = 'plaid'
   AND (
     csv.name = plaid.name
     OR INSTR(LOWER(csv.name),  LOWER(plaid.name))  > 0
