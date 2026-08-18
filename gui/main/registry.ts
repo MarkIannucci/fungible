@@ -19,7 +19,7 @@ import {
   getAccountsWithBalances,
   getLinkedAccounts,
   getLinkedItems,
-  getCsvAccounts,
+  getImportTargets,
   getAllTags,
   getTagSummary,
   getAllRules,
@@ -89,6 +89,9 @@ import {
   deleteDuplicate,
   deleteAllDuplicates,
 } from '../../core/accounts.js';
+import {
+  getImports, getImportsOfFile, getImportImpact, deleteImport, moveImport,
+} from '../../core/imports.js';
 import { getCsvPlaidDupeCandidates } from '../../core/dedup.js';
 import { applyCategoriesToAll } from '../../core/categorize.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
@@ -124,7 +127,7 @@ export const registry = {
     getAccountsWithBalances,
     getLinkedAccounts,
     getLinkedItems,
-    getCsvAccounts,
+    getImportTargets,
     getAllTags,
     getTagSummary,
   },
@@ -196,6 +199,13 @@ export const registry = {
     deleteDuplicate,
     deleteAllDuplicates,
     getCsvPlaidDupeCandidates,
+  },
+  imports: {
+    getImports,
+    getImportsOfFile,
+    getImportImpact,
+    deleteImport,
+    moveImport,
   },
   categorize: {
     applyCategoriesToAll,
