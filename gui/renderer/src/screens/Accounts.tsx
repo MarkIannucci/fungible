@@ -8,7 +8,7 @@ import type { LinkedAccount, CsvAccount } from '../../../../core/queries.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
-import { fmtTimeAgo } from '../../../../core/fmt.js';
+import { fmtTimeAgo, fmtSyncedAt } from '../../../../core/fmt.js';
 import styles from './Accounts.module.css';
 
 type Tab = 'accounts' | 'add-data' | 'dupes';
@@ -116,19 +116,26 @@ export function Accounts() {
               <tbody>
                 {accounts.map((acct) => {
                   const raw = acct.subtype ?? acct.type;
+                  // A freshly linked institution has no accounts row yet, so it has
+                  // nothing to edit or delete and no mask/type to show.
+                  const awaiting = acct.awaitingFirstSync;
                   return (
-                    <tr key={acct.id} className={styles.row} onClick={() => setEditAcct(acct)}>
+                    <tr key={acct.id} className={styles.row} onClick={awaiting ? undefined : () => setEditAcct(acct)}>
                       <td className={styles.tdName}>
                         {acct.nickname ?? acct.name}
                         {acct.nickname && <span className="manual" title={`Nickname for ${acct.name}`}> ✎</span>}
                         {acct.excluded && <span className="dim" title="Excluded from net worth"> ⊘ excl</span>}
                       </td>
-                      <td className="num dim">{acct.mask ? `···${acct.mask}` : ''}</td>
-                      <td className="dim">{SUBTYPE_DISPLAY[raw] ?? raw}</td>
+                      <td className="num dim">{!awaiting && acct.mask ? `···${acct.mask}` : ''}</td>
+                      <td className="dim">{awaiting ? '' : (SUBTYPE_DISPLAY[raw] ?? raw)}</td>
                       <td className="dim">{acct.institution_name ?? ''}</td>
                       <td>
                         {acct.item_id && failingItems.has(acct.item_id) ? (
                           <span className="neg">⚠ sync failed</span>
+                        ) : awaiting ? (
+                          <span className="warn">◷ awaiting first sync</span>
+                        ) : acct.item_last_synced_at !== null ? (
+                          <span className="dim">synced <span className="pos">{fmtSyncedAt(acct.item_last_synced_at)}</span></span>
                         ) : acct.last_synced ? (
                           <span className="dim">synced <span className="pos">{fmtDate(acct.last_synced)}</span></span>
                         ) : (
@@ -137,7 +144,7 @@ export function Accounts() {
                       </td>
                       <td className="manual">{acct.owner ?? ''}</td>
                       <td className={styles.tdActions}>
-                        {acct.id.startsWith('manual-') && (
+                        {!awaiting && acct.id.startsWith('manual-') && (
                           <button
                             className={styles.rowBtn}
                             onClick={(e) => {
@@ -148,24 +155,28 @@ export function Accounts() {
                             value
                           </button>
                         )}
-                        <button
-                          className={styles.rowBtn}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditAcct(acct);
-                          }}
-                        >
-                          edit
-                        </button>
-                        <button
-                          className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteAcct(acct);
-                          }}
-                        >
-                          delete
-                        </button>
+                        {!awaiting && (
+                          <button
+                            className={styles.rowBtn}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditAcct(acct);
+                            }}
+                          >
+                            edit
+                          </button>
+                        )}
+                        {!awaiting && (
+                          <button
+                            className={`${styles.rowBtn} ${styles.rowBtnDanger}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteAcct(acct);
+                            }}
+                          >
+                            delete
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );

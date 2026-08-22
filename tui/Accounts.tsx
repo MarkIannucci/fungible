@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { spawn } from 'node:child_process';
-import { syncAll, type SyncItemResult } from '../core/sync.js';
-import { setSyncResult } from '../core/sync-status.js';
+import { syncAll, describeSyncProgress, type SyncItemResult, type SyncProgress } from '../core/sync.js';
+import { setSyncResult, mergeSyncResult } from '../core/sync-status.js';
 import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
@@ -18,7 +18,9 @@ import {
 } from '../core/accounts.js';
 import type { Screen, TxFilter } from './App.js';
 import { truncate, Divider } from './fmt.js';
+import { fmtSyncedAt } from '../core/fmt.js';
 import { handleNavKey } from './nav.js';
+import { useLoadGuard } from './useLoadGuard.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
 import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, EditTextField, EditToggleField } from './components/index.js';
 
@@ -62,6 +64,13 @@ const SUBTYPES: Record<string, string[]> = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Pulls the local link server's URL out of a stdout chunk from scripts/link.ts.
+ *  It's printed once, early, and later status lines would otherwise scroll it
+ *  away — so we capture it and pin it for the life of the link. */
+export function extractLinkUrl(chunk: string): string | null {
+  return chunk.match(/https?:\/\/localhost:\d+/)?.[0] ?? null;
+}
+
 function fmtDate(d: string | null): string {
   if (!d) return 'never';
   const dt = new Date(d + 'T12:00:00');
@@ -87,6 +96,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   // Sync state (shared)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
+  // Mirrors syncStatus for readers that outlive the render they were created in
+  // — the Plaid link's close handler fires long after startPlaidLink captured
+  // its scope, so reading the state variable there would see a stale value.
+  const syncStatusRef = useRef(syncStatus);
+  syncStatusRef.current = syncStatus;
   const [syncMsg, setSyncMsg] = useState('');
   // Item ids that failed the most recent sync (from either the startup or the
   // user-triggered path), so their account rows can be badged. Session-only.
@@ -96,6 +110,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const [addStep, setAddStep] = useState<AddStep>('landing');
   const [linkStatus, setLinkStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [linkMsg, setLinkMsg] = useState('');
+  // Held separately from linkMsg, which every new status line overwrites. On
+  // Linux there is no `open`/`xdg-open`, so the browser never launches itself
+  // and this URL is the user's only way into the Plaid flow.
+  const [linkUrl, setLinkUrl] = useState('');
+  // Last stderr text from the link subprocess. Read from the long-lived close
+  // handler, so it's a ref rather than state.
+  const linkErrRef = useRef('');
   const [daysInput, setDaysInput] = useState(String(MAX_DAYS_REQUESTED));
   const [daysError, setDaysError] = useState('');
   // Default history window derived from the start date set during setup.
@@ -148,6 +169,35 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Dupes view state
   const [dupes, setDupes] = useState<DupePair[]>([]);
   const [dupeCursor, setDupeCursor] = useState(0);
+  // The dupe scan runs detached from loadAccounts, so the view can be opened
+  // while it is still running. Without this an in-flight scan renders as
+  // "No duplicate candidates found." — a false all-clear, and most likely
+  // right after a CSV import, which is when duplicates are most expected.
+  const [dupesLoading, setDupesLoading] = useState(false);
+  // Reloads can overlap (a mutation refresh landing during a slow scan), so an
+  // earlier scan must not overwrite a later one's result.
+  const dupesGuard = useLoadGuard();
+
+  // Elapsed-seconds ticker for the two phases that block on the network (the
+  // Plaid link subprocess, then the sync). A static label can't distinguish
+  // "still working" from "hung", which is what makes people kill the terminal
+  // mid-link. Keyed on the phase so the count restarts when link hands off to
+  // sync rather than running straight through both.
+  const busyPhase = linkStatus === 'running' ? 'link' : syncStatus === 'syncing' ? 'sync' : null;
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    setElapsed(0);
+    if (!busyPhase) return;
+    const start = Date.now();
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [busyPhase]);
+  // Only shown once it's long enough to be worth reassuring about, and pinned to
+  // the line for the phase it's actually timing — otherwise the sync's counter
+  // renders next to the finished link message and reads as a stalled link.
+  const elapsedSuffix = busyPhase && elapsed >= 2 ? `  ${elapsed}s` : '';
+  const linkElapsed = busyPhase === 'link' ? elapsedSuffix : '';
+  const syncElapsed = busyPhase === 'sync' ? elapsedSuffix : '';
 
   const setTyping = useSetTyping();
   const TEXT_INPUT_STEPS = new Set<AddStep>(['link-days', 'file', 'manual-name', 'manual-value', 'new-acct-name']);
@@ -158,17 +208,32 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;
-  // [sel=2] gap [name] gap [✎=1] gap [mask=7] gap [type=14] gap [inst] gap [synced~14]
-  // 6 gaps of 2 = 12; fixed: 2+1+7+14+14+12 = 50
-  const acctFlex = Math.max(20, inner - 50);
+  // [sel=2] gap [name] gap [✎=1] gap [mask=7] gap [type=14] gap [inst] gap [synced~21]
+  // 6 gaps of 2 = 12; fixed: 2+1+7+14+21+12 = 57
+  // 21 is '◷ awaiting first sync', the widest synced cell; the relative strings
+  // ('synced 20 hr ago') top out around 16.
+  const acctFlex = Math.max(20, inner - 57);
   const acctNameW = Math.max(14, Math.floor(acctFlex * 0.6));
   const acctInstW = Math.max(8,  acctFlex - acctNameW);
 
-  function loadAccounts() {
-    void getLinkedAccounts().then(setLinkedAccounts);
-    void getCsvPlaidDupeCandidates().then(setDupes);
+  // Resolves to the loaded list so callers can act on it — the post-link handler
+  // reads the placeholder rows to learn which items need a first sync.
+  async function loadAccounts(): Promise<LinkedAccount[]> {
+    const accts = await getLinkedAccounts();
+    setLinkedAccounts(accts);
+    // Deliberately not awaited. The dupe scan is an unindexed self-join over the
+    // whole transactions table — measured at 5s for 20k rows and 49s for 40k
+    // once CSV imports are present. Nothing here needs it, and awaiting it after
+    // a link delayed the sync itself by that much, which read as a hang. The
+    // Dupes view reports it as still running instead of claiming a clean result.
+    const token = dupesGuard.begin();
+    setDupesLoading(true);
+    void getCsvPlaidDupeCandidates()
+      .then((rows) => { if (dupesGuard.isLatest(token)) setDupes(rows); })
+      .finally(() => { if (dupesGuard.isLatest(token)) setDupesLoading(false); });
+    return accts;
   }
-  useEffect(() => { loadAccounts(); }, [refreshKey]);
+  useEffect(() => { void loadAccounts(); }, [refreshKey]);
   useEffect(() => {
     void loadProfile().then((p) => setOwnerMembers(householdMembers(p)));
   }, [isActive]);
@@ -201,7 +266,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (isDebt) await updateAccountApr(acct.id, aprVal !== null && !isNaN(aprVal) ? aprVal : null);
       setAcctMode('list');
       showAcctMsg(`Updated ${editNickname.trim() || acct.name}`);
-      loadAccounts();
+      void loadAccounts();
     } catch {
       showAcctErr(`Failed to update ${acct.name}`);
     }
@@ -217,15 +282,23 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     }).join('  ·  ');
   }
 
+  // Names the step the sync is currently on. Without this the label sits on
+  // "Syncing…" for the whole run, which on a large backfill is minutes of the
+  // UI looking identical to a hang.
+  function reportProgress(_itemId: string, p: SyncProgress) {
+    setSyncMsg(describeSyncProgress(p));
+  }
+
   function forceSync() {
+    syncStatusRef.current = 'syncing';   // visible before the re-render lands
     setSyncStatus('syncing');
     setSyncMsg('Syncing…');
-    syncAll(true).then((results) => {
+    syncAll(true, undefined, reportProgress).then((results) => {
       const failed = results.filter((r) => r.error);
       // Feed the shared store: updates the row badges here and the global banner.
       // A clean run stores an empty set, clearing both.
       setSyncResult(results);
-      loadAccounts();
+      void loadAccounts();
       if (failed.length > 0) {
         // Errors stay put until the user presses a key (see useInput) — long
         // enough to read, and there's a real problem to act on.
@@ -240,6 +313,32 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     }).catch((err) => {
       // syncAll no longer throws on per-item failure, so this is a broader fault
       // (e.g. Plaid not configured, DB error). Surface its real message.
+      setSyncMsg(`Sync failed — ${plaidErrorMessage(err)}`);
+      setSyncStatus('error');
+    });
+  }
+
+  /** Sync just the given items — used right after a link so the new institution
+   *  syncs immediately. Mirrors forceSync but merges its outcome so another
+   *  institution's failure badge survives a scoped run. */
+  function syncItems(itemIds: string[]) {
+    syncStatusRef.current = 'syncing';   // visible before the re-render lands
+    setSyncStatus('syncing');
+    setSyncMsg('Syncing new institution…');
+    syncAll(true, itemIds, reportProgress).then((results) => {
+      const failed = results.filter((r) => r.error);
+      mergeSyncResult(results, itemIds);
+      void loadAccounts();
+      if (failed.length > 0) {
+        setSyncStatus('error');
+        setSyncMsg(`Sync failed: ${describeSyncFailures(failed)}`);
+      } else {
+        const added = results.reduce((s, r) => s + r.added, 0);
+        setSyncMsg(`Done — ${added} new transaction${added !== 1 ? 's' : ''}`);
+        setSyncStatus('done');
+        setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
+      }
+    }).catch((err) => {
       setSyncMsg(`Sync failed — ${plaidErrorMessage(err)}`);
       setSyncStatus('error');
     });
@@ -261,7 +360,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     try {
       await createManualAccount(manualName, value);
       setAddStep('manual-done');
-      loadAccounts();
+      void loadAccounts();
     } catch {
       setManualValueError('Failed to save asset — please try again');
     }
@@ -275,7 +374,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       setAcctMode('list');
       setAcctCursor((c) => Math.max(0, c - 1));
       showAcctMsg(`Deleted ${acct.nickname ?? acct.name}`);
-      loadAccounts();
+      void loadAccounts();
     } catch {
       setAcctMode('list');
       showAcctErr(`Failed to delete ${acct.nickname ?? acct.name}`);
@@ -291,7 +390,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       await updateAccountValue(acct.id, value);
       setAcctMode('list');
       showAcctMsg(`Updated value for ${acct.name}`);
-      loadAccounts();
+      void loadAccounts();
     } catch {
       setUpdateValueError('Failed to update value — please try again');
     }
@@ -300,6 +399,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   function startPlaidLink(days = 730) {
     setLinkStatus('running');
     setLinkMsg('Opening browser…');
+    setLinkUrl('');
+    linkErrRef.current = '';
     const node = process.execPath;
     const script = new URL('../scripts/link.ts', import.meta.url).pathname;
     const child = spawn(node, [
@@ -311,21 +412,38 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       env: { ...process.env, PLAID_DAYS_REQUESTED: String(days) },
     });
     child.stdout.on('data', (data: Buffer) => {
-      const line = data.toString().trim().split('\n').pop() ?? '';
+      const chunk = data.toString();
+      const url = extractLinkUrl(chunk);
+      if (url) setLinkUrl(url);
+      // Only the last line of the chunk becomes the status; the URL above is
+      // captured from the whole chunk so it survives being scrolled past.
+      const line = chunk.trim().split('\n').pop() ?? '';
       if (line) setLinkMsg(line);
     });
     child.stderr.on('data', (data: Buffer) => {
+      const text = data.toString().trim();
+      linkErrRef.current = text;
       setLinkStatus('error');
-      setLinkMsg(data.toString().trim());
+      setLinkMsg(text);
     });
     child.on('close', (code: number) => {
       if (code === 0) {
         setLinkStatus('done');
         setLinkMsg('Bank connected! Press Enter to continue.');
-        loadAccounts();
+        // The reload surfaces the institution's placeholder row immediately —
+        // that alone answers "did it work?" even if the sync is slow. The
+        // placeholders *are* the items needing a first sync, so the ids come
+        // from the loaded list rather than out of the link subprocess's stdout.
+        void loadAccounts().then((accts) => {
+          const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
+          if (itemIds.length > 0 && syncStatusRef.current !== 'syncing') syncItems(itemIds);
+        });
       } else if (code !== null) {
         setLinkStatus('error');
-        setLinkMsg(`Process exited with code ${code}. Press Enter to continue.`);
+        // Keep the stderr reason if we captured one — it says *why* the link
+        // failed, where a bare exit code says only that it did. The panel
+        // already offers "Press Enter to return" for the error state.
+        if (!linkErrRef.current) setLinkMsg(`Process exited with code ${code}. Press Enter to continue.`);
       }
     });
   }
@@ -474,7 +592,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.tab) { setMainView('add-data'); return; }
       if (key.upArrow)   { setAcctCursor((c) => Math.max(0, c - 1)); return; }
       if (key.downArrow) { setAcctCursor((c) => Math.min(linkedAccounts.length - 1, c + 1)); return; }
+      // A placeholder row has no accounts row behind it, so edit and delete
+      // would silently write zero rows. Refuse them and say why.
       if (key.return && linkedAccounts[acctCursor]) {
+        if (linkedAccounts[acctCursor].awaitingFirstSync) {
+          showAcctErr('Not synced yet — press [s] to sync this institution first.');
+          return;
+        }
         openEdit(linkedAccounts[acctCursor]);
         return;
       }
@@ -484,7 +608,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         setAcctMode('update-value');
         return;
       }
-      if (input === 'x' && linkedAccounts[acctCursor]) { setAcctMode('confirm-delete'); return; }
+      // Removing a mis-linked institution means deleting a plaid_items row,
+      // which nothing in the codebase does yet — out of scope here.
+      if (input === 'x' && linkedAccounts[acctCursor] && !linkedAccounts[acctCursor].awaitingFirstSync) {
+        setAcctMode('confirm-delete');
+        return;
+      }
 
       if (input === 'r' && linkedAccounts[acctCursor]) {
         setMainView('add-data');
@@ -643,7 +772,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     }
 
     if (addStep === 'done') {
-      if (key.return) { setImportResult(null); setAddStep('landing'); setMainView('accounts'); loadAccounts(); }
+      if (key.return) { setImportResult(null); setAddStep('landing'); setMainView('accounts'); void loadAccounts(); }
       return;
     }
 
@@ -672,6 +801,10 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   const selectedAcct = linkedAccounts[acctCursor];
+  // Placeholders aren't accounts yet, so the footer names them separately
+  // rather than inflating the account count.
+  const awaitingCount = linkedAccounts.filter((a) => a.awaitingFirstSync).length;
+  const realAcctCount = linkedAccounts.length - awaitingCount;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
@@ -682,7 +815,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           <Text bold color={mainView === 'accounts' ? C_ACCENT : undefined} dimColor={mainView !== 'accounts'}>Accounts</Text>
           <Text bold color={mainView === 'add-data' ? C_ACCENT : undefined} dimColor={mainView !== 'add-data'}>Add Data</Text>
           <Text bold color={mainView === 'dupes' ? C_ACCENT : undefined} dimColor={mainView !== 'dupes'}>
-            Dupes{dupes.length > 0 ? ` (${dupes.length})` : ''}
+            Dupes{dupesLoading && dupes.length === 0 ? ' …' : dupes.length > 0 ? ` (${dupes.length})` : ''}
           </Text>
           {showHints && <Text dimColor>[Tab]</Text>}
         </Box>
@@ -714,7 +847,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               {linkedAccounts.map((acct, i) => {
                 const isSelected = i === acctCursor;
                 const raw = acct.subtype ?? acct.type;
-                const label = (SUBTYPE_DISPLAY[raw] ?? raw).padEnd(14);
+                // A placeholder has no real subtype and no mask — leave both blank
+                // rather than claiming 'other'.
+                const label = (acct.awaitingFirstSync ? '⋯' : (SUBTYPE_DISPLAY[raw] ?? raw)).padEnd(14);
                 const institution = acct.institution_name ? truncate(acct.institution_name, acctInstW) : '';
                 return (
                   <SelectableRow key={acct.id} selected={isSelected}>
@@ -725,9 +860,17 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                     <Text dimColor>{acct.mask ? `···${acct.mask}` : '      '}</Text>
                     <Text dimColor>{label}</Text>
                     <Text dimColor>{institution.padEnd(acctInstW)}</Text>
+                    {/* Order matters: a failure outranks everything, then the
+                        not-yet-synced placeholder, then the item's real sync time,
+                        then the balance-date fallback for accounts with no item
+                        (manual/CSV). */}
                     <Text dimColor>
                       {acct.item_id && failingItems.has(acct.item_id)
                         ? <Text color={C_NEGATIVE}>⚠ sync failed</Text>
+                        : acct.awaitingFirstSync
+                        ? <Text color={C_WARNING}>◷ awaiting first sync</Text>
+                        : acct.item_last_synced_at !== null
+                        ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtSyncedAt(acct.item_last_synced_at)}</Text></Text>
                         : acct.last_synced
                         ? <Text>synced <Text color={isSelected ? C_POSITIVE : undefined}>{fmtDate(acct.last_synced)}</Text></Text>
                         : <Text color={C_WARNING}>not synced</Text>
@@ -742,8 +885,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           )}
 
           <Box marginTop={1}><Divider /></Box>
-          <Text dimColor>{linkedAccounts.length} account{linkedAccounts.length !== 1 ? 's' : ''}</Text>
-          {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}</Text>}
+          <Text dimColor>
+            {realAcctCount} account{realAcctCount !== 1 ? 's' : ''}
+            {awaitingCount > 0 && ` · ${awaitingCount} institution${awaitingCount !== 1 ? 's' : ''} awaiting first sync`}
+          </Text>
+          {syncMsg && <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{syncElapsed}</Text></Text>}
           {acctMsg && <Text color={C_POSITIVE}>{acctMsg}</Text>}
           {acctErr && <Text color={C_NEGATIVE}>{acctErr}</Text>}
 
@@ -777,8 +923,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           {/* Unified edit panel */}
           {acctMode === 'edit' && selectedAcct && (() => {
             const isDebt = editType === 'credit' || editType === 'loan';
+            // Institution is often the only thing distinguishing two same-named
+            // accounts at different banks (a "Plaid Checking" at each), so the
+            // panel names it alongside the mask.
             return (
-              <ModalPanel title={`Edit: ${selectedAcct.name}${selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}`}>
+              <ModalPanel title={`Edit: ${selectedAcct.name}${selectedAcct.mask ? ` ···${selectedAcct.mask}` : ''}${selectedAcct.institution_name ? `  ·  ${selectedAcct.institution_name}` : ''}`}>
                 <Box marginTop={1} flexDirection="column" gap={1}>
                   <EditTextField label="Nickname" labelWidth={10} active={editField === 'nickname'} value={editNickname} color={C_WARNING} placeholder="none" emptyText="none" />
                   {ownerMembers.length > 0
@@ -804,7 +953,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {/* ── Dupes view ────────────────────────────────────────────────── */}
       {mainView === 'dupes' && (
         <Box flexDirection="column" marginTop={1}>
-          {dupes.length === 0 ? (
+          {dupesLoading && dupes.length === 0 ? (
+            <Text color={C_WARNING}>⟳ Checking for duplicates… <Text dimColor>(scans every transaction; can take a while on a large history)</Text></Text>
+          ) : dupes.length === 0 ? (
             <Text color={C_POSITIVE}>No duplicate candidates found.</Text>
           ) : (
             dupes.map((pair, i) => {
@@ -846,7 +997,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   [s] Force sync          <Text dimColor>Re-sync from Plaid now</Text>
                 </Text>
               </Box>
-              {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}</Text></Box>}
+              {syncMsg && <Box marginTop={1}><Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>{syncMsg}<Text dimColor>{syncElapsed}</Text></Text></Box>}
               <Box marginTop={1}><Text dimColor>Tab or Esc to go back</Text></Box>
             </Box>
           )}
@@ -866,10 +1017,22 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
             <Box flexDirection="column" marginTop={1} gap={1}>
               <Text bold>Link Bank Account</Text>
               <Text color={linkStatus === 'done' ? C_POSITIVE : linkStatus === 'error' ? C_NEGATIVE : C_WARNING}>
-                {linkStatus === 'running' ? '⟳ ' : ''}{linkMsg}
+                {linkStatus === 'running' ? '⟳ ' : ''}{linkMsg}<Text dimColor>{linkElapsed}</Text>
               </Text>
+              {linkStatus === 'running' && linkUrl && (
+                <Text>Open this link if your browser didn't: <Text color={C_ACCENT}>{linkUrl}</Text></Text>
+              )}
               {linkStatus === 'running' && (
                 <Text dimColor>Complete the Plaid flow in your browser, then return here.</Text>
+              )}
+              {/* The post-link sync runs while this panel is still on screen, so
+                  its steps have to be reported here too — otherwise the panel
+                  shows a finished link message with a counter ticking beside it
+                  and no sign of what is actually running. */}
+              {syncMsg && (
+                <Text color={syncStatus === 'syncing' ? C_WARNING : syncStatus === 'error' ? C_NEGATIVE : C_POSITIVE}>
+                  {syncStatus === 'syncing' ? '⟳ ' : ''}{syncMsg}<Text dimColor>{syncElapsed}</Text>
+                </Text>
               )}
               {(linkStatus === 'done' || linkStatus === 'error') && (
                 <Text dimColor>Press Enter to return.</Text>

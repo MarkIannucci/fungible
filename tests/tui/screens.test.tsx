@@ -1,10 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import React from 'react';
 import { render, cleanup } from 'ink-testing-library';
+import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 
 vi.mock('../../core/db.js', async () => {
   const { makeTestDb } = await import('../helpers/makeTestDb.js');
   return { db: await makeTestDb() };
+});
+
+// tui/Accounts.tsx is the only TUI screen that spawns anything (scripts/link.ts),
+// so stubbing spawn lets the link panel be driven without a real subprocess.
+vi.mock('node:child_process', async (importActual) => {
+  const actual = await importActual<typeof import('node:child_process')>();
+  return { ...actual, spawn: vi.fn() };
 });
 
 import { db } from '../../core/db.js';
@@ -19,11 +28,15 @@ import { FilterPanel } from '../../tui/FilterPanel.js';
 import { NetWorth } from '../../tui/NetWorth.js';
 import { Tags } from '../../tui/Tags.js';
 import { Rules } from '../../tui/Rules.js';
-import { Accounts } from '../../tui/Accounts.js';
+import { Accounts, extractLinkUrl } from '../../tui/Accounts.js';
 import * as accountsApi from '../../core/accounts.js';
+import * as syncApi from '../../core/sync.js';
+import * as dedupApi from '../../core/dedup.js';
 import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
+import { SyncStatusProvider } from '../../tui/SyncStatusContext.js';
+import { setSyncResult, clearSyncFailures } from '../../core/sync-status.js';
 import { FilterProvider, useFilter } from '../../tui/FilterContext.js';
 import type { Filter } from '../../core/filters.js';
 import { TypingContext } from '../../tui/TypingContext.js';
@@ -39,10 +52,23 @@ vi.mock('../../core/profile.js', async (importActual) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Stand-in for the scripts/link.ts child: emit on .stdout/.stderr to drive the panel. */
+function fakeLinkProcess() {
+  return Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  });
+}
+
 const ANSI_RE = /\x1b\[[0-9;]*[mGKHFABCDJ]/g;
 
 function frame(r: ReturnType<typeof render>): string {
   return (r.lastFrame() ?? '').replace(ANSI_RE, '');
+}
+
+/** Whitespace-collapsed frame — rows and panels wrap at 80 columns. */
+function flat(r: ReturnType<typeof render>): string {
+  return frame(r).replace(/\s+/g, ' ');
 }
 
 async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
@@ -1767,6 +1793,332 @@ describe('Accounts', () => {
     r.stdin.write('\r');                 // save → write rejects
     await waitFor(() => expect(frame(r)).toContain('Failed to update'));
     expect(frame(r)).not.toContain('Updated Test Checking');
+  });
+
+  // The link URL is printed once by scripts/link.ts and then buried by later
+  // status lines ("Waiting for you to connect…"), which share the single
+  // linkMsg slot. It has to be captured from the chunk and pinned separately —
+  // on Linux there is no `open`, so it is the only way into the Plaid flow.
+  describe('link URL capture', () => {
+    it('extracts the URL from the line link.ts prints', () => {
+      expect(extractLinkUrl('Opening http://localhost:4747 …')).toBe('http://localhost:4747');
+    });
+
+    it('finds the URL anywhere in a multi-line chunk, not just the last line', () => {
+      const chunk = 'Opening http://localhost:4747 …\nWaiting for you to connect in the browser…\n';
+      // The last line is what becomes linkMsg, so a last-line-only scan would miss it.
+      expect(chunk.trim().split('\n').pop()).not.toContain('localhost');
+      expect(extractLinkUrl(chunk)).toBe('http://localhost:4747');
+    });
+
+    it('returns null for status lines that carry no URL', () => {
+      expect(extractLinkUrl('Saving institution…')).toBeNull();
+      expect(extractLinkUrl('Creating Plaid link token…')).toBeNull();
+    });
+
+    it('reads whatever port link.ts is using rather than assuming one', () => {
+      expect(extractLinkUrl('Opening http://localhost:8080 …')).toBe('http://localhost:8080');
+    });
+
+    // The regression the user hit: the URL scrolled away behind the next status
+    // line, leaving nothing to click while the ticker counted up.
+    it('keeps the URL on screen after later status lines replace the message', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');                                  // → Add Data
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('l');                                   // → history-window prompt
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');                                  // → starts the link
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.stdout.emit('data', Buffer.from('Opening http://localhost:4747 …\n'));
+      await waitFor(() => expect(flat(r)).toContain('http://localhost:4747'));
+
+      // This line takes over linkMsg — the URL must survive it.
+      proc.stdout.emit('data', Buffer.from('Waiting for you to connect in the browser…\n'));
+      await waitFor(() => expect(flat(r)).toContain('Waiting for you to connect'));
+      expect(flat(r)).toContain('http://localhost:4747');
+
+      // Still there several status lines later.
+      proc.stdout.emit('data', Buffer.from('Account link received from Chase — exchanging token…\n'));
+      await waitFor(() => expect(flat(r)).toContain('exchanging token'));
+      expect(flat(r)).toContain('http://localhost:4747');
+    });
+
+    // Same defect shape: the generic exit-code line used to bury the stderr
+    // reason, so a crash reported only that it happened, never why.
+    it('keeps the stderr reason instead of replacing it with the exit code', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('l');
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.stderr.emit('data', Buffer.from('Error: listen EADDRINUSE: address already in use 127.0.0.1:4747\n'));
+      await waitFor(() => expect(flat(r)).toContain('EADDRINUSE'));
+      proc.emit('close', 1);
+
+      await waitFor(() => expect(flat(r)).toContain('Press Enter to return.'));
+      expect(flat(r)).toContain('EADDRINUSE');
+      expect(flat(r)).not.toContain('Process exited with code 1');
+    });
+
+    // The post-link sync runs while the link panel is still on screen. It used
+    // to render only linkMsg, so every sync step was invisible and the elapsed
+    // counter sat next to the finished link message — indistinguishable from a
+    // link that had stalled.
+    it('shows sync progress on the link panel after the link completes', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(async (_f, _ids, onProgress) => {
+        onProgress?.('item-x', { phase: 'transactions', page: 1, fetched: 4321 });
+        return new Promise(() => []) as never;
+      });
+      // A placeholder row, so the close handler finds an item to sync.
+      await db.execute({
+        sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES (?, ?, ?)',
+        args: ['item-x', 'tok', 'Progress Bank'],
+      });
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('l');
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.emit('close', 0);
+      await waitFor(() => expect(flat(r)).toContain('Bank connected!'));
+      // Still on the link panel — the sync step must be visible from here.
+      await waitFor(() => expect(flat(r)).toContain('Fetching transactions… 4,321 so far'));
+    });
+
+    it('still reports a bare exit code when the child said nothing on stderr', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('l');
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.emit('close', 1);
+      await waitFor(() => expect(flat(r)).toContain('Process exited with code 1'));
+    });
+  });
+
+  // The dupe scan runs detached from loadAccounts so it can't delay the
+  // post-link sync. That means the Dupes view can be opened mid-scan, and it
+  // must not report a clean result it doesn't have yet.
+  describe('dupe scan in flight', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('reports the scan as running instead of claiming no duplicates', async () => {
+      vi.spyOn(dedupApi, 'getCsvPlaidDupeCandidates').mockImplementation(() => new Promise(() => {}));
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');                                   // → Add Data
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('\t');                                   // → Dupes
+      await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
+      expect(flat(r)).not.toContain('No duplicate candidates found.');
+    });
+
+    it('reports the clean result once the scan finishes', async () => {
+      let finish: (v: never[]) => void = () => {};
+      vi.spyOn(dedupApi, 'getCsvPlaidDupeCandidates')
+        .mockImplementation(() => new Promise((res) => { finish = res as never; }));
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      r.stdin.write('\t');
+      await waitFor(() => expect(flat(r)).toContain('Add Data'));
+      r.stdin.write('\t');
+      await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
+
+      finish([]);
+      await waitFor(() => expect(flat(r)).toContain('No duplicate candidates found.'));
+    });
+  });
+
+  // ── Sync state on the accounts list ───────────────────────────────────────
+  //
+  // Each case owns the whole list (the seeded accounts are cleared) so a frame
+  // assertion is unambiguous about which row it's reading. Frames are whitespace
+  // collapsed because a row can wrap at 80 columns.
+  describe('sync state', () => {
+    beforeEach(async () => {
+      await db.execute('DELETE FROM accounts');
+      await db.execute('DELETE FROM balance_history');
+      await db.execute('DELETE FROM plaid_items');
+      clearSyncFailures();
+    });
+    afterEach(() => clearSyncFailures());
+
+    // The Accounts screen reads failures through SyncStatusProvider; W omits it,
+    // so the badge cases need their own wrapper.
+    function accountsWithSyncStatus() {
+      return render(
+        <W>
+          <SyncStatusProvider>
+            <Accounts onNavigate={noop} showHints={false} />
+          </SyncStatusProvider>
+        </W>,
+      );
+    }
+
+    const addItem = (itemId: string, institution: string | null, lastSyncedAt: number | null) =>
+      db.execute({
+        sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
+        args: [itemId, 'tok', institution, lastSyncedAt],
+      });
+
+    it('renders a placeholder row for a linked but unsynced institution', async () => {
+      await addItem('item-new', 'Capital One', null);
+      const r = accounts();
+      await waitFor(() => {
+        const f = flat(r);
+        expect(f).toContain('Capital One');
+        expect(f).toContain('◷ awaiting first sync');
+      });
+    });
+
+    // The whole point of the placeholder: a fresh link is never met with
+    // "nothing here", which is what nearly caused a duplicate link attempt.
+    it('does not show the empty state when only a placeholder exists', async () => {
+      await addItem('item-new', 'Capital One', null);
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Capital One'));
+      expect(flat(r)).not.toContain('No accounts linked yet.');
+    });
+
+    it('a failing item outranks the awaiting-first-sync badge', async () => {
+      await addItem('item-new', 'Capital One', null);
+      setSyncResult([{ itemId: 'item-new', added: 0, modified: 0, removed: 0, dupes: 0, skipped: false, error: 'ITEM_LOGIN_REQUIRED' }]);
+      const r = accountsWithSyncStatus();
+      await waitFor(() => expect(flat(r)).toContain('⚠ sync failed'));
+      // The footer still names the institution as awaiting a first sync — it is.
+      // Only the row badge is under test, so match the glyph, not the phrase.
+      expect(flat(r)).not.toContain('◷ awaiting first sync');
+    });
+
+    it('Enter on a placeholder refuses to open the edit panel and says why', async () => {
+      await addItem('item-new', 'Capital One', null);
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('◷ awaiting first sync'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Not synced yet'));
+      expect(flat(r)).not.toContain('Edit:');
+    });
+
+    it('counts placeholders separately from accounts in the footer', async () => {
+      const ts = Date.now();
+      await addItem('item-synced', 'Chase', ts);
+      await addItem('item-new', 'Capital One', null);
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES ('acct-chase', 'Chase Checking', 'depository', 'checking', 'item-synced')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('1 account · 1 institution awaiting first sync'));
+    });
+
+    // Defect 4, end to end: sync writes a balance row only when
+    // balances.current is non-null, so this account has no balance_history at
+    // all. It used to read "not synced" forever despite its institution syncing
+    // fine — it must report the item's sync time instead.
+    it('reports the item sync time for a synced account with no balance snapshot', async () => {
+      await addItem('item-synced', 'Chase', Date.now() - 5 * 60_000);
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES ('acct-nobal', 'No Balance', 'depository', 'checking', 'item-synced')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('No Balance'));
+      expect(flat(r)).toContain('synced 5 min ago');
+      expect(flat(r)).not.toContain('not synced');
+    });
+
+    // A long sync must show it is still alive. Without this the label is frozen
+    // for the whole run and there's no way to tell working from hung — which is
+    // what makes people kill the terminal mid-link.
+    it('ticks elapsed seconds while a sync is in flight', async () => {
+      // Hold syncAll pending so the syncing state persists long enough to observe.
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(() => new Promise(() => {}));
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('No accounts linked yet.'));
+      r.stdin.write('s');
+      await waitFor(() => expect(flat(r)).toContain('Syncing…'));
+      // Suppressed below 2s, then counts up.
+      await waitFor(() => expect(flat(r)).toMatch(/Syncing…\s+[2-9]\d*s/), 6000);
+    });
+
+    // The step name has to actually reach the screen, not just be emitted by
+    // core — this is the whole point of threading onProgress into the TUI.
+    it('renders the current sync step as the sync reports it', async () => {
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(async (_force, _ids, onProgress) => {
+        onProgress?.('item-x', { phase: 'transactions', page: 1, fetched: 1234 });
+        await new Promise((res) => setTimeout(res, 40));
+        onProgress?.('item-x', { phase: 'dedup' });
+        return new Promise(() => []) as never;   // stay pending on the last step
+      });
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('No accounts linked yet.'));
+      r.stdin.write('s');
+      await waitFor(() => expect(flat(r)).toContain('Fetching transactions… 1,234 so far'));
+      await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
+    });
+
+    // You can't tell two same-named accounts at different banks apart in the
+    // edit panel without this. The account row's own institution_name is NULL
+    // for everything Plaid links, so the name has to come from the item.
+    it('names the institution in the edit panel, inherited from the item', async () => {
+      await addItem('item-chase', 'Chase', Date.now());
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, mask, item_id) VALUES ('acct-plaid', 'Plaid Checking', 'depository', 'checking', '0000', 'item-chase')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Plaid Checking'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Edit: Plaid Checking'));
+      expect(flat(r)).toContain('Chase');
+    });
+
+    // A manual account has no Plaid item, so its balance-snapshot date is the
+    // only sync signal it has — the fallback branch must keep working.
+    it('a manual account still renders its balance-snapshot date', async () => {
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype) VALUES ('manual-house', 'House', 'other', null)`,
+        args: [],
+      });
+      await db.execute({
+        sql: `INSERT INTO balance_history (account_id, balance, date) VALUES ('manual-house', 500000, '2026-06-12')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('House'));
+      expect(flat(r)).toContain('synced Jun 12');
+    });
   });
 });
 

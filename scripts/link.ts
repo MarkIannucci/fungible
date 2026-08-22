@@ -110,9 +110,15 @@ function resolveDaysRequested(): number | undefined {
   return Math.max(30, Math.min(730, n));
 }
 
+/** Single-line progress line. The TUI pipes this stdout straight into the link
+ *  panel, so every step reported here is visible to the user while they wait. */
+function log(msg: string) {
+  console.log(msg);
+}
+
 async function main() {
   await initDb();
-  console.log('Creating Plaid link token...');
+  log('Creating Plaid link token…');
   const daysRequested = resolveDaysRequested();
   const linkToken = await createLinkToken('local-user', daysRequested);
 
@@ -129,10 +135,14 @@ async function main() {
       req.on('end', async () => {
         try {
           const { public_token, institution } = JSON.parse(body);
+          const institutionName = institution?.name ?? null;
+          // Each of these is a single line on purpose: the TUI renders only the
+          // last line of a stdout chunk (tui/Accounts.tsx), so a multi-line log
+          // would hide everything but its final line.
+          log(`Account link received from ${institutionName ?? 'Plaid'} — exchanging token…`);
           const { accessToken, itemId } = await exchangePublicToken(public_token);
 
-          const institutionName = institution?.name ?? null;
-
+          log('Saving institution…');
           await db.execute({
             sql: `INSERT INTO plaid_items (item_id, access_token, institution_name, days_requested)
                   VALUES (?, ?, ?, ?)
@@ -143,11 +153,14 @@ async function main() {
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end(successPage());
 
-          console.log(`\n✓ Connected: ${institutionName ?? itemId}`);
-          console.log('  Run `npm run dev` to open the dashboard.\n');
+          log(`✓ Connected: ${institutionName ?? itemId} — returning to fungible…`);
 
           setTimeout(() => server.close(), 1000);
         } catch (e: any) {
+          // Also to stderr: the TUI flags the panel as failed on stderr, so the
+          // user sees the reason instead of the last progress line sitting there
+          // looking hung.
+          console.error(`Link failed: ${e.message}`);
           res.writeHead(500, { 'Content-Type': 'text/plain' });
           res.end(e.message);
         }
@@ -161,8 +174,9 @@ async function main() {
 
   server.listen(PORT, '127.0.0.1', () => {
     const url = `http://localhost:${PORT}`;
-    console.log(`Opening ${url} ...`);
+    log(`Opening ${url} …`);
     execFile('open', [url]);
+    log('Waiting for you to connect in the browser…');
   });
 }
 
