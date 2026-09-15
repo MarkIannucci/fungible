@@ -6,7 +6,6 @@ export type HealthData = {
   avgMonthlyExpenses: number;
   monthlyIncome: number;
   monthlySavings: number;
-  savingsRate: number;  // monthlySavings / monthlyIncome as a percentage
   cash: number;
   liquid: number;       // cash + taxable brokerage
   retirement: number;   // 401k / IRA / Roth / HSA — restricted until ~59½
@@ -92,7 +91,6 @@ export async function loadHealthData(): Promise<HealthData> {
     avgMonthlyExpenses: Number(expRow.avg_expenses),
     monthlyIncome,
     monthlySavings,
-    savingsRate:        monthlyIncome > 0 ? (monthlySavings / monthlyIncome) * 100 : 0,
     cash:               Number(cashRow.cash),
     liquid:             Number(liqRow.liquid),
     retirement:         Number(retRow.retirement),
@@ -133,3 +131,5 @@ export function coastYears(
     return null;
   }
 }
+
+export { computeSavingsRate } from './savings-rate.js';
