@@ -10,7 +10,13 @@ export type DupePair = {
   accountName: string;
 };
 
-// Match on posting date, not the displayed date: a reattributed transaction
+// Both sides are matched on transactions.source rather than on the `csv-` id
+// prefix they used to be read from. The prefix still exists as an id namespace,
+// but it is no longer the answer to "where did this row come from" — and the old
+// `plaid.id NOT LIKE 'csv-%'` half encoded "anything that isn't CSV is Plaid",
+// which stops being true the moment a third writer exists.
+//
+// Also match on posting date, not the displayed date: a reattributed transaction
 // (see `original_date`) can sit months from where the bank actually posted it,
 // which would otherwise push a genuine CSV/Plaid duplicate outside the window.
 const MATCH_SQL = `
@@ -20,8 +26,8 @@ const MATCH_SQL = `
     JULIANDAY(COALESCE(csv.original_date, csv.date))
     - JULIANDAY(COALESCE(plaid.original_date, plaid.date))
   ) <= 3
-  AND csv.id   LIKE 'csv-%'
-  AND plaid.id NOT LIKE 'csv-%'
+  AND csv.source   = 'csv'
+  AND plaid.source = 'plaid'
   AND (
     csv.name = plaid.name
     OR INSTR(LOWER(csv.name),  LOWER(plaid.name))  > 0
