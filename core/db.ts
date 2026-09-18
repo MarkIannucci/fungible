@@ -115,6 +115,10 @@ export async function initDb() {
     'ALTER TABLE transactions ADD COLUMN manual_category TEXT',
     'ALTER TABLE transactions ADD COLUMN display_name TEXT',
     'ALTER TABLE transactions ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0',
+    // Set when the user reattributes a transaction to the period it belongs to
+    // (a paycheck posting on the 1st, a check cashed months after it was written).
+    // Holds the original posting date; `date` holds the reattributed one.
+    'ALTER TABLE transactions ADD COLUMN original_date TEXT',
     'ALTER TABLE category_rules ADD COLUMN min_amount REAL',
     'ALTER TABLE category_rules ADD COLUMN max_amount REAL',
     'ALTER TABLE name_rules ADD COLUMN min_amount REAL',
@@ -148,6 +152,11 @@ export async function initDb() {
     ['Personal Care', 'flexible'], ['Home', 'flexible'], ['Services', 'flexible'],
     ['Shopping', 'discretionary'], ['Entertainment', 'discretionary'],
     ['Travel', 'discretionary'], ['Dining', 'discretionary'], ['Fees', 'discretionary'],
+    // Streaming and cloud storage — cancellable, so discretionary rather than
+    // fixed. Must stay in step with the seeded Subscriptions rules in
+    // core/seed-rules.ts: a category with no tier here falls to 'untagged' in
+    // every fixed/flexible/discretionary breakdown.
+    ['Subscriptions', 'discretionary'],
   ];
   await db.batch(
     flexDefaults.map(([cat, flex]) => ({
@@ -203,7 +212,7 @@ export async function initDb() {
     'Income', 'Transfer', 'Food & Drink', 'Shopping', 'Transportation',
     'Travel', 'Bills & Utilities', 'Insurance', 'Medical', 'Personal Care',
     'Childcare', 'Entertainment', 'Home', 'Services', 'Fees',
-    'Government', 'Taxes', 'Loan Payment', 'Uncategorized',
+    'Government', 'Taxes', 'Loan Payment', 'Subscriptions', 'Uncategorized',
   ];
   await db.batch(
     defaultCategories.map((cat) => ({

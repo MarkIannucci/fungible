@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { buildFilterClause, buildFilterConditions, type Filter } from './filters.js';
+import { BASIS_LABEL, type MetricBasis } from './dateUtils.js';
 
 export type CategorySummary = { category: string; total: number };
 export type MonthlySummary  = { income: number; expenses: number; net: number; byCategory: CategorySummary[] };
@@ -15,7 +16,7 @@ export type MerchantSummaryRow = {
 // The catch-all category. Unlike a real category, it legitimately mixes income
 // (e.g. an un-ruled paycheck) with spending, so we never net the two together —
 // see summarizeBuckets.
-const UNCATEGORIZED = 'Uncategorized';
+export const UNCATEGORIZED = 'Uncategorized';
 
 /**
  * Turn per-category {outflow, inflow} buckets into an income/expense/byCategory
@@ -40,6 +41,41 @@ function summarizeBuckets(rows: { category: string; outflow: number; inflow: num
   byCategory.sort((a, b) => b.total - a.total);
   return { income, expenses, net: income - expenses, byCategory };
 }
+
+/**
+ * Trailing-12-month income / expense / savings averages, netted per category by
+ * the same rule as summarizeBuckets: a reimbursement sitting inside an expense
+ * category reduces that category's spend instead of inflating expenses AND
+ * income at once. Summing raw outflows here would overstate avg_expenses, which
+ * feeds runway, the FIRE number, and years-to-FIRE.
+ *
+ * Shared by loadHealthData (TUI/GUI Health tab) and getFinancialHealth (agent),
+ * which must not drift apart.
+ */
+export const TRAILING_12MO_AVERAGES_SQL = `
+  SELECT
+    COALESCE(SUM(spend), 0) / 12.0            AS avg_expenses,
+    COALESCE(SUM(inc), 0) / 12.0              AS avg_income,
+    COALESCE(SUM(inc) - SUM(spend), 0) / 12.0 AS avg_savings
+  FROM (
+    SELECT
+      CASE WHEN category = '${UNCATEGORIZED}' THEN outflow
+           WHEN outflow > inflow THEN outflow - inflow ELSE 0 END AS spend,
+      CASE WHEN category = '${UNCATEGORIZED}' THEN inflow
+           WHEN inflow > outflow THEN inflow - outflow ELSE 0 END AS inc
+    FROM (
+      SELECT category,
+        SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END)  AS outflow,
+        SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS inflow
+      FROM transactions
+      WHERE date >= date('now', '-12 months')
+        AND pending = 0 AND ignored = 0
+        AND category NOT IN (SELECT category FROM hidden_categories)
+        AND category != 'Transfer'
+      GROUP BY category
+    )
+  )
+`;
 
 export async function getHiddenCategories(): Promise<Set<string>> {
   const result = await db.execute('SELECT category FROM hidden_categories');
@@ -224,6 +260,9 @@ export type DriftSlice    = {
   // Median of the rolling windows — robust to one-off spikes (a single $7K
   // medical month shouldn't inflate the "typical" baseline the way a mean does).
   median12m: number; medianDelta: number;
+  // The rolling windows are 12 complete calendar periods (not the trailing-365d
+  // window health/runway metrics use — see issue #178 / core/dateUtils.ts).
+  basis: MetricBasis; basisLabel: string;
 };
 export type CategoryDrift = { category: string } & DriftSlice;
 export type FlexDriftData = Record<keyof FlexSummary, DriftSlice>;
@@ -304,6 +343,7 @@ function sliceFor(current: number, last: number, year: number, rolling: number[]
     current, lastPeriodDelta: current - last, lastYearDelta: current - year,
     avg12mDelta: current - avg12m, avg12m,
     median12m, medianDelta: current - median12m,
+    basis: 'calendar-12mo', basisLabel: BASIS_LABEL['calendar-12mo'],
   };
 }
 
@@ -543,6 +583,10 @@ export const SORT_ORDER_BY: Record<SortMode, string> = {
 export type TxRow = {
   id: string; date: string; name: string; display_name: string | null; merchant_name: string | null;
   amount: number; category: string; manual_category: string | null; ignored: number; tag_names: string | null;
+  // The bank's posting date, retained by setTransactionDate when a transaction
+  // is reattributed to another period; NULL unless `date` has been overridden.
+  // UI uses it to show "reattributed from X" and offer restore-to-posting-date.
+  original_date: string | null;
 };
 
 export function buildSearchRe(search: string): RegExp {
@@ -570,7 +614,7 @@ export async function getTransactions(filters: {
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   const result = await db.execute({
-    sql: `SELECT t.id, t.date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored,
+    sql: `SELECT t.id, t.date, t.original_date, t.name, t.display_name, t.merchant_name, t.amount, t.category, t.manual_category, t.ignored,
             (SELECT GROUP_CONCAT(tg2.name, ', ') FROM transaction_tags tt2 JOIN tags tg2 ON tg2.id = tt2.tag_id WHERE tt2.transaction_id = t.id) as tag_names
           FROM transactions t ${where}
           ORDER BY ${SORT_ORDER_BY[sort]}
@@ -602,17 +646,141 @@ export async function countSearchMatches(
   return { count: matches.length, expenses: matches.filter((r) => Number(r.amount) > 0).reduce((s, r) => s + Number(r.amount), 0) };
 }
 
-export type LinkedAccount = { id: string; name: string; nickname: string | null; owner: string | null; type: string; subtype: string | null; institution_name: string | null; mask: string | null; item_id: string | null; last_synced: string | null; apr: number | null; excluded: boolean };
+export type LinkedAccount = {
+  id: string; name: string; nickname: string | null; owner: string | null; type: string;
+  subtype: string | null; institution_name: string | null; mask: string | null; item_id: string | null;
+  // MAX(balance_history.date) — when this account's balance was last snapshotted.
+  // The only sync signal a manual/CSV account has, since those have no Plaid item.
+  last_synced: string | null;
+  apr: number | null; excluded: boolean;
+  // A freshly linked Plaid item with no accounts rows yet: it exists in plaid_items
+  // but its first sync hasn't run, so there is nothing real to render. Named
+  // awaitingFirstSync, not `pending` — `pending` means "Plaid pending transaction"
+  // everywhere else in this file.
+  awaitingFirstSync: boolean;
+  // plaid_items.last_synced_at (epoch ms) — when we last successfully talked to
+  // this institution. NULL for CSV/manual accounts, which have no item.
+  item_last_synced_at: number | null;
+};
 
 export async function getLinkedAccounts(): Promise<LinkedAccount[]> {
+  // Two queries rather than a UNION ALL: the shapes barely overlap and this
+  // function already maps rows, so concatenating in TS reads clearer.
+  const [result, bare] = await Promise.all([
+    db.execute(`
+      SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.mask, a.item_id, a.apr, a.excluded,
+        -- accounts.institution_name is only ever written by CSV import and the
+        -- demo seeder; the Plaid path records the name on plaid_items and never
+        -- copies it down, leaving every linked account's institution blank.
+        -- Reading through the join fixes that for existing rows with no
+        -- migration and no backfill, and CSV/manual accounts (no item) keep
+        -- their own value.
+        COALESCE(a.institution_name, pi.institution_name) as institution_name,
+        (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced,
+        pi.last_synced_at as item_last_synced_at
+      FROM accounts a
+      LEFT JOIN plaid_items pi ON pi.item_id = a.item_id
+      ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END, a.name
+    `),
+    // Items that have never completed a sync AND have no visible row. Both
+    // clauses are load-bearing:
+    //   last_synced_at IS NULL — written last in syncTransactions, so it means
+    //     "no sync ever finished". Without it, an item whose sync succeeded but
+    //     whose accountsGet returned zero accounts would read "awaiting first
+    //     sync" forever, and deleteAccount (which leaves plaid_items behind)
+    //     would resurrect a deleted item as a placeholder.
+    //   NOT EXISTS — self-clears the moment the first accountsGet upsert lands,
+    //     so no cleanup path is needed. It also keeps real rows from being
+    //     duplicated when accountsGet succeeded but the transaction upsert threw.
+    db.execute(`
+      SELECT pi.item_id, pi.institution_name
+      FROM plaid_items pi
+      WHERE pi.last_synced_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM accounts a WHERE a.item_id = pi.item_id)
+      ORDER BY pi.institution_name
+    `),
+  ]);
+
+  const accounts = (result.rows as unknown as (Omit<LinkedAccount, 'excluded' | 'awaitingFirstSync' | 'item_last_synced_at'> & { excluded: number; item_last_synced_at: number | null })[]).map((r) => ({
+    ...r,
+    excluded: toBool(r.excluded),
+    item_last_synced_at: r.item_last_synced_at === null ? null : Number(r.item_last_synced_at),
+    awaitingFirstSync: false,
+  }));
+
+  // Placeholders sort first — there are at most one or two and their whole
+  // purpose is to be noticed right after a link.
+  const placeholders: LinkedAccount[] = (bare.rows as unknown as { item_id: string; institution_name: string | null }[])
+    .map((r) => ({
+      id: r.item_id,   // distinct namespace from Plaid account_id; safe as a React key
+      name: r.institution_name ?? 'New institution',
+      nickname: null,
+      owner: null,
+      type: 'other',
+      subtype: null,
+      institution_name: r.institution_name,
+      mask: null,
+      item_id: r.item_id,
+      last_synced: null,
+      apr: null,
+      excluded: false,
+      awaitingFirstSync: true,
+      item_last_synced_at: null,
+    }));
+
+  return [...placeholders, ...accounts];
+}
+
+/**
+ * One row per Plaid connection, for the Links view.
+ *
+ * Deliberately item-shaped rather than account-shaped: the things this view
+ * exists to manage — the sync cursor, the history window, updating credentials,
+ * replacing a connection — are all properties of the item, not of the accounts
+ * hanging off it. getLinkedAccounts answers a different question and flattens
+ * the item away.
+ */
+export type LinkedItem = {
+  item_id: string;
+  institution_name: string | null;
+  // Epoch ms of the last sync that ran to completion, written last in
+  // syncTransactions. NULL means no sync has ever finished for this item.
+  last_synced_at: number | null;
+  // Locked in at link time and unchangeable afterwards — Plaid rejects a wider
+  // window on an item that already has Transactions. NULL predates the column,
+  // in which case Plaid's 90-day default applied.
+  days_requested: number | null;
+  account_count: number;
+  // Linked, but the first sync has not landed. Same two-clause rule as
+  // getLinkedAccounts uses for its placeholder rows, and load-bearing for the
+  // same reasons: last_synced_at alone would mislabel an item whose sync
+  // succeeded but returned no accounts, and the count alone would resurrect an
+  // item whose accounts were deleted (deleteAccount leaves plaid_items behind).
+  awaitingFirstSync: boolean;
+  // Whether a /transactions/sync cursor is stored. No cursor means the next
+  // sync replays the item's full history from the start.
+  hasCursor: boolean;
+};
+
+export async function getLinkedItems(): Promise<LinkedItem[]> {
   const result = await db.execute(`
-    SELECT a.id, a.name, a.nickname, a.owner, a.type, a.subtype, a.institution_name, a.mask, a.item_id, a.apr, a.excluded,
-      (SELECT MAX(date) FROM balance_history WHERE account_id = a.id) as last_synced
-    FROM accounts a
-    ORDER BY CASE a.type WHEN 'depository' THEN 0 WHEN 'investment' THEN 1 WHEN 'credit' THEN 2 ELSE 3 END, a.name
+    SELECT pi.item_id, pi.institution_name, pi.last_synced_at, pi.days_requested,
+           (SELECT COUNT(*) FROM accounts a WHERE a.item_id = pi.item_id) as account_count,
+           (SELECT COUNT(*) FROM sync_state s WHERE s.account_id = pi.item_id) as cursor_count
+    FROM plaid_items pi
+    ORDER BY pi.institution_name, pi.item_id
   `);
-  return (result.rows as unknown as (Omit<LinkedAccount, 'excluded'> & { excluded: number })[]).map((r) => ({
-    ...r, excluded: toBool(r.excluded),
+  return (result.rows as unknown as {
+    item_id: string; institution_name: string | null; last_synced_at: number | null;
+    days_requested: number | null; account_count: number; cursor_count: number;
+  }[]).map((r) => ({
+    item_id: r.item_id,
+    institution_name: r.institution_name,
+    last_synced_at: r.last_synced_at === null ? null : Number(r.last_synced_at),
+    days_requested: r.days_requested === null ? null : Number(r.days_requested),
+    account_count: Number(r.account_count),
+    awaitingFirstSync: r.last_synced_at === null && Number(r.account_count) === 0,
+    hasCursor: Number(r.cursor_count) > 0,
   }));
 }
 
@@ -662,11 +830,11 @@ export async function getNetWorthHistory(granularity: NetWorthGranularity = 'mon
         WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
         ELSE 0
       END) AS assets,
-      SUM(CASE WHEN a.type = 'credit' THEN pl.balance ELSE 0 END) AS liabilities,
+      SUM(CASE WHEN a.type IN ('credit', 'loan') THEN pl.balance ELSE 0 END) AS liabilities,
       SUM(CASE
         WHEN a.type IN ('depository', 'investment') THEN pl.balance
         WHEN a.type = 'other' AND pl.balance > 0 THEN pl.balance
-        WHEN a.type = 'credit' THEN -pl.balance
+        WHEN a.type IN ('credit', 'loan') THEN -pl.balance
         ELSE 0
       END) AS net_worth
     FROM period_last pl
@@ -697,7 +865,7 @@ export async function getAccountsWithBalances(): Promise<{ accounts: AccountBala
     db.execute(`
       SELECT bh.date,
         SUM(CASE WHEN a.type IN ('depository','investment') OR (a.type = 'other' AND bh.balance > 0) THEN bh.balance ELSE 0 END) as assets,
-        SUM(CASE WHEN a.type = 'credit' THEN bh.balance ELSE 0 END) as liabilities
+        SUM(CASE WHEN a.type IN ('credit','loan') THEN bh.balance ELSE 0 END) as liabilities
       FROM balance_history bh
       JOIN accounts a ON a.id = bh.account_id
       WHERE a.excluded = 0

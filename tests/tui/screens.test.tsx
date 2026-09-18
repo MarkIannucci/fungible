@@ -1,10 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import React from 'react';
 import { render, cleanup } from 'ink-testing-library';
+import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 
 vi.mock('../../core/db.js', async () => {
   const { makeTestDb } = await import('../helpers/makeTestDb.js');
   return { db: await makeTestDb() };
+});
+
+// tui/Accounts.tsx is the only TUI screen that spawns anything (scripts/link.ts),
+// so stubbing spawn lets the link panel be driven without a real subprocess.
+vi.mock('node:child_process', async (importActual) => {
+  const actual = await importActual<typeof import('node:child_process')>();
+  return { ...actual, spawn: vi.fn() };
 });
 
 import { db } from '../../core/db.js';
@@ -19,11 +28,17 @@ import { FilterPanel } from '../../tui/FilterPanel.js';
 import { NetWorth } from '../../tui/NetWorth.js';
 import { Tags } from '../../tui/Tags.js';
 import { Rules } from '../../tui/Rules.js';
-import { Accounts } from '../../tui/Accounts.js';
+import { Accounts, extractLinkUrl } from '../../tui/Accounts.js';
 import * as accountsApi from '../../core/accounts.js';
+import * as refreshApi from '../../core/transactions-refresh.js';
+import * as syncApi from '../../core/sync.js';
+import * as dedupApi from '../../core/dedup.js';
+import * as keyHealthApi from '../../core/key-health.js';
 import { Health } from '../../tui/Health.js';
 import { Settings } from '../../tui/Settings.js';
 import { RefreshProvider } from '../../tui/RefreshContext.js';
+import { SyncStatusProvider } from '../../tui/SyncStatusContext.js';
+import { setSyncResult, clearSyncFailures } from '../../core/sync-status.js';
 import { FilterProvider, useFilter } from '../../tui/FilterContext.js';
 import type { Filter } from '../../core/filters.js';
 import { TypingContext } from '../../tui/TypingContext.js';
@@ -39,10 +54,23 @@ vi.mock('../../core/profile.js', async (importActual) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Stand-in for the scripts/link.ts child: emit on .stdout/.stderr to drive the panel. */
+function fakeLinkProcess() {
+  return Object.assign(new EventEmitter(), {
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+  });
+}
+
 const ANSI_RE = /\x1b\[[0-9;]*[mGKHFABCDJ]/g;
 
 function frame(r: ReturnType<typeof render>): string {
   return (r.lastFrame() ?? '').replace(ANSI_RE, '');
+}
+
+/** Whitespace-collapsed frame — rows and panels wrap at 80 columns. */
+function flat(r: ReturnType<typeof render>): string {
+  return frame(r).replace(/\s+/g, ' ');
 }
 
 async function waitFor(assertion: () => void, timeout = 1000): Promise<void> {
@@ -74,7 +102,7 @@ const noop = () => {};
 beforeEach(async () => {
   vi.mocked(loadProfile).mockResolvedValue(null); // no household members unless a test sets one
   for (const tbl of ['transaction_tags', 'tag_rule_suppressions', 'transactions', 'accounts', 'categories', 'tags',
-                     'category_rules', 'name_rules', 'hidden_categories', 'balance_history']) {
+                     'category_rules', 'name_rules', 'hidden_categories', 'balance_history', 'settings']) {
     await db.execute(`DELETE FROM ${tbl}`);
   }
   await seedTuiData(db);
@@ -743,7 +771,8 @@ describe('Transactions', () => {
     r.stdin.write('\r');
     await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
     r.stdin.write('\x1b[B'); // name → category
-    r.stdin.write('\x1b[B'); // category → pattern
+    r.stdin.write('\x1b[B'); // category → date
+    r.stdin.write('\x1b[B'); // date → pattern
     await waitFor(() => expect(frame(r)).toContain('optional')); // Pattern field active (placeholder)
     for (const ch of 'Trader') r.stdin.write(ch);
     await waitFor(() => expect(frame(r)).toContain('transactions match'));
@@ -755,7 +784,8 @@ describe('Transactions', () => {
     r.stdin.write('\r');
     await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
     r.stdin.write('\x1b[B'); // name → category
-    r.stdin.write('\x1b[B'); // category → pattern
+    r.stdin.write('\x1b[B'); // category → date
+    r.stdin.write('\x1b[B'); // date → pattern
     r.stdin.write('\x1b[B'); // pattern → type
     await waitFor(() => expect(frame(r)).toContain('(unchanged)')); // name inactive = type field reached
     r.stdin.write('\x1b[C'); // → toggle name → regex
@@ -771,8 +801,10 @@ describe('Transactions', () => {
     r.stdin.write('\x1b[B'); // name → category
     await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
     r.stdin.write('\x1b[C'); // cycle Grocery → Income
+    await waitFor(() => expect(frame(r)).toContain('← Income  →'));
     // Navigate to Pattern and type a pattern
-    r.stdin.write('\x1b[B'); // category → pattern
+    r.stdin.write('\x1b[B'); // category → date
+    r.stdin.write('\x1b[B'); // date → pattern
     await waitFor(() => expect(frame(r)).toContain('optional'));
     for (const ch of 'Trader') r.stdin.write(ch);
     await waitFor(() => expect(frame(r)).toContain('transactions match'));
@@ -782,6 +814,129 @@ describe('Transactions', () => {
       expect(f).not.toContain('optional'); // panel closed
       expect(f).toContain('Saved:');
     });
+  });
+
+  it('edit panel shows a Date field prefilled with the transaction date', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      // Trader Joes' posting date, prefilled into the panel's Date field
+      expect(flat(r)).toContain('Date [ 2026-05-14 ]');
+    });
+  });
+
+  it('editing the Date field and Enter reattributes the transaction', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery')); // panel open
+    r.stdin.write('\x1b[B'); // name → category
+    r.stdin.write('\x1b[B'); // category → date
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)')); // date field active
+    // Clear the prefilled date and type a new one in April
+    for (let i = 0; i < 10; i++) r.stdin.write('\x7f'); // backspace ×10
+    await waitFor(() => expect(frame(r)).toContain('YYYY-MM-DD')); // field emptied → placeholder
+    for (const ch of '2026-04-30') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('2026-04-30'));
+    r.stdin.write('\r'); // save
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Date set to 2026-04-30');
+      // Row now sorts/reads under the reattributed date and out of the May window
+      expect(f).not.toContain('Trader Joes');
+    });
+  });
+
+  it('a malformed date shows an error and does not crash', async () => {
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('← Grocery'));
+    r.stdin.write('\x1b[B'); // name → category
+    r.stdin.write('\x1b[B'); // category → date
+    await waitFor(() => expect(frame(r)).toContain('(unchanged)'));
+    for (let i = 0; i < 10; i++) r.stdin.write('\x7f');
+    await waitFor(() => expect(frame(r)).toContain('YYYY-MM-DD'));
+    for (const ch of '2026-13') r.stdin.write(ch); // wrong shape — rejected before core
+    await waitFor(() => expect(frame(r)).toContain('2026-13'));
+    r.stdin.write('\r');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Invalid date');
+      expect(f).toContain('Trader Joes'); // still there, panel stayed put, no crash
+    });
+  });
+
+  it('marks a reattributed row and restores its posting date with [d]', async () => {
+    // Reattribute a May row's date to April, keeping its posting date.
+    await db.execute({
+      sql: 'UPDATE transactions SET original_date = ?, date = ? WHERE id = ?',
+      args: ['2026-04-28', '2026-05-14', 'tx-groc-2'],
+    });
+    const r = txns();
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    // Row carries the reattribution marker (asterisk flush against the date)
+    await waitFor(() => expect(frame(r)).toContain('2026-05-14*'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('posted 2026-04-28')); // edit panel context line
+    r.stdin.write('\x1b'); // Esc back to the list
+    await waitFor(() => expect(frame(r)).not.toContain('posted 2026-04-28'));
+    r.stdin.write('d'); // restore posting date
+    await waitFor(() => expect(frame(r)).toContain('Date restored to 2026-04-28'));
+    await waitFor(() => expect(frame(r)).not.toContain('2026-05-14*'));
+  });
+
+  // The tag panel titles itself with whatever row the cursor is on, so its
+  // applied-tag marks have to track that row too. Under a "lacks" filter the
+  // row leaves the list the moment it's tagged and the next one slides into
+  // the same index — the marks must re-read for the new row instead of still
+  // showing the tag that was just applied to the old one.
+  const LACKS_BOTH = { tags: [{ name: 'travel', mode: 'lacks' as const }, { name: 'work', mode: 'lacks' as const }] };
+
+  it('tag panel re-reads the tags when tagging drops the row out of a lacks filter', async () => {
+    const r = render(
+      <W>
+        <FilterProvider initial={LACKS_BOTH}>
+          <Transactions onNavigate={noop} showHints={false} initialFilter={MAY_DATE_FILTER} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes')); // newest May row
+    r.stdin.write('g');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Space/Enter toggle'); // panel open
+      expect(f).toContain('○ travel');
+    });
+    r.stdin.write(' '); // apply 'travel' → the row no longer satisfies the filter
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).not.toContain('Trader Joes'); // dropped from the list and the panel title
+      expect(f).toContain('Amazon');          // next row slid into the cursor
+      expect(f).toContain('○ travel');        // ...and it does not carry the tag
+    });
+  });
+
+  it('tag panel closes when tagging empties the list', async () => {
+    const r = render(
+      <W>
+        <FilterProvider initial={LACKS_BOTH}>
+          <Transactions onNavigate={noop} showHints={false} initialFilter={{ from: '2026-05-14', to: '2026-05-14' }} />
+        </FilterProvider>
+      </W>,
+    );
+    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
+    r.stdin.write('g');
+    await waitFor(() => expect(frame(r)).toContain('Space/Enter toggle'));
+    r.stdin.write(' '); // the only row leaves the filter
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('0 transactions');
+      expect(f).not.toContain('Space/Enter toggle'); // panel gone
+    });
+    r.stdin.write('/'); // ...and list-mode keys work again rather than typing into the panel
+    await waitFor(() => expect(frame(r)).toContain('Esc cancel'));
   });
 });
 
@@ -1127,6 +1282,71 @@ describe('Settings', () => {
       expect(frame(r)).not.toContain('▊');
     });
   });
+
+  it('renders an APPEARANCE section with a Theme row defaulting to Default', () => {
+    const r = settings();
+    const f = frame(r);
+    expect(f).toContain('APPEARANCE');
+    expect(f).toContain('Theme');
+    expect(f).toContain('Default');
+  });
+
+  it('left/right on the Theme row cycles themes and shows the restart hint', async () => {
+    const r = settings();
+    // self-name(0) -> self-year(1) -> add-spouse(2) -> add-child(3) -> theme(4)
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1B[B');
+    await waitFor(() => expect(frame(r)).toContain('restart to apply'));
+    r.stdin.write('\x1B[C'); // right arrow
+    await waitFor(() => expect(frame(r)).toContain('High Contrast'));
+    r.stdin.write('\x1B[D'); // left arrow back
+    await waitFor(() => expect(frame(r)).toContain('Default'));
+  });
+
+  it('persists the theme choice and reloads it on remount', async () => {
+    const r = settings();
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1B[B');
+    await waitFor(() => expect(frame(r)).toContain('restart to apply'));
+    r.stdin.write('\x1B[C'); // -> high-contrast
+    await waitFor(() => expect(frame(r)).toContain('High Contrast'));
+    cleanup();
+
+    const r2 = settings();
+    await waitFor(() => expect(frame(r2)).toContain('High Contrast'));
+  });
+
+  // Issue #179: the ~/.fungible/key file decrypts linked Plaid tokens, so it's
+  // opt-in-only in backups (bundling it with the encrypted data it protects
+  // defeats the point for anyone whose backup folder leaves the machine).
+  it('renders a BACKUP section with the include-key toggle defaulting to Off', () => {
+    const r = settings();
+    const f = frame(r);
+    expect(f).toContain('BACKUP');
+    expect(f).toContain('Include key');
+    expect(f).toContain('Off');
+  });
+
+  it('left/right on the include-key row toggles it On and shows the toggle hint', async () => {
+    const r = settings();
+    // self-name(0) -> self-year(1) -> add-spouse(2) -> add-child(3) -> theme(4) -> backup-include-key(5)
+    for (let i = 0; i < 5; i++) r.stdin.write('\x1B[B');
+    await waitFor(() => expect(frame(r)).toContain('←→ toggle'));
+    r.stdin.write('\x1B[C'); // right arrow
+    await waitFor(() => expect(frame(r)).toContain('On'));
+    r.stdin.write('\x1B[D'); // left arrow back
+    await waitFor(() => expect(frame(r)).toContain('Off'));
+  });
+
+  it('persists the include-key toggle and reloads it on remount', async () => {
+    const r = settings();
+    for (let i = 0; i < 5; i++) r.stdin.write('\x1B[B');
+    await waitFor(() => expect(frame(r)).toContain('←→ toggle'));
+    r.stdin.write('\x1B[C'); // -> On
+    await waitFor(() => expect(frame(r)).toContain('On'));
+    cleanup();
+
+    const r2 = settings();
+    await waitFor(() => expect(frame(r2)).toContain('On'));
+  });
 });
 
 // ── Net Worth ─────────────────────────────────────────────────────────────────
@@ -1305,8 +1525,8 @@ describe('Rules', () => {
     const r = rules();
     const f = frame(r);
     expect(f).toContain('fungible');
-    expect(f).toContain('Category Rules');
-    expect(f).toContain('Name Rules');
+    expect(f).toContain('Rules');
+    expect(f).toContain('Tag Rules');
     expect(f).toContain('Categories');
   });
 
@@ -1318,23 +1538,11 @@ describe('Rules', () => {
     });
   });
 
-  it('Tab cycles to Name Rules section', async () => {
-    const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t');
-    await waitFor(() => {
-      // Name Rules section is now active — its label should be highlighted (non-dimmed)
-      // We can check we're in name rules by pressing Tab again to get to Categories
-      expect(frame(r)).toContain('Name Rules');
-    });
-  });
-
   it('Tab cycles to Categories section showing seeded categories', async () => {
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('\t');
-    r.stdin.write('\t');
-    r.stdin.write('\t'); // rules → names → tags → categories
+    r.stdin.write('\t'); // rules → tags → categories
     await waitFor(() => {
       const f = frame(r);
       expect(f).toContain('Grocery');
@@ -1344,9 +1552,8 @@ describe('Rules', () => {
 
   it('Tab cycles to Tag Rules section', async () => {
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t');
-    r.stdin.write('\t'); // rules → names → tags
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('\t'); // rules → tags
     await waitFor(() => expect(frame(r)).toContain('No tag rules yet'));
     r.stdin.write('a');
     await waitFor(() => {
@@ -1357,30 +1564,117 @@ describe('Rules', () => {
     });
   });
 
-  it('[a] opens new category rule form', async () => {
+  it('[a] opens the new rule form with both a category and a display name field', async () => {
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Whole Foods')); // rules loaded
     r.stdin.write('a');
     await waitFor(() => {
       const f = frame(r);
-      expect(f).toContain('New Category Rule');
+      expect(f).toContain('New Rule');
       expect(f).toContain('Pattern');
+      expect(f).toContain('Category');
+      expect(f).toContain('Display name');
     });
   });
 
-  it('typing pattern and Enter in rule-form saves the rule', async () => {
+  it('typing a pattern, Enter to Category, picking one, then Enter saves the rule', async () => {
+    // A new rule starts on "— none —", so the first Enter moves the cursor to
+    // Category instead of saving; the second one (with a category picked) saves.
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('a');
-    await waitFor(() => expect(frame(r)).toContain('New Category Rule'));
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
     for (const ch of 'Starbucks') r.stdin.write(ch);
     await waitFor(() => expect(frame(r)).toContain('Starbucks'));
     r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('New Rule')); // still open, nothing saved
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\x1b[C'); // → only moves the picker if the cursor landed on Category
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\r');
     await waitFor(() => {
       const f = frame(r);
-      expect(f).not.toContain('New Category Rule');
+      expect(f).not.toContain('New Rule');
       expect(f).toContain('Starbucks');
     });
+    const cats = await db.execute("SELECT category FROM category_rules WHERE pattern = 'Starbucks'");
+    expect(cats.rows).toHaveLength(1);
+    expect((cats.rows[0] as unknown as { category: string }).category).toBe('Bills & Utilities');
+  });
+
+  it('a new rule defaults to no category and Enter on it writes nothing', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('a');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('New Rule');
+      expect(f).toContain('— none —');            // no category pre-selected
+      expect(f).not.toContain('Bills & Utilities'); // ...not the first-sorting one
+    });
+    for (const ch of 'Starbucks') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('Starbucks'));
+    r.stdin.write('\r');
+    // Enter guided instead of saving: the form is still open and nothing was written.
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
+    const cats = await db.execute("SELECT id FROM category_rules WHERE pattern = 'Starbucks'");
+    const names = await db.execute("SELECT id FROM name_rules WHERE pattern = 'Starbucks'");
+    expect(cats.rows).toHaveLength(0);
+    expect(names.rows).toHaveLength(0);
+  });
+
+  it('Enter with an empty pattern leaves the cursor where it is', async () => {
+    // Nothing to guide toward, so Enter stays a no-op: ← must still do nothing,
+    // which it only does while the cursor sits on the Pattern field.
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
+    r.stdin.write('\r');
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\x1b[C'); // would advance the picker if Enter had jumped to Category
+    await new Promise((res) => setTimeout(res, 50));
+    const f = frame(r);
+    expect(f).toContain('New Rule');
+    expect(f).toContain('— none —');
+    expect(f).not.toContain('Bills & Utilities');
+  });
+
+  it('"— none —" says it removes the rule only when editing one that has a category', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    // New rule: nothing to remove, so the plain label.
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
+    expect(frame(r)).not.toContain('removes rule');
+    r.stdin.write('\x1b'); // Esc back to the list
+    await waitFor(() => expect(frame(r)).not.toContain('New Rule'));
+
+    // Editing the seeded category rule: cursoring to "none" means deleting it.
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Edit Rule'));
+    expect(frame(r)).toContain('Grocery');
+    expect(frame(r)).not.toContain('removes rule'); // a category is still selected
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1b[B'); // → Category
+    await new Promise((res) => setTimeout(res, 10));
+    for (let i = 0; i < 3; i++) r.stdin.write('\x1b[D'); // ← past Dining, Bills & Utilities, to none
+    await waitFor(() => expect(frame(r)).toContain('— none (removes rule) —'));
+  });
+
+  it('a name-only rule shows the plain "— none —" label, with no removal warning', async () => {
+    await db.execute('DELETE FROM category_rules');
+    await db.execute(
+      "INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'sq *', 'Square')",
+    );
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Square'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).toContain('Edit Rule'));
+    const f = frame(r);
+    expect(f).toContain('— none —');
+    expect(f).not.toContain('removes rule');
   });
 
   it('Enter on existing rule opens edit form pre-filled with its pattern', async () => {
@@ -1389,7 +1683,7 @@ describe('Rules', () => {
     r.stdin.write('\r');
     await waitFor(() => {
       const f = frame(r);
-      expect(f).toContain('Edit Category Rule');
+      expect(f).toContain('Edit Rule');
       expect(f).toContain('Whole Foods');
     });
   });
@@ -1449,30 +1743,51 @@ describe('Rules', () => {
     });
   });
 
-  it('[a] in Name Rules section opens new name rule form', async () => {
+  it('a category rule and a name rule with the same conditions render as one row', async () => {
+    // Seeded category rule: name/'Whole Foods' → Grocery. Same conditions, so
+    // the two collapse into a single row carrying both.
+    await db.execute(
+      "INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'Whole Foods', 'WF Market')",
+    );
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t'); // switch to Name Rules
-    await waitFor(() => expect(frame(r)).toContain('No name rules'));
-    r.stdin.write('a');
     await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('New Name Rule');
-      expect(f).toContain('Pattern');
-      expect(f).toContain('Replace with');
+      const line = frame(r).split('\n').find((l) => l.includes('Whole Foods'));
+      expect(line).toBeDefined();
+      expect(line).toContain('Grocery');   // category cell
+      expect(line).toContain('WF Market'); // display-name cell
+    });
+    // One row, not two.
+    await waitFor(() => expect(frame(r)).toContain('1 rules'));
+  });
+
+  it('a name rule with no category rule shows as a row with an empty category', async () => {
+    await db.execute('DELETE FROM category_rules');
+    await db.execute(
+      "INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'sq *', 'Square')",
+    );
+    const r = rules();
+    await waitFor(() => {
+      const line = frame(r).split('\n').find((l) => l.includes('sq *'));
+      expect(line).toBeDefined();
+      expect(line).toContain('Square');
     });
   });
 
-  it('typing pattern + replacement in name-rule-form and Enter saves the rule', async () => {
+  it('one save writes both a category rule and a name rule', async () => {
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t');
-    await waitFor(() => expect(frame(r)).toContain('No name rules'));
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('a');
-    await waitFor(() => expect(frame(r)).toContain('New Name Rule'));
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
     for (const ch of 'amazon') r.stdin.write(ch);
     await waitFor(() => expect(frame(r)).toContain('amazon'));
-    for (let i = 0; i < 4; i++) r.stdin.write('\x1b[B'); // navigate to replacement
+    for (let i = 0; i < 4; i++) r.stdin.write('\x1b[B'); // pattern → category
+    // Consecutive writes coalesce into one chunk, and a chunk mixing two
+    // different sequences is read as a single key — so the → gets its own.
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\x1b[C'); // → off "— none —" onto the first category
+    await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
+    await new Promise((res) => setTimeout(res, 10));
+    r.stdin.write('\x1b[B'); // → display name
     // Wait for React to commit the field navigation before typing (avoids stale closure)
     await waitFor(() => expect(frame(r)).toContain('display name'));
     for (const ch of 'Amazon') r.stdin.write(ch);
@@ -1480,16 +1795,60 @@ describe('Rules', () => {
     r.stdin.write('\r');
     await waitFor(() => {
       const f = frame(r);
-      expect(f).not.toContain('New Name Rule');
+      expect(f).not.toContain('New Rule');
       expect(f).toContain('amazon');
       expect(f).toContain('Amazon');
     });
+    const cats = await db.execute("SELECT category FROM category_rules WHERE pattern = 'amazon'");
+    const names = await db.execute("SELECT replacement FROM name_rules WHERE pattern = 'amazon'");
+    expect(cats.rows).toHaveLength(1);
+    expect(names.rows).toHaveLength(1);
+    expect((names.rows[0] as unknown as { replacement: string }).replacement).toBe('Amazon');
+  });
+
+  it('leaving the category on "— none —" saves a name rule only', async () => {
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
+    r.stdin.write('a');
+    await waitFor(() => expect(frame(r)).toContain('New Rule'));
+    for (const ch of 'amazon') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('amazon'));
+    // The category is already on "— none —" (a new rule's default), so this
+    // walks straight past it to the display name.
+    await waitFor(() => expect(frame(r)).toContain('— none —'));
+    for (let i = 0; i < 5; i++) r.stdin.write('\x1b[B'); // pattern → display name
+    await waitFor(() => expect(frame(r)).toContain('display name'));
+    for (const ch of 'Amazon') r.stdin.write(ch);
+    await waitFor(() => expect(frame(r)).toContain('Amazon'));
+    r.stdin.write('\r');
+    await waitFor(() => expect(frame(r)).not.toContain('New Rule'));
+    const cats = await db.execute("SELECT category FROM category_rules WHERE pattern = 'amazon'");
+    const names = await db.execute("SELECT replacement FROM name_rules WHERE pattern = 'amazon'");
+    expect(cats.rows).toHaveLength(0);
+    expect(names.rows).toHaveLength(1);
+  });
+
+  it('[x] on a combined row deletes both underlying rules', async () => {
+    await db.execute(
+      "INSERT INTO name_rules (match_type, pattern, replacement) VALUES ('name', 'Whole Foods', 'WF Market')",
+    );
+    const r = rules();
+    await waitFor(() => expect(frame(r)).toContain('WF Market'));
+    r.stdin.write('x');
+    await waitFor(() => {
+      const f = frame(r);
+      expect(f).toContain('Rule deleted');
+      expect(f).toContain('No rules yet');
+    });
+    const cats = await db.execute("SELECT id FROM category_rules WHERE pattern = 'Whole Foods'");
+    const names = await db.execute("SELECT id FROM name_rules WHERE pattern = 'Whole Foods'");
+    expect(cats.rows).toHaveLength(0);
+    expect(names.rows).toHaveLength(0);
   });
 
   it('Enter in categories section opens the edit panel', async () => {
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('\t');
     r.stdin.write('\t'); // categories section
     await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
@@ -1504,8 +1863,7 @@ describe('Rules', () => {
 
   it('Esc in categories edit panel closes without navigating away', async () => {
     const r = rules();
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
-    r.stdin.write('\t');
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('\t');
     r.stdin.write('\t');
     await waitFor(() => expect(frame(r)).toContain('Bills & Utilities'));
@@ -1524,7 +1882,7 @@ describe('Rules', () => {
     const r = render(
       <W><Rules onNavigate={onNavigate} showHints={false} /></W>,
     );
-    await waitFor(() => expect(frame(r)).toContain('Category Rules'));
+    await waitFor(() => expect(frame(r)).toContain('Whole Foods'));
     r.stdin.write('1');
     expect(onNavigate).toHaveBeenCalledWith('dashboard');
   });
@@ -1539,6 +1897,29 @@ describe('Accounts', () => {
         <Accounts onNavigate={noop} showHints={false} {...overrides} />
       </W>,
     );
+  }
+
+  /**
+   * Tab from Accounts to a named view, so tests don't hard-code how many tabs
+   * sit between them. Asserting on view-specific content matters here: every
+   * tab's label is in the header on every view, so waiting for "Add Data" would
+   * pass without having navigated anywhere.
+   */
+  const VIEW_MARKER = {
+    links: 'connection',                 // Links panel footer, or its empty state
+    'add-data': '[l] Link a bank account',
+    dupes: 'duplicate',                  // "No duplicate candidates found." / "Checking for duplicates…"
+  } as const;
+
+  async function tabTo(r: ReturnType<typeof render>, view: keyof typeof VIEW_MARKER) {
+    const order = ['links', 'add-data', 'dupes'] as const;
+    for (let i = 0; i <= order.indexOf(view); i++) {
+      r.stdin.write('\t');
+      // Consecutive writes coalesce into one chunk, which ink reads as a single
+      // Tab — the gap keeps each press its own input event.
+      await new Promise((res) => setTimeout(res, 10));
+    }
+    await waitFor(() => expect(flat(r)).toContain(VIEW_MARKER[view]));
   }
 
   it('renders app title and Accounts tab', () => {
@@ -1716,6 +2097,749 @@ describe('Accounts', () => {
     await waitFor(() => expect(frame(r)).toContain('Failed to update'));
     expect(frame(r)).not.toContain('Updated Test Checking');
   });
+
+  // The link URL is printed once by scripts/link.ts and then buried by later
+  // status lines ("Waiting for you to connect…"), which share the single
+  // linkMsg slot. It has to be captured from the chunk and pinned separately —
+  // on Linux there is no `open`, so it is the only way into the Plaid flow.
+  describe('link URL capture', () => {
+    it('extracts the URL from the line link.ts prints', () => {
+      expect(extractLinkUrl('Opening http://localhost:4747 …')).toBe('http://localhost:4747');
+    });
+
+    it('finds the URL anywhere in a multi-line chunk, not just the last line', () => {
+      const chunk = 'Opening http://localhost:4747 …\nWaiting for you to connect in the browser…\n';
+      // The last line is what becomes linkMsg, so a last-line-only scan would miss it.
+      expect(chunk.trim().split('\n').pop()).not.toContain('localhost');
+      expect(extractLinkUrl(chunk)).toBe('http://localhost:4747');
+    });
+
+    it('returns null for status lines that carry no URL', () => {
+      expect(extractLinkUrl('Saving institution…')).toBeNull();
+      expect(extractLinkUrl('Creating Plaid link token…')).toBeNull();
+    });
+
+    it('reads whatever port link.ts is using rather than assuming one', () => {
+      expect(extractLinkUrl('Opening http://localhost:8080 …')).toBe('http://localhost:8080');
+    });
+
+    // The regression the user hit: the URL scrolled away behind the next status
+    // line, leaving nothing to click while the ticker counted up.
+    it('keeps the URL on screen after later status lines replace the message', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      await tabTo(r, 'add-data');
+      r.stdin.write('l');                                   // → history-window prompt
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');                                  // → starts the link
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.stdout.emit('data', Buffer.from('Opening http://localhost:4747 …\n'));
+      await waitFor(() => expect(flat(r)).toContain('http://localhost:4747'));
+
+      // This line takes over linkMsg — the URL must survive it.
+      proc.stdout.emit('data', Buffer.from('Waiting for you to connect in the browser…\n'));
+      await waitFor(() => expect(flat(r)).toContain('Waiting for you to connect'));
+      expect(flat(r)).toContain('http://localhost:4747');
+
+      // Still there several status lines later.
+      proc.stdout.emit('data', Buffer.from('Account link received from Chase — exchanging token…\n'));
+      await waitFor(() => expect(flat(r)).toContain('exchanging token'));
+      expect(flat(r)).toContain('http://localhost:4747');
+    });
+
+    // Same defect shape: the generic exit-code line used to bury the stderr
+    // reason, so a crash reported only that it happened, never why.
+    it('keeps the stderr reason instead of replacing it with the exit code', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      await tabTo(r, 'add-data');
+      r.stdin.write('l');
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.stderr.emit('data', Buffer.from('Error: listen EADDRINUSE: address already in use 127.0.0.1:4747\n'));
+      await waitFor(() => expect(flat(r)).toContain('EADDRINUSE'));
+      proc.emit('close', 1);
+
+      await waitFor(() => expect(flat(r)).toContain('Press Enter to return.'));
+      expect(flat(r)).toContain('EADDRINUSE');
+      expect(flat(r)).not.toContain('Process exited with code 1');
+    });
+
+    // The post-link sync runs while the link panel is still on screen. It used
+    // to render only linkMsg, so every sync step was invisible and the elapsed
+    // counter sat next to the finished link message — indistinguishable from a
+    // link that had stalled.
+    it('shows sync progress on the link panel after the link completes', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(async (_f, _ids, onProgress) => {
+        onProgress?.('item-x', { phase: 'transactions', page: 1, fetched: 4321 });
+        return new Promise(() => []) as never;
+      });
+      // A placeholder row, so the close handler finds an item to sync.
+      await db.execute({
+        sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES (?, ?, ?)',
+        args: ['item-x', 'tok', 'Progress Bank'],
+      });
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      await tabTo(r, 'add-data');
+      r.stdin.write('l');
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.emit('close', 0);
+      await waitFor(() => expect(flat(r)).toContain('Bank connected!'));
+      // Still on the link panel — the sync step must be visible from here.
+      await waitFor(() => expect(flat(r)).toContain('Fetching transactions… 4,321 so far'));
+    });
+
+    it('still reports a bare exit code when the child said nothing on stderr', async () => {
+      const proc = fakeLinkProcess();
+      vi.mocked(spawn).mockReturnValue(proc as never);
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      await tabTo(r, 'add-data');
+      r.stdin.write('l');
+      await waitFor(() => expect(flat(r)).toContain('days'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Link Bank Account'));
+
+      proc.emit('close', 1);
+      await waitFor(() => expect(flat(r)).toContain('Process exited with code 1'));
+    });
+  });
+
+  // The dupe scan runs detached from loadAccounts so it can't delay the
+  // post-link sync. That means the Dupes view can be opened mid-scan, and it
+  // must not report a clean result it doesn't have yet.
+  describe('dupe scan in flight', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('reports the scan as running instead of claiming no duplicates', async () => {
+      vi.spyOn(dedupApi, 'getCsvPlaidDupeCandidates').mockImplementation(() => new Promise(() => {}));
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      await tabTo(r, 'dupes');
+      await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
+      expect(flat(r)).not.toContain('No duplicate candidates found.');
+    });
+
+    it('reports the clean result once the scan finishes', async () => {
+      let finish: (v: never[]) => void = () => {};
+      vi.spyOn(dedupApi, 'getCsvPlaidDupeCandidates')
+        .mockImplementation(() => new Promise((res) => { finish = res as never; }));
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Test Checking'));
+      await tabTo(r, 'dupes');
+      await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
+
+      finish([]);
+      await waitFor(() => expect(flat(r)).toContain('No duplicate candidates found.'));
+    });
+  });
+
+  // ── Sync state on the accounts list ───────────────────────────────────────
+  //
+  // Each case owns the whole list (the seeded accounts are cleared) so a frame
+  // assertion is unambiguous about which row it's reading. Frames are whitespace
+  // collapsed because a row can wrap at 80 columns.
+  describe('sync state', () => {
+    beforeEach(async () => {
+      await db.execute('DELETE FROM accounts');
+      await db.execute('DELETE FROM balance_history');
+      await db.execute('DELETE FROM plaid_items');
+      clearSyncFailures();
+    });
+    afterEach(() => clearSyncFailures());
+
+    // The Accounts screen reads failures through SyncStatusProvider; W omits it,
+    // so the badge cases need their own wrapper.
+    function accountsWithSyncStatus() {
+      return render(
+        <W>
+          <SyncStatusProvider>
+            <Accounts onNavigate={noop} showHints={false} />
+          </SyncStatusProvider>
+        </W>,
+      );
+    }
+
+    const addItem = (itemId: string, institution: string | null, lastSyncedAt: number | null) =>
+      db.execute({
+        sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
+        args: [itemId, 'tok', institution, lastSyncedAt],
+      });
+
+    it('renders a placeholder row for a linked but unsynced institution', async () => {
+      await addItem('item-new', 'Capital One', null);
+      const r = accounts();
+      await waitFor(() => {
+        const f = flat(r);
+        expect(f).toContain('Capital One');
+        expect(f).toContain('◷ awaiting first sync');
+      });
+    });
+
+    // The whole point of the placeholder: a fresh link is never met with
+    // "nothing here", which is what nearly caused a duplicate link attempt.
+    it('does not show the empty state when only a placeholder exists', async () => {
+      await addItem('item-new', 'Capital One', null);
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Capital One'));
+      expect(flat(r)).not.toContain('No accounts linked yet.');
+    });
+
+    it('a failing item outranks the awaiting-first-sync badge', async () => {
+      await addItem('item-new', 'Capital One', null);
+      setSyncResult([{ itemId: 'item-new', added: 0, modified: 0, removed: 0, dupes: 0, skipped: false, error: 'ITEM_LOGIN_REQUIRED' }]);
+      const r = accountsWithSyncStatus();
+      await waitFor(() => expect(flat(r)).toContain('⚠ sync failed'));
+      // The footer still names the institution as awaiting a first sync — it is.
+      // Only the row badge is under test, so match the glyph, not the phrase.
+      expect(flat(r)).not.toContain('◷ awaiting first sync');
+    });
+
+    it('Enter on a placeholder refuses to open the edit panel and says why', async () => {
+      await addItem('item-new', 'Capital One', null);
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('◷ awaiting first sync'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Not synced yet'));
+      expect(flat(r)).not.toContain('Edit:');
+    });
+
+    it('counts placeholders separately from accounts in the footer', async () => {
+      const ts = Date.now();
+      await addItem('item-synced', 'Chase', ts);
+      await addItem('item-new', 'Capital One', null);
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES ('acct-chase', 'Chase Checking', 'depository', 'checking', 'item-synced')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('1 account · 1 institution awaiting first sync'));
+    });
+
+    // Defect 4, end to end: sync writes a balance row only when
+    // balances.current is non-null, so this account has no balance_history at
+    // all. It used to read "not synced" forever despite its institution syncing
+    // fine — it must report the item's sync time instead.
+    it('reports the item sync time for a synced account with no balance snapshot', async () => {
+      await addItem('item-synced', 'Chase', Date.now() - 5 * 60_000);
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES ('acct-nobal', 'No Balance', 'depository', 'checking', 'item-synced')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('No Balance'));
+      expect(flat(r)).toContain('synced 5 min ago');
+      expect(flat(r)).not.toContain('not synced');
+    });
+
+    // A long sync must show it is still alive. Without this the label is frozen
+    // for the whole run and there's no way to tell working from hung — which is
+    // what makes people kill the terminal mid-link.
+    it('ticks elapsed seconds while a sync is in flight', async () => {
+      // Hold syncAll pending so the syncing state persists long enough to observe.
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(() => new Promise(() => {}));
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('No accounts linked yet.'));
+      r.stdin.write('s');
+      await waitFor(() => expect(flat(r)).toContain('Syncing…'));
+      // Suppressed below 2s, then counts up.
+      await waitFor(() => expect(flat(r)).toMatch(/Syncing…\s+[2-9]\d*s/), 6000);
+    });
+
+    // The step name has to actually reach the screen, not just be emitted by
+    // core — this is the whole point of threading onProgress into the TUI.
+    it('renders the current sync step as the sync reports it', async () => {
+      vi.spyOn(syncApi, 'syncAll').mockImplementation(async (_force, _ids, onProgress) => {
+        onProgress?.('item-x', { phase: 'transactions', page: 1, fetched: 1234 });
+        await new Promise((res) => setTimeout(res, 40));
+        onProgress?.('item-x', { phase: 'dedup' });
+        return new Promise(() => []) as never;   // stay pending on the last step
+      });
+
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('No accounts linked yet.'));
+      r.stdin.write('s');
+      await waitFor(() => expect(flat(r)).toContain('Fetching transactions… 1,234 so far'));
+      await waitFor(() => expect(flat(r)).toContain('Checking for duplicates…'));
+    });
+
+    // You can't tell two same-named accounts at different banks apart in the
+    // edit panel without this. The account row's own institution_name is NULL
+    // for everything Plaid links, so the name has to come from the item.
+    it('names the institution in the edit panel, inherited from the item', async () => {
+      await addItem('item-chase', 'Chase', Date.now());
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, mask, item_id) VALUES ('acct-plaid', 'Plaid Checking', 'depository', 'checking', '0000', 'item-chase')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('Plaid Checking'));
+      r.stdin.write('\r');
+      await waitFor(() => expect(flat(r)).toContain('Edit: Plaid Checking'));
+      expect(flat(r)).toContain('Chase');
+    });
+
+    // A manual account has no Plaid item, so its balance-snapshot date is the
+    // only sync signal it has — the fallback branch must keep working.
+    it('a manual account still renders its balance-snapshot date', async () => {
+      await db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype) VALUES ('manual-house', 'House', 'other', null)`,
+        args: [],
+      });
+      await db.execute({
+        sql: `INSERT INTO balance_history (account_id, balance, date) VALUES ('manual-house', 500000, '2026-06-12')`,
+        args: [],
+      });
+      const r = accounts();
+      await waitFor(() => expect(flat(r)).toContain('House'));
+      expect(flat(r)).toContain('synced Jun 12');
+    });
+  });
+
+  // ── Links tab ──────────────────────────────────────────────────────────────
+  // Connection-level view: one row per Plaid item, not per account. The actions
+  // that belong to an item (updating its credentials now, replacing a connection
+  // later) live here rather than on an account row, where they implied a scope
+  // they never had.
+  describe('links tab', () => {
+    beforeEach(async () => {
+      await db.execute('DELETE FROM accounts');
+      await db.execute('DELETE FROM plaid_items');
+      await db.execute('DELETE FROM sync_state');
+    });
+
+    const addItem = (itemId: string, institution: string | null, lastSyncedAt: number | null) =>
+      db.execute({
+        sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
+        args: [itemId, 'tok', institution, lastSyncedAt],
+      });
+
+    const addAccount = (id: string, itemId: string) =>
+      db.execute({
+        sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES (?, ?, 'depository', 'checking', ?)`,
+        args: [id, id, itemId],
+      });
+
+    it('lists one row per connection, with its account count', async () => {
+      await addItem('item-chase', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-chase');
+      await addAccount('acct-2', 'item-chase');
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      const f = flat(r);
+      // Two accounts, one row — the whole point of the view.
+      expect(f).toContain('Chase');
+      expect(f).toContain('2 accounts');
+      expect(f).toContain('1 connection');
+    });
+
+    it('shows the history window, and names the default when none was recorded', async () => {
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      // days_requested is NULL here, which means Plaid's 90-day default applied.
+      expect(flat(r)).toContain('90d (default)');
+    });
+
+    it('flags a connection awaiting its first sync', async () => {
+      await addItem('item-new', 'Capital One', null);
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      expect(flat(r)).toContain('awaiting first sync');
+    });
+
+    it('flags a connection with no stored cursor', async () => {
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      expect(flat(r)).toContain('sync cursor cleared');
+    });
+
+    it('drops the flag once a cursor is stored', async () => {
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+      await db.execute({ sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)', args: ['item-a', 'cur'] });
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      expect(flat(r)).not.toContain('sync cursor cleared');
+    });
+
+    // Pressing [u] spawns the Plaid subprocess, so the behaviour it drives is
+    // covered in tests/tui/accounts-update-link.test.tsx, which mocks the spawn.
+    it('offers [u] update link on a connection row', async () => {
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+
+      const r = accounts();
+      await tabTo(r, 'links');
+      expect(flat(r)).toContain('[u] update link');
+    });
+
+    it('empty state points at Add Data', async () => {
+      const r = accounts();
+      await tabTo(r, 'links');
+      expect(flat(r)).toContain('No bank connections yet.');
+    });
+
+    it('the link action is no longer offered from an account row', async () => {
+      await addItem('item-a', 'Chase', Date.now());
+      await addAccount('acct-1', 'item-a');
+
+      const r = accounts({ showHints: true });
+      await waitFor(() => expect(flat(r)).toContain('acct-1'));
+      // It moved to the Links tab; the accounts hint must not still advertise it.
+      expect(flat(r)).not.toContain('update link');
+      expect(flat(r)).not.toContain('repair link');
+    });
+
+    // ── Refresh ([r]) ─────────────────────────────────────────────────────────
+    // Plaid bills per /transactions/refresh call, so the confirmation gate is as
+    // much a part of the feature as the keypress. [r] was "repair link" until
+    // update mode renamed it to [u], which is a second reason nothing may fire
+    // on the bare keypress.
+    describe('refresh ([r])', () => {
+      /** Puts the cursor on a connection row with the refresh action available. */
+      async function linksWithItem(days: number | null = null) {
+        await db.execute({
+          sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at, days_requested) VALUES (?, ?, ?, ?, ?)',
+          args: ['item-a', 'tok', 'Chase', Date.now(), days],
+        });
+        await addAccount('acct-1', 'item-a');
+        await addAccount('acct-2', 'item-a');
+      }
+
+      it('advertises [r] on a connection row', async () => {
+        await linksWithItem();
+        const r = accounts();
+        await tabTo(r, 'links');
+        expect(flat(r)).toContain('[r] refresh');
+      });
+
+      it('asks for confirmation and says Plaid charges before doing anything', async () => {
+        await linksWithItem();
+        const spy = vi.spyOn(refreshApi, 'refreshTransactions');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        // Item-scoped, and the panel says so rather than implying one account.
+        expect(flat(r)).toContain('all 2 accounts on this connection');
+        expect(spy).not.toHaveBeenCalled();
+      });
+
+      it('names the connection history window it cannot reach past', async () => {
+        await linksWithItem(730);
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+
+        await waitFor(() => expect(flat(r)).toContain('730-day history window'));
+      });
+
+      it('[n] backs out without spending a refresh', async () => {
+        await linksWithItem();
+        const spy = vi.spyOn(refreshApi, 'refreshTransactions');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        r.stdin.write('n');
+
+        await waitFor(() => expect(flat(r)).not.toContain('Plaid charges for each refresh'));
+        expect(spy).not.toHaveBeenCalled();
+      });
+
+      it('[y] refreshes the selected item and reports it as requested, not complete', async () => {
+        await linksWithItem();
+        let report: ((p: refreshApi.RefreshProgress) => void) | undefined;
+        vi.spyOn(refreshApi, 'refreshTransactions').mockImplementation((_id, opts) => {
+          report = opts?.onProgress;
+          return new Promise(() => {});   // still polling; the tab stays in-flight
+        });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        r.stdin.write('y');
+
+        await waitFor(() => expect(flat(r)).toContain('Asking your bank'));
+        expect(refreshApi.refreshTransactions).toHaveBeenCalledWith('item-a', expect.anything());
+
+        report?.({ phase: 'waiting', attempt: 1, attempts: 4, until: Date.now() + 15_000 });
+        await waitFor(() => {
+          const f = flat(r);
+          expect(f).toContain('Refresh requested');
+          expect(f).toContain('check 1 of 4');
+          expect(f.toLowerCase()).not.toContain('refresh complete');
+        });
+      });
+
+      it('reports the outcome when the poll finds nothing', async () => {
+        await linksWithItem();
+        vi.spyOn(refreshApi, 'refreshTransactions').mockResolvedValue({
+          itemId: 'item-a', added: 0, modified: 0, removed: 0, checks: 4, cancelled: false, syncResults: [],
+        });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        r.stdin.write('y');
+
+        await waitFor(() => expect(flat(r)).toContain('No new transactions yet'));
+      });
+
+      it('Esc aborts an in-flight poll instead of leaving the tab', async () => {
+        await linksWithItem();
+        let started = false;
+        vi.spyOn(refreshApi, 'refreshTransactions').mockImplementation((id, opts) => {
+          started = true;
+          return new Promise((resolve) => {
+            opts?.signal?.addEventListener('abort', () => resolve({
+              itemId: id, added: 0, modified: 0, removed: 0, checks: 1, cancelled: true, syncResults: [],
+            }));
+          });
+        });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        r.stdin.write('y');
+        await waitFor(() => expect(started).toBe(true));
+
+        r.stdin.write('\x1b');
+        await waitFor(() => expect(flat(r)).toContain('Stopped checking'));
+        // Still on Links — Esc was consumed by the poll, not by the tab.
+        expect(flat(r)).toContain('[u] update link');
+      });
+
+      // The steer that makes [r] vs [d] a real choice rather than two buttons.
+      it('points at [d] for the restore case rather than selling a refresh', async () => {
+        await linksWithItem();
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+
+        await waitFor(() => expect(flat(r)).toContain('Trying to get back transactions you deleted'));
+        const f = flat(r);
+        expect(f).toContain('[d] delete sync cursor');
+        // The whole reason to steer: the alternative is not billed.
+        expect(f).toContain('free');
+      });
+
+      // Cancelling only to press [d] is pure friction, so the confirmation takes
+      // it directly.
+      it('[d] from the refresh confirmation opens the cursor confirmation instead', async () => {
+        await linksWithItem();
+        const spy = vi.spyOn(refreshApi, 'refreshTransactions');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('r');
+        await waitFor(() => expect(flat(r)).toContain('Plaid charges for each refresh'));
+        r.stdin.write('d');
+
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        expect(flat(r)).not.toContain('Plaid charges for each refresh');
+        expect(spy).not.toHaveBeenCalled();
+      });
+    });
+
+    // ── Delete sync cursor ([d]) ──────────────────────────────────────────────
+    // Costs nothing at Plaid, so the confirmation is not about the bill: a
+    // cursor-zero replay resurrects transactions the user deleted on purpose,
+    // and that is the surprise the gate exists to prevent.
+    describe('delete sync cursor ([d])', () => {
+      async function linksWithSyncedItem() {
+        await addItem('item-a', 'Chase', Date.now());
+        await addAccount('acct-1', 'item-a');
+        await addAccount('acct-2', 'item-a');
+        await db.execute({ sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)', args: ['item-a', 'cur'] });
+      }
+
+      it('advertises [d] on a connection row', async () => {
+        await linksWithSyncedItem();
+        const r = accounts();
+        await tabTo(r, 'links');
+        expect(flat(r)).toContain('[d] delete sync cursor');
+      });
+
+      it('asks for confirmation before deleting anything', async () => {
+        await linksWithSyncedItem();
+        const spy = vi.spyOn(syncApi, 'deleteSyncCursor');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('d');
+
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        // Item-scoped, and the panel says so rather than implying one account.
+        expect(flat(r)).toContain('all 2 accounts on this connection');
+        expect(spy).not.toHaveBeenCalled();
+      });
+
+      it('warns that hand-deleted transactions come back, and that Plaid gaps stay', async () => {
+        await linksWithSyncedItem();
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('d');
+
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        const f = flat(r);
+        expect(f).toContain('Transactions you deleted by hand will come back');
+        expect(f).toContain('Transactions Plaid no longer has will not');
+        // The reason to reach for this over [r]: it does not cost anything.
+        expect(f).toContain('Free');
+      });
+
+      it('[n] backs out without touching the cursor', async () => {
+        await linksWithSyncedItem();
+        const spy = vi.spyOn(syncApi, 'deleteSyncCursor');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('d');
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        r.stdin.write('n');
+
+        await waitFor(() => expect(flat(r)).not.toContain('Delete sync cursor and resync'));
+        expect(spy).not.toHaveBeenCalled();
+        const rows = await db.execute({ sql: 'SELECT cursor FROM sync_state WHERE account_id = ?', args: ['item-a'] });
+        expect(rows.rows).toHaveLength(1);
+      });
+
+      it('[y] deletes the cursor and resyncs just that item', async () => {
+        await linksWithSyncedItem();
+        vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
+          { itemId: 'item-a', added: 1234, modified: 0, removed: 0, dupes: 0, skipped: false },
+        ]);
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('d');
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        r.stdin.write('y');
+
+        await waitFor(() => expect(flat(r)).toContain('re-downloaded 1,234 transactions'));
+        // Scoped to the selected item, and forced past the 15-minute debounce.
+        expect(syncApi.syncAll).toHaveBeenCalledWith(true, ['item-a'], expect.anything());
+        // The cursor really went, rather than the UI merely claiming it did.
+        const rows = await db.execute({ sql: 'SELECT cursor FROM sync_state WHERE account_id = ?', args: ['item-a'] });
+        expect(rows.rows).toHaveLength(0);
+      });
+
+      // "N new transactions" would be a lie here: a cursor-zero replay reports
+      // every row Plaid holds as added, most of which the database already had.
+      it('reports the count as re-downloaded rather than new', async () => {
+        await linksWithSyncedItem();
+        vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
+          { itemId: 'item-a', added: 900, modified: 0, removed: 0, dupes: 0, skipped: false },
+        ]);
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        r.stdin.write('d');
+        await waitFor(() => expect(flat(r)).toContain('Delete sync cursor and resync'));
+        r.stdin.write('y');
+
+        await waitFor(() => expect(flat(r)).toContain('re-downloaded 900 transactions'));
+        expect(flat(r)).not.toContain('900 new transactions');
+      });
+
+      it('does nothing on a connection still awaiting its first sync', async () => {
+        // That sync starts from scratch already, so there is no cursor to delete.
+        await addItem('item-new', 'Capital One', null);
+        const spy = vi.spyOn(syncApi, 'deleteSyncCursor');
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        await waitFor(() => expect(flat(r)).toContain('awaiting first sync'));
+        r.stdin.write('d');
+
+        await new Promise((res) => setTimeout(res, 50));
+        expect(flat(r)).not.toContain('Delete sync cursor and resync');
+        expect(spy).not.toHaveBeenCalled();
+      });
+    });
+
+    // A lost or swapped encryption key (issue #179) silently breaks every Plaid
+    // connection at once, so it gets a persistent banner above the Links list
+    // rather than a per-row badge. checkKeyHealth is mocked here rather than
+    // exercised through the real key file / plaid_items decrypt path — that
+    // logic is core's, covered by core's own tests.
+    describe('encryption key health banner', () => {
+      afterEach(() => vi.restoreAllMocks());
+
+      it('shows no banner when the key is healthy', async () => {
+        vi.spyOn(keyHealthApi, 'checkKeyHealth').mockResolvedValue({ ok: true });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        await waitFor(() => expect(flat(r)).toContain('connection'));
+        expect(flat(r)).not.toContain('Encryption key');
+      });
+
+      it('flags a missing key file with the affected account count', async () => {
+        vi.spyOn(keyHealthApi, 'checkKeyHealth').mockResolvedValue({
+          ok: false, reason: 'missing_key', linkedAccountCount: 2,
+        });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        await waitFor(() => {
+          const f = flat(r);
+          expect(f).toContain('Encryption key missing');
+          expect(f).toContain("2 linked accounts can't sync");
+        });
+      });
+
+      it('flags a key that no longer decrypts stored tokens, singular count', async () => {
+        vi.spyOn(keyHealthApi, 'checkKeyHealth').mockResolvedValue({
+          ok: false, reason: 'decrypt_failed', linkedAccountCount: 1,
+        });
+
+        const r = accounts();
+        await tabTo(r, 'links');
+        await waitFor(() => {
+          const f = flat(r);
+          expect(f).toContain("Encryption key doesn't match this database");
+          expect(f).toContain('1 linked account may need re-linking');
+        });
+      });
+    });
+  });
 });
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -1869,7 +2993,7 @@ describe('App', () => {
       ['4', ['Net Worth', 'Test Checking']],
       ['5', ['Tags', 'travel']],
       ['6', ['Financial Health', 'SNAPSHOT']],
-      ['7', ['Category Rules', 'Whole Foods']],
+      ['7', ['Tag Rules', 'Whole Foods']],  // Rules screen: its section tabs + the seeded rule
       ['8', ['Accounts', 'Test Checking']],
       ['9', ['Canvas']],
       ['0', ['Settings', 'HOUSEHOLD']],
