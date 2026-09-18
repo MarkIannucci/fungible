@@ -6,33 +6,12 @@ import { applyTagRules } from './tag-rules.js';
 import { deduplicateCsvVsPlaid } from './dedup.js';
 import { decryptToken } from './crypto.js';
 import type { Transaction } from 'plaid';
+import { describeSyncProgress, type SyncProgress, type SyncProgressFn } from './sync-progress.js';
 
-/**
- * A step within one item's sync, reported as it starts so a caller can show the
- * user what the network is busy with. Every long phase gets an entry; the counts
- * are what's known at that point, not a total.
- */
-export type SyncProgress =
-  | { phase: 'transactions'; page: number; fetched: number }
-  | { phase: 'accounts' }
-  | { phase: 'categorize'; count: number }
-  | { phase: 'tag-rules'; count: number }
-  | { phase: 'remove'; count: number }
-  | { phase: 'dedup' };
-
-/** Human-readable form of a progress step, shared by every caller that renders it. */
-export function describeSyncProgress(p: SyncProgress): string {
-  switch (p.phase) {
-    case 'transactions': return `Fetching transactions… ${p.fetched.toLocaleString()} so far`;
-    case 'accounts':     return 'Fetching accounts & balances…';
-    case 'categorize':   return `Categorizing ${p.count.toLocaleString()} transaction${p.count === 1 ? '' : 's'}…`;
-    case 'tag-rules':    return 'Applying tag rules…';
-    case 'remove':       return `Removing ${p.count.toLocaleString()} deleted transaction${p.count === 1 ? '' : 's'}…`;
-    case 'dedup':        return 'Checking for duplicates…';
-  }
-}
-
-export type SyncProgressFn = (p: SyncProgress) => void;
+// Progress types/formatting live in the node-free core/sync-progress.ts so the
+// GUI renderer can import them; re-exported here for existing callers.
+export { describeSyncProgress };
+export type { SyncProgress, SyncProgressFn };
 
 export async function syncTransactions(accessToken: string, itemId: string, onProgress?: SyncProgressFn) {
   const cursorRes = await db.execute({
@@ -104,7 +83,8 @@ export async function syncTransactions(accessToken: string, itemId: string, onPr
           sql: `INSERT INTO transactions (id, account_id, date, name, merchant_name, amount, category, raw_category, pending, display_name, source)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'plaid')
                 ON CONFLICT(id) DO UPDATE SET
-                  date=excluded.date, name=excluded.name, merchant_name=excluded.merchant_name,
+                  date=CASE WHEN original_date IS NOT NULL THEN date ELSE excluded.date END,
+                  name=excluded.name, merchant_name=excluded.merchant_name,
                   amount=excluded.amount,
                   category=COALESCE(manual_category, excluded.category),
                   raw_category=excluded.raw_category,
@@ -215,7 +195,12 @@ export async function syncAll(
   itemIds?: string[],
   onProgress?: (itemId: string, p: SyncProgress) => void,
 ): Promise<SyncItemResult[]> {
-  const itemsRes = itemIds && itemIds.length > 0
+  // An empty scope means "sync these zero items", not "sync everything". The
+  // distinction matters because the array crosses the GUI's IPC bridge from the
+  // renderer, where a caller that computes an empty list would otherwise trigger
+  // a full sync of every institution — the opposite of what it asked for.
+  if (itemIds && itemIds.length === 0) return [];
+  const itemsRes = itemIds
     ? await db.execute({
         sql: `SELECT item_id, access_token, last_synced_at FROM plaid_items
               WHERE item_id IN (${itemIds.map(() => '?').join(', ')})`,

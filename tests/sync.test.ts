@@ -155,13 +155,20 @@ describe('syncAll item filter', () => {
     expect(await syncedItemIds()).toEqual(['item-a', 'item-b']);
   });
 
-  it('treats an empty filter as unfiltered', async () => {
+  // An empty scope means "sync these zero items", not "sync everything". The
+  // array crosses the GUI's IPC bridge from the renderer, so a caller that
+  // computes an empty list must not get a full sync of every institution — the
+  // opposite of what it asked for, and expensive on a large database. `undefined`
+  // remains the way to ask for all of them.
+  it('treats an empty filter as an empty scope, not as unfiltered', async () => {
     await seedItems('item-a', 'item-b');
-    mockPlaid();
+    const plaid = mockPlaid();
 
     const results = await syncAll(true, []);
 
-    expect(results.map((r) => r.itemId).sort()).toEqual(['item-a', 'item-b']);
+    expect(results).toEqual([]);
+    expect(await syncedItemIds()).toEqual([]);
+    expect(plaid.transactionsSync).not.toHaveBeenCalled();
   });
 
   it('syncs several named items and skips the rest', async () => {
@@ -346,5 +353,47 @@ describe('describeSyncProgress', () => {
     expect(describeSyncProgress({ phase: 'tag-rules', count: 5 })).toBe('Applying tag rules…');
     expect(describeSyncProgress({ phase: 'remove', count: 1 })).toBe('Removing 1 deleted transaction…');
     expect(describeSyncProgress({ phase: 'dedup' })).toBe('Checking for duplicates…');
+  });
+});
+
+describe('syncTransactions — reattributed dates survive re-sync', () => {
+  const plaidTx = (id: string, date: string) => ({
+    transaction_id: id,
+    account_id: 'acct-1',
+    date,
+    name: 'BRAINCO TECHNOLO',
+    merchant_name: null,
+    amount: -5531.2,
+    pending: false,
+    personal_finance_category: { primary: 'INCOME' },
+  });
+
+  async function dateOf(id: string) {
+    const r = await db.execute({ sql: 'SELECT date, original_date FROM transactions WHERE id = ?', args: [id] });
+    return r.rows[0] as unknown as { date: string; original_date: string | null };
+  }
+
+  it('keeps a reattributed date when Plaid re-sends the transaction', async () => {
+    mockPlaid([], [plaidTx('tx-pay', '2025-07-01')]);
+    await syncTransactions('token', 'item-1');
+    await db.execute("UPDATE transactions SET date = '2025-06-30', original_date = '2025-07-01' WHERE id = 'tx-pay'");
+
+    // Plaid re-sends the same row on a later sync with its own posting date.
+    await deleteSyncCursor('item-1');
+    mockPlaid([], [plaidTx('tx-pay', '2025-07-01')]);
+    await syncTransactions('token', 'item-1');
+
+    expect(await dateOf('tx-pay')).toEqual({ date: '2025-06-30', original_date: '2025-07-01' });
+  });
+
+  it('still accepts Plaid date changes on transactions with no override', async () => {
+    mockPlaid([], [plaidTx('tx-pay', '2025-07-01')]);
+    await syncTransactions('token', 'item-1');
+
+    await deleteSyncCursor('item-1');
+    mockPlaid([], [plaidTx('tx-pay', '2025-07-03')]);
+    await syncTransactions('token', 'item-1');
+
+    expect(await dateOf('tx-pay')).toEqual({ date: '2025-07-03', original_date: null });
   });
 });

@@ -32,6 +32,8 @@ import {
 import {
   setTransactionCategory,
   clearTransactionOverride,
+  setTransactionDate,
+  clearTransactionDate,
   setTransactionIgnored,
   setTransactionDisplayName,
   deleteTransaction,
@@ -68,7 +70,8 @@ import {
   renameCategory,
 } from '../../core/rules.js';
 import { loadHealthData, yearsToFire, coastYears } from '../../core/health.js';
-import { getSetting, setSetting, PRETAX_MONTHLY_KEY } from '../../core/settings.js';
+import { getSetting, setSetting, PRETAX_MONTHLY_KEY, BACKUP_INCLUDE_KEY_KEY } from '../../core/settings.js';
+import { checkKeyHealth } from '../../core/key-health.js';
 import {
   buildTrendViews,
   getPeriodTotals,
@@ -97,7 +100,13 @@ import { applyCategoriesToAll } from '../../core/categorize.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
 import { syncAll, deleteSyncCursor } from '../../core/sync.js';
 import { setSyncResult, mergeSyncResult, getSyncFailures } from '../../core/sync-status.js';
-import { loadHistory, deleteHistoryEntry, CANVAS_SPEC_PATH } from '../../core/canvas-history.js';
+import {
+  loadHistory,
+  deleteHistoryEntry,
+  updateHistoryEntrySpec,
+  resolveAndWriteCanvasSpec,
+  CANVAS_SPEC_PATH,
+} from '../../core/canvas-history.js';
 import type { CanvasSpec } from '../../core/canvas-spec.js';
 import { writeEnvFile, type EnvUpdates } from '../../core/env-file.js';
 import { readFileSync } from 'node:fs';
@@ -134,6 +143,8 @@ export const registry = {
   transactions: {
     setTransactionCategory,
     clearTransactionOverride,
+    setTransactionDate,
+    clearTransactionDate,
     setTransactionIgnored,
     setTransactionDisplayName,
     deleteTransaction,
@@ -199,6 +210,7 @@ export const registry = {
     deleteDuplicate,
     deleteAllDuplicates,
     getCsvPlaidDupeCandidates,
+    checkKeyHealth,
   },
   imports: {
     getImports,
@@ -218,20 +230,35 @@ export const registry = {
   canvas: {
     loadHistory,
     deleteHistoryEntry,
-    loadCurrentSpec: async (): Promise<(CanvasSpec & { _writtenAt?: number }) | null> => {
+    loadCurrentSpec: async (): Promise<(CanvasSpec & { _historyId?: string; _writtenAt?: number }) | null> => {
       try {
         return JSON.parse(readFileSync(CANVAS_SPEC_PATH, 'utf-8'));
       } catch {
         return null;
       }
     },
+    // Persists an in-place row edit (add/remove/edit) to a list element — the one
+    // canvas mutation the GUI itself originates, as opposed to the agent regenerating
+    // a whole spec. Mirrors the show_canvas/load_canvas pattern in core/tools.ts:
+    // rewrite the history entry's spec, then re-resolve bindings and rewrite
+    // CANVAS_SPEC_PATH so the on-screen canvas (and a reload) reflect the edit. A
+    // historyId that no longer matches any entry (e.g. deleted mid-edit) is a no-op.
+    updateSpec: async (historyId: string, spec: CanvasSpec): Promise<void> => {
+      const updated = updateHistoryEntrySpec(historyId, spec);
+      if (!updated) return;
+      await resolveAndWriteCanvasSpec(updated.spec, historyId);
+    },
   },
   sync: {
     // Wrap so every user-triggered sync records its outcome in the shared store,
     // which drives the renderer banner + row badges via the sync-status push.
-    syncAll: async (force?: boolean) => {
-      const results = await syncAll(force);
-      setSyncResult(results);
+    syncAll: async (force?: boolean, itemIds?: string[]) => {
+      const results = await syncAll(force, itemIds);
+      // A scoped run only speaks for the items it attempted — merge, so an
+      // institution this run never touched keeps its failure badge. Only a
+      // whole-DB sync has earned the right to clear everything.
+      if (itemIds && itemIds.length > 0) mergeSyncResult(results, itemIds);
+      else setSyncResult(results);
       return results;
     },
     // Delete one item's cursor and resync it, so Plaid resends its full history.
@@ -257,5 +284,7 @@ export const registry = {
   settings: {
     getPretaxMonthly: () => getSetting(PRETAX_MONTHLY_KEY),
     setPretaxMonthly: (v: string) => setSetting(PRETAX_MONTHLY_KEY, v),
+    getBackupIncludeKey: () => getSetting(BACKUP_INCLUDE_KEY_KEY),
+    setBackupIncludeKey: (v: string) => setSetting(BACKUP_INCLUDE_KEY_KEY, v),
   },
 } as const;
