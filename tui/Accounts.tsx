@@ -16,6 +16,7 @@ import { parseCSV, parseDate } from '../core/csv.js';
 import { getLinkedAccounts, getCsvAccounts, getLinkedItems, type LinkedAccount, type CsvAccount, type LinkedItem } from '../core/queries.js';
 import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
+import { checkKeyHealth, type KeyHealth } from '../core/key-health.js';
 import {
   updateAccountTypeSubtype, updateAccountNickname, updateAccountOwner, updateAccountApr, updateAccountExcluded, updateAccountValue,
   createManualAccount, createCsvAccount, deleteAccount, importCsvTransactions, deleteDuplicate, deleteAllDuplicates,
@@ -87,6 +88,13 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   const refreshKey = useRefreshKey();
   // Main view toggle
   const [mainView, setMainView] = useState<MainView>('accounts');
+
+  // Whether the on-disk encryption key can still decrypt this database's Plaid
+  // tokens — a lost or swapped key silently breaks every connection (#179).
+  // Checked once on mount; a persistent banner above the Links list is the
+  // right severity here since it affects every item at once, not a single row.
+  const [keyHealth, setKeyHealth] = useState<KeyHealth | null>(null);
+  useEffect(() => { void checkKeyHealth().then(setKeyHealth); }, []);
 
   // Accounts view state
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
@@ -324,6 +332,29 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     setSyncMsg(describeSyncProgress(p));
   }
 
+  /** A sync parked because one was already in flight when a link finished.
+   *  Without this the new institution's first sync was dropped silently and its
+   *  row sat at "awaiting first sync" until the next launch. */
+  const pendingSyncRef = useRef<{ itemIds: string[]; startMsg?: string } | null>(null);
+
+  /** Run a parked sync, if any. Reports whether it started one, so the caller
+   *  can skip idling out a status line the queued run has just taken over.
+   *  Clears the ref first, so a queued run draining into itself can't loop. */
+  function drainPendingSync(): boolean {
+    const pending = pendingSyncRef.current;
+    pendingSyncRef.current = null;
+    if (!pending || pending.itemIds.length === 0) return false;
+    syncItems(pending.itemIds, pending.startMsg);
+    return true;
+  }
+
+  /** Sync `itemIds` now, or park them if a sync is already running. */
+  function syncItemsWhenFree(itemIds: string[], startMsg?: string) {
+    if (itemIds.length === 0) return;
+    if (syncStatusRef.current === 'syncing') pendingSyncRef.current = { itemIds, startMsg };
+    else syncItems(itemIds, startMsg);
+  }
+
   function forceSync() {
     syncStatusRef.current = 'syncing';   // visible before the re-render lands
     setSyncStatus('syncing');
@@ -339,11 +370,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         // enough to read, and there's a real problem to act on.
         setSyncStatus('error');
         setSyncMsg(`Sync failed: ${describeSyncFailures(failed)}`);
+        // A queued run replaces this line, but the failure itself survives in
+        // the shared store as the row badge and the global banner.
+        drainPendingSync();
       } else {
         const added = results.reduce((s, r) => s + r.added, 0);
         setSyncMsg(`Done — ${added} new transaction${added !== 1 ? 's' : ''}`);
         setSyncStatus('done');
-        setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
+        if (!drainPendingSync()) setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
       }
     }).catch((err) => {
       // syncAll no longer throws on per-item failure, so this is a broader fault
@@ -374,11 +408,12 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (failed.length > 0) {
         setSyncStatus('error');
         setSyncMsg(`Sync failed: ${describeSyncFailures(failed)}`);
+        drainPendingSync();
       } else {
         const added = results.reduce((s, r) => s + r.added, 0);
         setSyncMsg(doneMsg(added));
         setSyncStatus('done');
-        setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
+        if (!drainPendingSync()) setTimeout(() => { setSyncStatus('idle'); setSyncMsg(''); }, 4000);
       }
     }).catch((err) => {
       setSyncMsg(`Sync failed — ${plaidErrorMessage(err)}`);
@@ -548,7 +583,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           // to the attempted item, leaving other items' failures alone.
           setLinkMsg('Link updated! Press Enter to continue.');
           void loadAccounts();
-          if (syncStatusRef.current !== 'syncing') syncItems([updateItemId], 'Syncing updated link…');
+          syncItemsWhenFree([updateItemId], 'Syncing updated link…');
         } else {
           setLinkMsg('Bank connected! Press Enter to continue.');
           // The reload surfaces the institution's placeholder row immediately —
@@ -557,7 +592,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           // from the loaded list rather than out of the link subprocess's stdout.
           void loadAccounts().then((accts) => {
             const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
-            if (itemIds.length > 0 && syncStatusRef.current !== 'syncing') syncItems(itemIds);
+            syncItemsWhenFree(itemIds);
           });
         }
       } else if (code !== null) {
@@ -780,8 +815,9 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       }
       // Confirmed rather than immediate: Plaid bills per /transactions/refresh
       // call. Also worth the gate because [r] was "repair link" one release ago
-      // — muscle memory lands on a confirmation, not a charge.
-      if (input === 'r' && linkedItems[itemCursor] && syncStatus !== 'syncing') {
+      // — muscle memory lands on a confirmation, not a charge. Skipped while a
+      // row awaits its first sync: that sync fetches the same window for free.
+      if (input === 'r' && linkedItems[itemCursor] && !linkedItems[itemCursor].awaitingFirstSync && syncStatus !== 'syncing') {
         setLinksMode('confirm-refresh');
         return;
       }
@@ -1135,6 +1171,15 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       {/* ── Links view ────────────────────────────────────────────────── */}
       {mainView === 'links' && (
         <Box flexDirection="column" marginTop={1}>
+          {keyHealth && !keyHealth.ok && (
+            <Box marginBottom={1}>
+              <Text bold color={C_NEGATIVE}>
+                {keyHealth.reason === 'missing_key'
+                  ? `⚠ Encryption key missing — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} can't sync until it's restored.`
+                  : `⚠ Encryption key doesn't match this database — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} may need re-linking.`}
+              </Text>
+            </Box>
+          )}
           {linkedItems.length === 0 ? (
             <>
               <Text dimColor>No bank connections yet.</Text>

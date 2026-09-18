@@ -1,14 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { useQuery } from '../hooks/useQuery.js';
 import { useStatus } from '../hooks/useStatus.js';
 import { useSyncStatus } from '../hooks/useSyncStatus.js';
+import { useKeyStatus } from '../hooks/useKeyStatus.js';
 import { Modal } from '../components/Modal.js';
 import type { LinkedAccount, CsvAccount, LinkedItem } from '../../../../core/queries.js';
 import { SUBTYPE_DISPLAY, ACCOUNT_TYPES, SUBTYPES, MONTHS } from '../constants.js';
 import { useScreenKeys } from '../hooks/useScreenKeys.js';
 import { KeyHints } from '../components/KeyHints.js';
 import { fmtTimeAgo, fmtSyncedAt } from '../../../../core/fmt.js';
+import {
+  describeRefreshProgress, describeRefreshResult, POLL_DELAYS_MS,
+  type RefreshProgress, type RefreshResult,
+} from '../../../../core/transactions-refresh-format.js';
 import styles from './Accounts.module.css';
 
 type Tab = 'accounts' | 'links' | 'add-data' | 'dupes';
@@ -47,11 +52,28 @@ export function Accounts() {
   const [updateItem, setUpdateItem] = useState<LinkedItem | null>(null);
   // The connection whose sync cursor is about to be deleted, if any.
   const [cursorItem, setCursorItem] = useState<LinkedItem | null>(null);
+  // The connection whose refresh modal is open. Stays set through the poll so its
+  // live progress and Stop button remain on screen — mirroring the TUI, where
+  // refresh reports through the status line and Esc aborts it.
+  const [refreshItem, setRefreshItem] = useState<LinkedItem | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState<RefreshProgress | null>(null);
+  // A 'waiting' step carries a deadline; a 1s tick re-renders it into a live
+  // countdown, the same trick the TUI uses.
+  const [, setRefreshTick] = useState(0);
+  const refreshTickRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
+  // The item whose poll is in flight, held in a ref so the unmount cleanup can
+  // read it without re-subscribing on every refresh.
+  const refreshingItemIdRef = useRef<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const plaidConfigured = useQuery(() => api.plaid.isConfigured(), []) ?? false;
   // Item ids that failed the most recent sync (from either the startup or the
   // user-triggered path), pushed from main — used to badge account rows.
   const { failingItems } = useSyncStatus();
+  // Whether the on-disk encryption key can still decrypt this database's Plaid
+  // tokens — a lost or swapped key silently breaks every connection (#179).
+  // Checked once on mount; persistent state, so it's a banner, not a toast.
+  const keyHealth = useKeyStatus();
 
   async function forceSync() {
     if (syncing) return;
@@ -67,6 +89,34 @@ export function Accounts() {
           return `${names.join(', ') || r.itemId}: ${r.error}`;
         }).join('  ·  ');
         showStatus(`Sync failed: ${desc}`, 8000);
+      } else {
+        const added = results.reduce((s, r) => s + r.added, 0);
+        showStatus(`Sync done — ${added} new transaction${added === 1 ? '' : 's'}`, 4000);
+      }
+      reload();
+    } catch {
+      showStatus('Sync failed', 3000);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  /** Sync only the just-linked institution(s). Scoped, so another institution's
+   *  failure badge survives it; awaited and followed by a reload, so the
+   *  placeholder row turns into real accounts on its own — otherwise the tab
+   *  sits at "◷ awaiting first sync" until the user presses [s] or navigates
+   *  away and back, and a failed first sync says nothing at all. */
+  async function syncNewInstitutions() {
+    if (syncing) return;
+    const accts = await api.queries.getLinkedAccounts();
+    const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
+    if (itemIds.length === 0) return;
+    setSyncing(true);
+    try {
+      const results = await api.sync.syncAll(true, itemIds);
+      const failed = results.filter((r) => r.error);
+      if (failed.length > 0) {
+        showStatus(`Sync failed: ${failed.map((r) => r.error).join('  ·  ')}`, 8000);
       } else {
         const added = results.reduce((s, r) => s + r.added, 0);
         showStatus(`Sync done — ${added} new transaction${added === 1 ? '' : 's'}`, 4000);
@@ -105,6 +155,50 @@ export function Accounts() {
     }
   }
 
+  async function startRefresh(item: LinkedItem) {
+    refreshingItemIdRef.current = item.item_id;
+    setRefreshing(true);
+    setRefreshProgress({ phase: 'requesting' });
+    try {
+      const result = await window.__bridge.invoke('sync:refresh', item.item_id) as RefreshResult;
+      reload();
+      if (result.error) showStatus(`Refresh failed: ${result.error}`, 8000);
+      else showStatus(describeRefreshResult(result), 10000);
+    } catch (err) {
+      showStatus(`Refresh failed: ${err instanceof Error ? err.message : String(err)}`, 3000);
+    } finally {
+      refreshingItemIdRef.current = null;
+      setRefreshing(false);
+      setRefreshProgress(null);
+      setRefreshItem(null);
+    }
+  }
+
+  // Abort the poll main-side; the awaited call above then resolves with whatever
+  // the checks that ran turned up (describeRefreshResult names the cancel case).
+  function stopRefresh(item: LinkedItem) {
+    void window.__bridge.invoke('sync:refresh-cancel', item.item_id);
+  }
+
+  // Navigating away aborts the poll rather than leaving it to run its full
+  // budget main-side, the same cleanup the TUI does on unmount.
+  useEffect(() => () => {
+    const itemId = refreshingItemIdRef.current;
+    if (itemId) void window.__bridge.invoke('sync:refresh-cancel', itemId);
+  }, []);
+
+  // Main pushes a progress step for every phase of the poll.
+  useEffect(() =>
+    window.__bridge.on('sync:refresh-progress', (...args: unknown[]) =>
+      setRefreshProgress(args[0] as RefreshProgress),
+    ), []);
+
+  useEffect(() => {
+    if (refreshProgress?.phase !== 'waiting') return;
+    refreshTickRef.current = setInterval(() => setRefreshTick((n) => n + 1), 1000);
+    return () => clearInterval(refreshTickRef.current);
+  }, [refreshProgress?.phase]);
+
   const TABS: Tab[] = ['accounts', 'links', 'add-data', 'dupes'];
   useScreenKeys({
     Tab: () => setTab((t) => TABS[(TABS.indexOf(t) + 1) % TABS.length]),
@@ -114,6 +208,14 @@ export function Accounts() {
   return (
     <div className={styles.screen}>
       <KeyHints hints="[1-9·0] screens   [tab] view   [s] sync" />
+      {!keyHealth.ok && (
+        <div className={styles.keyBanner}>
+          ⚠{' '}
+          {keyHealth.reason === 'missing_key'
+            ? `Encryption key missing — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} can't sync until it's restored.`
+            : `Encryption key doesn't match this database — ${keyHealth.linkedAccountCount} linked account${keyHealth.linkedAccountCount === 1 ? '' : 's'} may need re-linking.`}
+        </div>
+      )}
       <div className={styles.topBar}>
         <h1 className={styles.title}>Accounts</h1>
         <div className={styles.tabs}>
@@ -268,6 +370,14 @@ export function Accounts() {
                       )}
                     </td>
                     <td className={styles.tdActions}>
+                      <button
+                        className={styles.rowBtn}
+                        title="Ask this bank for new transactions now (Plaid charges per refresh)"
+                        onClick={() => setRefreshItem(item)}
+                        disabled={refreshing || item.awaitingFirstSync}
+                      >
+                        refresh
+                      </button>
                       <button
                         className={styles.rowBtn}
                         title="Update creds for link, keeping its accounts and transactions"
@@ -484,7 +594,7 @@ export function Accounts() {
             showStatus(`Connected ${institution ?? 'bank'} — syncing…`, 4000);
             reload();
             setTab('accounts');
-            void forceSync();
+            void syncNewInstitutions();
           }}
         />
       )}
@@ -539,6 +649,48 @@ export function Accounts() {
         />
       )}
 
+      {refreshItem && (
+        // While refreshing, onClose is a no-op so the poll's progress stays on
+        // screen — Stop is the only way out mid-run, mirroring the TUI's Esc.
+        <Modal
+          title="Refresh transactions — Plaid charges for each refresh"
+          onClose={() => { if (!refreshing) setRefreshItem(null); }}
+          accent="var(--warning)"
+        >
+          <p>
+            <span className="accent">{refreshItem.institution_name ?? '(unknown institution)'}</span>{' '}
+            <span className="dim">— all {refreshItem.account_count} account{refreshItem.account_count !== 1 ? 's' : ''} on this connection</span>
+          </p>
+          <p className="dim">Asks your bank to go look for new transactions right now.</p>
+          <div className="dim">
+            <p>Only worth it if you're missing <strong>recent</strong> transactions and want the bank re-checked.</p>
+            {/* Fixed at item creation; update mode can't widen it — name it so the
+                limit isn't left abstract. */}
+            <p>It can't reach past this connection's {refreshItem.days_requested ? `${refreshItem.days_requested}-day` : '90-day'} history window.</p>
+            <p>Then checks for new transactions {POLL_DELAYS_MS.length} times over about {Math.round(POLL_DELAYS_MS.reduce((a, b) => a + b, 0) / 60000)} minutes.</p>
+          </div>
+          {refreshProgress && (
+            <p className="warn" style={{ marginTop: '1em' }}>{describeRefreshProgress(refreshProgress)}</p>
+          )}
+          <div className={styles.modalActions}>
+            {refreshing ? (
+              <button className={styles.btnSecondary} onClick={() => stopRefresh(refreshItem)}>
+                Stop checking
+              </button>
+            ) : (
+              <>
+                <button className={styles.btnSecondary} onClick={() => setRefreshItem(null)}>
+                  Cancel
+                </button>
+                <button className={styles.btnPrimary} onClick={() => void startRefresh(refreshItem)}>
+                  Yes, refresh
+                </button>
+              </>
+            )}
+          </div>
+        </Modal>
+      )}
+
       {statusEl}
     </div>
   );
@@ -570,6 +722,14 @@ function LinkBankModal({
     });
   }, []);
 
+  /** Closing while the browser flow is open abandons it, so tell main to tear it
+   *  down — otherwise it holds the single link slot until it times out and the
+   *  user can't start another link, or update a broken one, until then. */
+  function close() {
+    if (running) void api.plaid.cancelLink();
+    onClose();
+  }
+
   async function start() {
     let n: number | undefined;
     if (!updateItem) {
@@ -591,7 +751,7 @@ function LinkBankModal({
   }
 
   return (
-    <Modal title={updateItem ? 'Update link' : 'Link a bank'} onClose={onClose}>
+    <Modal title={updateItem ? 'Update link' : 'Link a bank'} onClose={close}>
       {running ? (
         <div>
           <p className="accent">⟳ Complete the Plaid flow in your browser, then return here.</p>

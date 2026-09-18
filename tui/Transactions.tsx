@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import {
   setTransactionCategory, clearTransactionOverride, setTransactionIgnored,
   setTransactionDisplayName, deleteTransaction,
+  setTransactionDate, clearTransactionDate,
   upsertCategoryRule, upsertNameRule,
   setTransactionCategoryBulk, clearOverridesBulk, setIgnoredBulk,
 } from '../core/transactions.js';
@@ -27,11 +28,17 @@ import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, 
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
 
+// TxRow.original_date (from core/queries.ts) is non-null only when a
+// transaction has been reattributed to another period; it holds the bank's
+// true posting date.
 type Tx = TxRow;
 
 
 type Mode = 'list' | 'search' | 'edit' | 'tag' | 'tag-all' | 'edit-all';
-type EditField = 'name' | 'category' | 'pattern' | 'type';
+type EditField = 'name' | 'category' | 'date' | 'pattern' | 'type';
+
+/** Reattributed dates are always stored as ISO YYYY-MM-DD; reject anything else before calling core. */
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const SORT_CYCLE: SortMode[] = ['date-desc', 'date-asc', 'name-asc', 'name-desc', 'amount-desc', 'amount-asc', 'category-asc', 'category-desc'];
 
@@ -74,13 +81,17 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   // Edit panel state
   const [editField, setEditField] = useState<EditField>('name');
   const [editName, setEditName] = useState('');
+  const [editDate, setEditDate] = useState('');
   const [editCatCursor, setEditCatCursor] = useState(0);
   const [editPattern, setEditPattern] = useState('');
   const [editMatchType, setEditMatchType] = useState<'name' | 'regex'>('name');
 
-  // Tag panel state
+  // Tag panel state. The applied-tag set is kept together with the transaction
+  // it was read for: the panel acts on whatever row the cursor is on, and that
+  // row can change out from under an open panel (see the sync effect below), so
+  // the marks are only meaningful while the two ids agree.
   const [allTags, setAllTags] = useState<TagOption[]>([]);
-  const [txTagIds, setTxTagIds] = useState<Set<number>>(new Set());
+  const [tagState, setTagState] = useState<{ txId: string; ids: Set<number> } | null>(null);
   const [tagCursor, setTagCursor] = useState(0);
   const [tagInput, setTagInput] = useState('');
 
@@ -95,6 +106,12 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       setTxs(rows);
       if (!keepCursor) setCursor(0);
       else setCursor((c) => Math.min(c, Math.max(0, rows.length - 1)));
+      // The tag panel acts on the selected row, so it cannot outlive an empty
+      // list: tagging the last row out of a 'lacks' filter would otherwise
+      // leave it open, drawing nothing while swallowing every keypress. Closed
+      // here rather than in an effect so it lands in the same commit as the
+      // rows — no render in between where the panel is open but empty.
+      if (rows.length === 0) setMode((m) => (m === 'tag' ? 'list' : m));
     });
   }
 
@@ -104,17 +121,22 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const setTyping = useSetTyping();
   useEffect(() => {
     const isTextInput = mode === 'search' || mode === 'tag' || mode === 'tag-all'
-      || (mode === 'edit' && (editField === 'name' || editField === 'pattern'));
+      || (mode === 'edit' && (editField === 'name' || editField === 'pattern' || editField === 'date'));
     setTyping(isTextInput);
   }, [mode, editField]);
 
   const selected = txs[cursor];
+
+  // Marks describe the row they were read for and no other, so an in-flight
+  // read shows nothing applied rather than the previous row's tags.
+  const selectedTagIds = tagState && tagState.txId === selected?.id ? tagState.ids : null;
 
   function openEdit() {
     if (!selected) return;
     void getAllCategories().then((cats) => {
       setCategories(cats);
       setEditName('');
+      setEditDate(selected.date);
       setEditPattern('');
       setEditMatchType('name');
       setEditCatCursor(Math.max(0, cats.indexOf(selected.category)));
@@ -125,47 +147,77 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   function openTagPanel() {
     if (!selected) return;
-    void Promise.all([getTagOptions(), getTransactionTagIds(selected.id)]).then(([tags, tagIds]) => {
+    const txId = selected.id;
+    void Promise.all([getTagOptions(), getTransactionTagIds(txId)]).then(([tags, ids]) => {
       setAllTags(tags);
-      setTxTagIds(tagIds);
+      setTagState({ txId, ids });
       setTagInput('');
       setTagCursor(0);
       setMode('tag');
     });
   }
 
-  function toggleTag(tagId: number) {
+  /** Optimistic edit of the open panel's marks; dropped if the cursor already moved on. */
+  function patchTagState(txId: string, edit: (ids: Set<number>) => Set<number>) {
+    setTagState((s) => (s && s.txId === txId ? { txId, ids: edit(s.ids) } : s));
+  }
+
+  async function toggleTag(tagId: number) {
     if (!selected) return;
-    if (txTagIds.has(tagId)) {
-      removeTagFromTransaction(selected.id, tagId);
-      setTxTagIds((s) => { const n = new Set(s); n.delete(tagId); return n; });
-    } else {
-      addTagToTransaction(selected.id, tagId);
-      setTxTagIds((s) => new Set([...s, tagId]));
-    }
+    // null means the panel's marks are still being re-read for the row the
+    // cursor just moved to. Treating that as "has no tags" would turn a remove
+    // into an INSERT OR IGNORE that changes nothing, and patchTagState would
+    // drop the optimistic edit too — the keypress would appear to do nothing.
+    // Ignore it; the marks land in a moment and the key works again.
+    if (selectedTagIds === null) return;
+    const txId = selected.id;
+    const had = selectedTagIds.has(tagId);
+    patchTagState(txId, (ids) => {
+      const n = new Set(ids);
+      if (had) n.delete(tagId); else n.add(tagId);
+      return n;
+    });
+    // Await the write so the reload below sees it — otherwise a row that the
+    // filter now excludes can survive the refresh.
+    await (had ? removeTagFromTransaction(txId, tagId) : addTagToTransaction(txId, tagId));
     load(search, true);
   }
 
   function createAndApplyTag(name: string) {
     if (!selected) return;
-    void getOrCreateTag(name).then((tagId) => {
-      void addTagToTransaction(selected.id, tagId);
-      void Promise.all([getTagOptions(), getTransactionTagIds(selected.id)]).then(([tags, tagIds]) => {
-        setAllTags(tags);
-        setTxTagIds(tagIds);
-      });
+    const txId = selected.id;
+    void getOrCreateTag(name).then(async (tagId) => {
+      await addTagToTransaction(txId, tagId);
+      patchTagState(txId, (ids) => new Set(ids).add(tagId));
+      setAllTags(await getTagOptions());
       setTagInput('');
       setTagCursor(0);
       load(search, true);
     });
   }
 
-  function saveToTransaction() {
+  async function saveToTransaction() {
     if (!selected) return;
     const newCat = categories[editCatCursor];
     const newDisplay = editName.trim();
+    const newDate = editDate.trim();
     const nameChanged = newDisplay.length > 0;
     const catChanged = newCat !== selected.category;
+    const dateChanged = newDate.length > 0 && newDate !== selected.date;
+
+    if (dateChanged) {
+      if (!ISO_DATE_RE.test(newDate)) {
+        showStatus('Invalid date — use YYYY-MM-DD', 4000);
+        return;
+      }
+      try {
+        // core also validates and rejects impossible dates (e.g. 2026-02-31).
+        await setTransactionDate(selected.id, newDate);
+      } catch (e) {
+        showStatus(e instanceof Error ? e.message : 'Invalid date', 4000);
+        return;
+      }
+    }
 
     if (nameChanged) {
       setTransactionDisplayName(selected.id, newDisplay);
@@ -174,7 +226,9 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       setTransactionCategory(selected.id, newCat);
     }
 
-    if (nameChanged || catChanged) showStatus('Transaction updated');
+    if (nameChanged || catChanged || dateChanged) {
+      showStatus(dateChanged && !nameChanged && !catChanged ? `Date set to ${newDate}` : 'Transaction updated');
+    }
     setMode('list');
     load(search, true);
   }
@@ -221,9 +275,32 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     load(search, true);
   }
 
+  function clearDateOverride() {
+    if (!selected?.original_date) return;
+    const posted = selected.original_date;
+    void clearTransactionDate(selected.id).then(() => {
+      showStatus(`Date restored to ${posted}`);
+      load(search, true);
+    });
+  }
+
   const filteredTags = tagInput
     ? allTags.filter((t) => t.name.toLowerCase().includes(tagInput.toLowerCase()))
     : allTags;
+
+  // The tag panel is titled with — and acts on — the row under the cursor, and
+  // that row moves while the panel is open: tagging a transaction that a
+  // 'lacks' filter selects against drops it from the list, sliding the next one
+  // into the same index. Re-read the marks for the row the panel now names
+  // instead of leaving the tag just applied to the old row on screen.
+  useEffect(() => {
+    if (mode !== 'tag' || !selected) return;
+    if (tagState?.txId === selected.id) return;
+    const txId = selected.id;
+    let cancelled = false;
+    void getTransactionTagIds(txId).then((ids) => { if (!cancelled) setTagState({ txId, ids }); });
+    return () => { cancelled = true; };
+  }, [mode, selected?.id, tagState?.txId]);
 
   useInput((input, key) => {
     if (mode === 'search') {
@@ -247,7 +324,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === ' ' || key.return) {
         const t = filteredTags[tagCursor];
         if (t) {
-          toggleTag(t.id);
+          void toggleTag(t.id);
         } else if (tagInput.trim() && key.return) {
           createAndApplyTag(tagInput.trim());
         }
@@ -300,10 +377,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     }
 
     if (mode === 'edit') {
-      const EDIT_FIELDS: EditField[] = ['name', 'category', 'pattern', 'type'];
+      const EDIT_FIELDS: EditField[] = ['name', 'category', 'date', 'pattern', 'type'];
       if (key.escape) { setMode('list'); return; }
       if (key.return) {
-        if (editPattern.trim()) { void saveAsRule(); } else { saveToTransaction(); }
+        if (editPattern.trim()) { void saveAsRule(); } else { void saveToTransaction(); }
         return;
       }
       if (key.upArrow) { setEditField((f) => EDIT_FIELDS[Math.max(0, EDIT_FIELDS.indexOf(f) - 1)]); return; }
@@ -314,6 +391,11 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       } else if (editField === 'category') {
         if (key.leftArrow) { setEditCatCursor((c) => Math.max(0, c - 1)); return; }
         if (key.rightArrow) { setEditCatCursor((c) => Math.min(categories.length - 1, c + 1)); return; }
+      } else if (editField === 'date') {
+        if (key.backspace || key.delete) { setEditDate((d) => d.slice(0, -1)); return; }
+        // Only the characters an ISO date is made of, so the buffer can't drift
+        // into something core will just reject on save.
+        if (input && !key.ctrl && !key.meta && /^[0-9-]+$/.test(input)) { setEditDate((d) => d + input); return; }
       } else if (editField === 'pattern') {
         if (key.backspace || key.delete) { setEditPattern((p) => p.slice(0, -1)); return; }
         if (input && !key.ctrl && !key.meta) { setEditPattern((p) => p + input); return; }
@@ -387,6 +469,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         return;
       }
       if (input === 'c' && selected?.manual_category) clearOverride();
+      if (input === 'd' && selected?.original_date) clearDateOverride();
       if (input === 'C' && txs.length > 0) {
         clearOverridesBulk(txs.map((t) => t.id));
         const count = txs.filter((t) => t.manual_category).length;
@@ -484,7 +567,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       </Box>
       <Text dimColor>
         {showHints
-          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  [x] delete  ·  [S] sync`
+          ? `[/] search  ·  [f] filter  ·  ${from ? '← →  ·  ' : ''}[s] sort  ·  Enter edit  [g] tag  [i] ignore  ${selected?.original_date ? '[d] restore date  ' : ''}[x] delete  ·  [S] sync`
           : '[/] search'}
       </Text>
 
@@ -518,7 +601,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           <Box key={tx.id} flexDirection="column">
             <SelectableRow selected={isSelected}>
               <Text color={isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected}>
-                {tx.date}
+                {tx.date}{tx.original_date ? <Text color={C_MANUAL}>*</Text> : null}
               </Text>
               <Text dimColor={isIgnored}>{truncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW).padEnd(descW)}</Text>
               <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored}>
@@ -556,7 +639,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           ) : (
             filteredTags.map((t, i) => {
               const isSelected = i === tagCursor;
-              const has = txTagIds.has(t.id);
+              const has = selectedTagIds?.has(t.id) ?? false;
               return (
                 <SelectableRow key={t.id} selected={isSelected}>
                   <Text color={has ? C_POSITIVE : undefined} dimColor={!isSelected && !has}>
@@ -621,9 +704,16 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           <Box marginTop={1} flexDirection="column" gap={1}>
             <EditTextField label="Name" labelWidth={12} active={editField === 'name'} value={editName} color={C_WARNING} placeholder="type new name…" emptyText="(unchanged)" />
             <EditToggleField label="Category" labelWidth={12} active={editField === 'category'} value={categories[editCatCursor] ?? '—'} />
+            <EditTextField label="Date" labelWidth={12} active={editField === 'date'} value={editDate} color={C_WARNING} placeholder="YYYY-MM-DD" emptyText="—" />
             <EditTextField label="Pattern" labelWidth={12} active={editField === 'pattern'} value={editPattern} color={C_MANUAL} placeholder="optional — saves as rule" emptyText="—" />
             <EditToggleField label="Match type" labelWidth={12} active={editField === 'type'} value={editMatchType} />
           </Box>
+
+          {selected.original_date ? (
+            <Box marginTop={1}>
+              <Text dimColor>posted {selected.original_date} · [Esc] then [d] restores it</Text>
+            </Box>
+          ) : null}
 
           {editPattern.trim() ? (
             <Box marginTop={1} gap={2}>

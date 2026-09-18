@@ -15,10 +15,17 @@ export type DupePair = {
 // but it is no longer the answer to "where did this row come from" — and the old
 // `plaid.id NOT LIKE 'csv-%'` half encoded "anything that isn't CSV is Plaid",
 // which stops being true the moment a third writer exists.
+//
+// Also match on posting date, not the displayed date: a reattributed transaction
+// (see `original_date`) can sit months from where the bank actually posted it,
+// which would otherwise push a genuine CSV/Plaid duplicate outside the window.
 const MATCH_SQL = `
   csv.account_id = plaid.account_id
   AND csv.amount = plaid.amount
-  AND ABS(JULIANDAY(csv.date) - JULIANDAY(plaid.date)) <= 3
+  AND ABS(
+    JULIANDAY(COALESCE(csv.original_date, csv.date))
+    - JULIANDAY(COALESCE(plaid.original_date, plaid.date))
+  ) <= 3
   AND csv.source   = 'csv'
   AND plaid.source = 'plaid'
   AND (

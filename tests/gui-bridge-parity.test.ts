@@ -36,11 +36,20 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   evalExpr: 'renderer imports pure core/canvas-spec.ts directly',
   fmtValue: 'renderer imports pure core/canvas-spec.ts directly',
   fmtDialValue: 'renderer imports pure core/canvas-spec.ts directly',
+  computeOutputValues: 'renderer imports pure core/canvas-spec.ts directly',
+  buildListScope: 'renderer imports pure core/canvas-spec.ts directly',
+  projectSeries: 'renderer imports pure core/canvas-spec.ts directly',
 
   // Pure scorecard helpers — renderer imports core/scorecard.ts directly (GUI PR2)
   bucketDrift: 'renderer imports pure core/scorecard.ts directly',
   isSignificantDelta: 'renderer imports pure core/scorecard.ts directly',
   ratioLabel: 'renderer imports pure core/scorecard.ts directly',
+
+  // Pure rule-merge helper -- renderer imports core/rules-merge.ts directly
+  mergeRules: 'renderer imports pure core/rules-merge.ts directly',
+
+  // Pure savings-rate helper — TUI imports it via core/health.ts (re-export)
+  computeSavingsRate: 'renderer imports pure core/savings-rate.ts directly (extracted from health.ts so the browser bundle doesn\'t pull in db.ts/crypto.ts)',
 
   // Electron-side bridge namespaces live in gui/main/bridge.ts (not registry.ts)
   getDefaultDaysRequested: 'bridge plaid namespace (gui/main/bridge.ts)',
@@ -65,13 +74,19 @@ const EXPECTED_UNBRIDGED: Record<string, string> = {
   // interleaved with another sync.
   deleteSyncCursor: 'GUI bridges the composed sync.deleteCursorAndResync instead',
 
-  // On-demand /transactions/refresh (core/transactions-refresh.ts) — TUI-only for
-  // now. Bridging it needs more than a registry entry: the poll runs for minutes
-  // and streams progress, so the GUI needs a progress channel and a cancel path
-  // rather than a single request/response call. Remove these when that lands.
-  refreshTransactions: 'TUI-only; GUI needs a streaming progress + cancel channel, not a plain bridge call',
-  describeRefreshProgress: 'TUI-only; renderer will format its own progress once refresh is bridged',
-  describeRefreshResult: 'TUI-only; renderer will format its own result once refresh is bridged',
+  // The GUI bridges the composed action (canvas.updateSpec) rather than the two
+  // bare history/write functions, so a row edit re-resolves bindings and rewrites
+  // CANVAS_SPEC_PATH as one atomic step (see gui/main/registry.ts canvas.updateSpec).
+  updateHistoryEntrySpec: 'GUI bridges the composed canvas.updateSpec instead',
+  resolveAndWriteCanvasSpec: 'GUI bridges the composed canvas.updateSpec instead',
+
+  // On-demand /transactions/refresh (core/transactions-refresh.ts) — bridged, but
+  // not through the registry: the poll runs for minutes and streams progress, so
+  // it has a dedicated channel (gui/main/sync-ipc.ts, 'sync:refresh') with a
+  // progress push and a cancel path rather than a single request/response call.
+  refreshTransactions: 'bridged via sync-ipc streaming channel, not the registry',
+  describeRefreshProgress: 'renderer imports it directly to format pushed progress steps',
+  describeRefreshResult: 'renderer imports it directly to format the final result',
 
   // Generic settings access — GUI uses typed wrappers (settings.getPretaxMonthly /
   // settings.setPretaxMonthly) rather than the raw getSetting/setSetting functions.
