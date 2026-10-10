@@ -185,7 +185,7 @@ describe('TUI Accounts — balance history import', () => {
     expect(await history('chk')).toEqual([['2026-01-01', 100], ['2026-05-20', 5000]]);
   });
 
-  it('caps the skipped list at 5 with a "+N more" line', async () => {
+  it('caps the skipped list at 5 with a "…and N more" line', async () => {
     const rows = Array.from({ length: 8 }, (_, i) => `bad${i},Checking,abc`).join('\n');
     const r = renderAccounts();
     await toBalanceHistoryFile(r);
@@ -193,7 +193,7 @@ describe('TUI Accounts — balance history import', () => {
     await waitFor(() => expect(flat(r)).toContain('8 skipped (8 invalid date or amount)'));
     expect(flat(r)).toContain('line 6: invalid date or amount');
     expect(flat(r)).not.toContain('line 7:');
-    expect(flat(r)).toContain('+3 more');
+    expect(flat(r)).toContain('…and 3 more');
   });
 
   it('accepts a relative path', async () => {

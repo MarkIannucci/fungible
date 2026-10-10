@@ -13,10 +13,12 @@ import { plaidErrorMessage } from '../core/plaid.js';
 import { useSyncStatus } from './SyncStatusContext.js';
 import { getCsvPlaidDupeCandidates, type DupePair } from '../core/dedup.js';
 import { parseCSV, parseDate } from '../core/csv.js';
-import { summarizeCsvSkips, CSV_SKIP_COPY, type CsvSkippedRow } from '../core/csv-import-copy.js';
+import { previewCsvSkips, CSV_SKIP_COPY, type CsvSkippedRow } from '../core/csv-import-copy.js';
+import { previewBalanceSkips } from '../core/balance-import-copy.js';
+import { SKIPPED_ROWS_SHOWN } from '../core/skipped-rows.js';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
-import { previewBalanceImport, commitBalanceImport, BALANCE_IMPORT_SKIP_COPY, BALANCE_IMPORT_MAX_BYTES, summarizeSkips, type BalanceImportPreview, type BalanceImportResult } from '../core/balance-import.js';
+import { previewBalanceImport, commitBalanceImport, BALANCE_IMPORT_SKIP_COPY, BALANCE_IMPORT_MAX_BYTES, type BalanceImportPreview, type BalanceImportResult } from '../core/balance-import.js';
 import { getLinkedAccounts, getImportTargets, getLinkedItems, type LinkedAccount, type ImportTarget, type LinkedItem } from '../core/queries.js';
 import { loadProfile, householdMembers } from '../core/profile.js';
 import { getDefaultDaysRequested, MIN_DAYS_REQUESTED, MAX_DAYS_REQUESTED } from '../core/settings.js';
@@ -1726,20 +1728,20 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
           {addStep === 'bh-preview' && bhPreview && (() => {
             const p = bhPreview;
-            const CAP = 5;
-            const reasonSummary = summarizeSkips(p.skipped);
-            const more = (n: number) => n > CAP ? <Text dimColor>+{n - CAP} more</Text> : null;
+            const CAP = SKIPPED_ROWS_SHOWN;
+            const skipPreview = previewBalanceSkips(p.skipped);
+            const more = (n: number) => n > CAP ? <Text dimColor>…and {n - CAP} more</Text> : null;
             return (
               <Box flexDirection="column" marginTop={1} gap={1}>
                 <Text bold>Import balance history — preview <Text dimColor>(nothing written yet)</Text></Text>
                 <Text>
-                  <Text color={C_POSITIVE}>{p.willInsert}</Text> balances will be added, <Text color={C_WARNING}>{p.willOverwrite.count}</Text> will replace existing values, <Text dimColor>{p.skipped.length}</Text> skipped{p.skipped.length > 0 ? ` (${reasonSummary})` : ''}
+                  <Text color={C_POSITIVE}>{p.willInsert}</Text> balances will be added, <Text color={C_WARNING}>{p.willOverwrite.count}</Text> will replace existing values, <Text dimColor>{p.skipped.length}</Text> skipped{p.skipped.length > 0 ? ` (${skipPreview.summary})` : ''}
                 </Text>
                 {p.skipped.length > 0 && (
                   <Box flexDirection="column">
                     <Text bold dimColor>Skipped</Text>
-                    {p.skipped.slice(0, CAP).map((s) => <Text key={s.line} dimColor>line {s.line}: {BALANCE_IMPORT_SKIP_COPY[s.reason]}</Text>)}
-                    {more(p.skipped.length)}
+                    {skipPreview.shown.map((s) => <Text key={s.line} dimColor>line {s.line}: {BALANCE_IMPORT_SKIP_COPY[s.reason]}</Text>)}
+                    {skipPreview.hiddenCount > 0 && <Text dimColor>…and {skipPreview.hiddenCount} more</Text>}
                   </Box>
                 )}
                 {(p.unmatched.length > 0 || p.ambiguous.length > 0) && (
@@ -1966,17 +1968,20 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
               <Text bold color={C_POSITIVE}>Import complete</Text>
               <Text>Imported: <Text color={C_POSITIVE}>{importResult.imported}</Text></Text>
               <Text dimColor>Skipped: {importResult.skipped}</Text>
-              {importResult.skippedRows.length > 0 && (
-                <Box flexDirection="column">
-                  <Text color={C_WARNING}>{summarizeCsvSkips(importResult.skippedRows)}</Text>
-                  {importResult.skippedRows.slice(0, 5).map((s) => (
-                    <Text key={s.rowIndex} dimColor>  line {s.line ?? s.rowIndex + 2}: {CSV_SKIP_COPY[s.reason]}</Text>
-                  ))}
-                  {importResult.skippedRows.length > 5 && (
-                    <Text dimColor>  …and {importResult.skippedRows.length - 5} more</Text>
-                  )}
-                </Box>
-              )}
+              {importResult.skippedRows.length > 0 && (() => {
+                const skipPreview = previewCsvSkips(importResult.skippedRows);
+                return (
+                  <Box flexDirection="column">
+                    <Text color={C_WARNING}>{skipPreview.summary}</Text>
+                    {skipPreview.shown.map((s) => (
+                      <Text key={s.rowIndex} dimColor>  line {s.line ?? s.rowIndex + 2}: {CSV_SKIP_COPY[s.reason]}</Text>
+                    ))}
+                    {skipPreview.hiddenCount > 0 && (
+                      <Text dimColor>  …and {skipPreview.hiddenCount} more</Text>
+                    )}
+                  </Box>
+                );
+              })()}
               <Box marginTop={1}><Text dimColor>Press Enter to return</Text></Box>
             </Box>
           )}
