@@ -984,6 +984,9 @@ function EditAccountModal({
   const [subtype, setSubtype] = useState(
     initialSubtypes.includes(acct.subtype ?? '') ? (acct.subtype ?? '') : (initialSubtypes[0] ?? ''),
   );
+  // Only write type/subtype when the user changed them: the select's seeded value
+  // can differ from the stored one (unknown or NULL subtype) and must not be persisted.
+  const [typeTouched, setTypeTouched] = useState(false);
   const [apr, setApr] = useState(acct.apr !== null && acct.apr !== undefined ? String(acct.apr) : '');
   const [excluded, setExcluded] = useState(acct.excluded);
 
@@ -992,7 +995,7 @@ function EditAccountModal({
 
   async function save() {
     const aprVal = apr.trim() ? parseFloat(apr) : null;
-    await api.accounts.updateAccountTypeSubtype(acct.id, type, subtype.trim() || null);
+    if (typeTouched) await api.accounts.updateAccountTypeSubtype(acct.id, type, subtype.trim() || null);
     await api.accounts.updateAccountNickname(acct.id, nickname.trim() || null);
     await api.accounts.updateAccountOwner(acct.id, owner.trim() || null);
     if (isDebt) await api.accounts.updateAccountApr(acct.id, aprVal !== null && !isNaN(aprVal) ? aprVal : null);
@@ -1029,6 +1032,7 @@ function EditAccountModal({
         <select
           value={type}
           onChange={(e) => {
+            setTypeTouched(true);
             setType(e.target.value);
             setSubtype(SUBTYPES[e.target.value]?.[0] ?? '');
           }}
@@ -1041,7 +1045,10 @@ function EditAccountModal({
         </select>
         <label>Subtype</label>
         {subtypes.length > 0 ? (
-          <select value={subtype} onChange={(e) => setSubtype(e.target.value)}>
+          <select value={subtype} onChange={(e) => {
+              setTypeTouched(true);
+              setSubtype(e.target.value);
+            }}>
             {subtypes.map((s) => (
               <option key={s} value={s}>
                 {s}

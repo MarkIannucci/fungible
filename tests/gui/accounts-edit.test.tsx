@@ -223,17 +223,8 @@ describe('GUI Accounts: edit account modal', () => {
     expect((await readAccount(db, 'test-checking'))!.nickname).toBeNull();
   });
 
-  // PRODUCT BUG (data-destructive): EditAccountModal.save ALWAYS rewrites
-  // type/subtype from modal state, even when the user only changed the nickname.
-  // The initial subtype is `initialSubtypes.includes(acct.subtype) ? acct.subtype
-  // : initialSubtypes[0] ?? ''`, so any subtype the constants list does not know
-  // is silently replaced: a manual asset (type 'other', SUBTYPES.other = [])
-  // loses subtype 'manual' to NULL, a Plaid 'certificate of deposit' becomes
-  // 'checking', a depository/credit account with NULL subtype gets a made-up one.
-  // Fix: only call updateAccountTypeSubtype when the type or subtype
-  // field was actually changed (or seed the initial state with acct.subtype and
-  // add it as an option); then flip these to plain `it`.
-  it.fails('BUG: editing only the nickname of a manual asset keeps its subtype', async () => {
+  // Regression for #265: a nickname-only edit must not rewrite type/subtype.
+  it('editing only the nickname of a manual asset keeps its subtype', async () => {
     await seedManual();
     renderScreen(<Accounts />);
     await screen.findByText('Lake House');
@@ -243,11 +234,11 @@ describe('GUI Accounts: edit account modal', () => {
     expect((await readAccount(db, 'manual-1'))!.subtype).toBe('manual');
   });
 
-  it.fails.each([
+  it.each([
     ['depository', 'certificate of deposit'],
     ['investment', 'crypto wallet'],
     ['loan', 'bnpl'],
-  ])('BUG: editing only the nickname keeps a Plaid %s subtype not in the constants list (%s)', async (type, subtype) => {
+  ])('editing only the nickname keeps a Plaid %s subtype not in the constants list (%s)', async (type, subtype) => {
     await seedPlaidAccount(db, { id: 'plaid-x', name: 'Odd Account', type, subtype });
     renderScreen(<Accounts />);
     await screen.findByText('Odd Account');
@@ -257,7 +248,7 @@ describe('GUI Accounts: edit account modal', () => {
     expect((await readAccount(db, 'plaid-x'))!.subtype).toBe(subtype);
   });
 
-  it.fails('BUG: editing only the nickname of an account with NULL subtype leaves it NULL', async () => {
+  it('editing only the nickname of an account with NULL subtype leaves it NULL', async () => {
     await seedPlaidAccount(db, { id: 'plaid-nosub', name: 'Mystery', type: 'credit', subtype: null });
     renderScreen(<Accounts />);
     await screen.findByText('Mystery');
@@ -265,5 +256,15 @@ describe('GUI Accounts: edit account modal', () => {
     await userEvent.type(await screen.findByPlaceholderText('none'), 'Card');
     await save('Card');
     expect((await readAccount(db, 'plaid-nosub'))!.subtype).toBeNull();
+  });
+
+  it('changing only the subtype of a Plaid account with an unknown subtype still writes it', async () => {
+    await seedPlaidAccount(db, { id: 'plaid-y', name: 'Odd CD', type: 'depository', subtype: 'certificate of deposit' });
+    await openEdit('Odd CD');
+    await userEvent.selectOptions(selects()[1], 'savings');
+    await save('Odd CD');
+    const a = (await readAccount(db, 'plaid-y'))!;
+    expect(a.type).toBe('depository');
+    expect(a.subtype).toBe('savings');
   });
 });
