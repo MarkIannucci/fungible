@@ -167,7 +167,7 @@ export async function clearTransactionDate(id: string): Promise<void> {
 
 export async function setTransactionIgnored(id: string, ignored: boolean): Promise<void> {
   await db.execute({
-    sql: 'UPDATE transactions SET ignored = ? WHERE id = ?',
+    sql: "UPDATE transactions SET ignored = ? WHERE id = ? AND source IS NOT 'manual'",
     args: [ignored ? 1 : 0, id],
   });
 }
@@ -247,11 +247,14 @@ export async function setTransactionCategoryBulk(ids: string[], category: string
   );
 }
 
+// Both bulk functions below skip source='manual' (hand-entered) rows, matching
+// the single-row UI guards: a manual row has no raw category to revert to and
+// is never ignorable, so a bulk selection must leave it untouched.
 export async function clearOverridesBulk(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   const placeholders = ids.map(() => '?').join(',');
   const txRes = await db.execute({
-    sql: `SELECT id, account_id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (${placeholders}) AND manual_category IS NOT NULL`,
+    sql: `SELECT id, account_id, name, merchant_name, raw_category, amount FROM transactions WHERE id IN (${placeholders}) AND manual_category IS NOT NULL AND source IS NOT 'manual'`,
     args: ids,
   });
   const rows = txRes.rows as unknown as {
@@ -273,7 +276,7 @@ export async function setIgnoredBulk(ids: string[], ignored: boolean): Promise<v
   if (ids.length === 0) return;
   await db.batch(
     ids.map((id) => ({
-      sql: 'UPDATE transactions SET ignored = ? WHERE id = ?',
+      sql: "UPDATE transactions SET ignored = ? WHERE id = ? AND source IS NOT 'manual'",
       args: [ignored ? 1 : 0, id],
     })),
     'write',

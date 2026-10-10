@@ -32,10 +32,21 @@ export function parseCsvText(text: string): Pick<ParsedCsv, 'headers' | 'rows' |
   return { headers: trimmed[0], rows: trimmed.slice(1), lines: kept.slice(1).map((r) => r.line) };
 }
 
+// Bank exports are often Windows-1252, which is not valid UTF-8. Try strict
+// UTF-8 first (ignoreBOM keeps any BOM in the string, as before), then fall
+// back to Windows-1252 rather than emitting U+FFFD replacement characters.
+function decodeCsvBytes(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return new TextDecoder('windows-1252').decode(bytes);
+  }
+}
+
 export function parseCSV(filePath: string): ParsedCsv {
   const bytes = fs.readFileSync(filePath);
   return {
-    ...parseCsvText(bytes.toString('utf8')),
+    ...parseCsvText(decodeCsvBytes(bytes)),
     fileName: path.basename(filePath),
     fileHash: crypto.createHash('sha256').update(bytes).digest('hex'),
   };

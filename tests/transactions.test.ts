@@ -24,13 +24,13 @@ import {
 } from '../core/transactions.js';
 
 let txId = 0;
-async function insertTx(opts: { name?: string; category?: string; manual_category?: string; ignored?: number; amount?: number }) {
+async function insertTx(opts: { name?: string; category?: string; manual_category?: string; ignored?: number; amount?: number; source?: string }) {
   txId++;
   const id = `tx${txId}`;
   await db.execute({
-    sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, ignored, pending)
-          VALUES (?, 'acct1', '2025-01-15', ?, ?, ?, ?, ?, 0)`,
-    args: [id, opts.name ?? 'Test', opts.amount ?? 10, opts.category ?? 'Shopping', opts.manual_category ?? null, opts.ignored ?? 0],
+    sql: `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, ignored, pending, source)
+          VALUES (?, 'acct1', '2025-01-15', ?, ?, ?, ?, ?, 0, ?)`,
+    args: [id, opts.name ?? 'Test', opts.amount ?? 10, opts.category ?? 'Shopping', opts.manual_category ?? null, opts.ignored ?? 0, opts.source ?? 'plaid'],
   });
   return id;
 }
@@ -377,6 +377,17 @@ describe('clearOverridesBulk', () => {
     const u = (await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: [unpinned] })).rows[0] as unknown as { category: string };
     expect(u.category).toBe('Shopping');
   });
+
+  it('leaves source=manual rows pinned with their category intact', async () => {
+    const manual = await insertTx({ name: 'Cash Tip', category: 'Dining', manual_category: 'Dining', source: 'manual' });
+    const synced = await insertTx({ name: 'Cash Tip', category: 'Dining', manual_category: 'Dining' });
+    await clearOverridesBulk([manual, synced]);
+    const m = (await db.execute({ sql: 'SELECT category, manual_category FROM transactions WHERE id = ?', args: [manual] })).rows[0] as unknown as { category: string; manual_category: string | null };
+    expect(m.category).toBe('Dining');
+    expect(m.manual_category).toBe('Dining');
+    const s = (await db.execute({ sql: 'SELECT manual_category FROM transactions WHERE id = ?', args: [synced] })).rows[0] as unknown as { manual_category: string | null };
+    expect(s.manual_category).toBeNull();
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -398,6 +409,16 @@ describe('setIgnoredBulk', () => {
     await setIgnoredBulk([id], false);
     const row = (await db.execute({ sql: 'SELECT ignored FROM transactions WHERE id = ?', args: [id] })).rows[0] as unknown as { ignored: number };
     expect(row.ignored).toBe(0);
+  });
+
+  it('skips source=manual rows but still ignores the rest of the selection', async () => {
+    const manual = await insertTx({ source: 'manual' });
+    const synced = await insertTx({});
+    await setIgnoredBulk([manual, synced], true);
+    const rows = (await db.execute('SELECT id, ignored FROM transactions')).rows as unknown as { id: string; ignored: number }[];
+    const map = Object.fromEntries(rows.map((r) => [r.id, r.ignored]));
+    expect(map[manual]).toBe(0);
+    expect(map[synced]).toBe(1);
   });
 });
 
