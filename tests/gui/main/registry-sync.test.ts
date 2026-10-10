@@ -160,13 +160,12 @@ describe('sync.deleteCursorAndResync', () => {
     expect(await sync.isSyncing()).toBe(false);
   });
 
-  // Smell: for an unknown item syncAll returns [], so this resolves undefined
-  // (no error surfaced) and mergeSyncResult silently clears any failure badge for it.
-  it('unknown item -> undefined and clears a stale failure for that id (current behaviour)', async () => {
-    setSyncResult([res('ghost', 'stale')]);
+  it('unknown item rejects and leaves other failure badges untouched', async () => {
+    setSyncResult([res('other', 'stale')]);
     syncAllMock.mockResolvedValue([]);
-    expect(await sync.deleteCursorAndResync('ghost')).toBeUndefined();
-    expect(getSyncFailures()).toEqual([]);
+    await expect(sync.deleteCursorAndResync('ghost')).rejects.toThrow(/ghost/);
+    expect(getSyncFailures()).toEqual([{ itemId: 'other', error: 'stale' }]);
+    expect(await sync.isSyncing()).toBe(false);
   });
 });
 
