@@ -31,6 +31,7 @@ import { useTerminalWidth, MONTHS, C_POSITIVE, C_WARNING, C_MANUAL, C_ACCENT } f
 import { ModalPanel, usePagination, TextInput, SelectableRow, useStatusMessage, PageHeader, SearchBar, EditTextField, EditToggleField } from './components/index.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useSetTyping } from './TypingContext.js';
+import { useLoadError, LoadError } from './useLoadError.js';
 
 // TxRow.original_date (from core/queries.ts) is non-null only when a
 // transaction has been reattributed to another period; it holds the bank's
@@ -55,6 +56,7 @@ const SORT_LABEL: Record<SortMode, string> = {
 };
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
+  const { loadError, track } = useLoadError();
   const refreshKey = useRefreshKey();
   const { filter: sharedFilter, setFilter, popFilter, canPop } = useFilter();
   const [from, setFrom] = useState<string | null>(initialFilter?.from ?? null);
@@ -131,7 +133,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const loadGuard = useLoadGuard();
   function load(s = search, keepCursor = false) {
     const token = loadGuard.begin();
-    void getTransactions({ filter: sharedFilter, from, to, search: s, sort, txType, flex }).then((rows) => {
+    void track(getTransactions({ filter: sharedFilter, from, to, search: s, sort, txType, flex })).then((rows) => {
       if (!loadGuard.isLatest(token)) return; // superseded by a newer load
       setTxs(rows);
       if (!keepCursor) setCursor(0);
@@ -145,7 +147,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     });
   }
 
-  useEffect(() => { void getDataBounds().then(setBounds); void getAllCategories().then(setCategories); void getLastSyncedAt().then(setLastSynced); }, [refreshKey]);
+  useEffect(() => { void track(getDataBounds()).then(setBounds); void track(getAllCategories()).then(setCategories); void track(getLastSyncedAt()).then(setLastSynced); }, [refreshKey]);
   useEffect(() => { load(); }, [from, to, search, sort, txType, flex, sharedFilter, refreshKey]);
 
   const setTyping = useSetTyping();
@@ -164,7 +166,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
 
   function openEdit() {
     if (!selected) return;
-    void getAllCategories().then((cats) => {
+    void track(getAllCategories()).then((cats) => {
       setCategories(cats);
       setEditName('');
       setEditDate(selected.date);
@@ -185,7 +187,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   }
 
   function openAdd() {
-    void Promise.all([getAllCategories(), getLinkedAccounts()]).then(([cats, accts]) => {
+    void track(Promise.all([getAllCategories(), getLinkedAccounts()])).then(([cats, accts]) => {
       const eligible = eligibleAddAccounts(accts);
       if (eligible.length === 0) {
         showStatus('No accounts to add a transaction to — link or import one first', 4000);
@@ -272,7 +274,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   function openTagPanel() {
     if (!selected) return;
     const txId = selected.id;
-    void Promise.all([getTagOptions(), getTransactionTagIds(txId)]).then(([tags, ids]) => {
+    void track(Promise.all([getTagOptions(), getTransactionTagIds(txId)])).then(([tags, ids]) => {
       setAllTags(tags);
       setTagState({ txId, ids });
       setTagInput('');
@@ -473,7 +475,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     if (tagState?.txId === selected.id) return;
     const txId = selected.id;
     let cancelled = false;
-    void getTransactionTagIds(txId).then((ids) => { if (!cancelled) setTagState({ txId, ids }); });
+    void track(getTransactionTagIds(txId)).then((ids) => { if (!cancelled) setTagState({ txId, ids }); });
     return () => { cancelled = true; };
   }, [mode, selected?.id, tagState?.txId]);
 
@@ -714,7 +716,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       if (input === 'a') { setSearch(''); setSearchInput(''); setFrom(null); setTo(null); setFilter({}); }
       if (key.return && selected) openEdit();
       if (input === 'E' && txs.length > 0) {
-        void getAllCategories().then((cats) => {
+        void track(getAllCategories()).then((cats) => {
           setCategories(cats);
           setEditCatCursor(0);
           setMode('edit-all');
@@ -723,7 +725,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
       }
       if (input === 'g' && selected) openTagPanel();
       if (input === 'G' && txs.length > 0) {
-        void getTagOptions().then((tags) => {
+        void track(getTagOptions()).then((tags) => {
           setAllTags(tags);
           setTagInput('');
           setTagCursor(0);
@@ -765,7 +767,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
             const added = results.reduce((s, r) => s + r.added, 0);
             showStatus(`Synced — ${added} new`, 3000);
             load(search, true);
-            void getLastSyncedAt().then(setLastSynced);
+            void track(getLastSyncedAt()).then(setLastSynced);
           })
           .catch(() => showStatus('Sync failed', 3000))
           .finally(() => setSyncing(false));
@@ -823,11 +825,13 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const [matchCount, setMatchCount] = useState(0);
   useEffect(() => {
     if (mode === 'edit' && editPattern.trim()) {
-      void countPatternMatches(editPattern, editMatchType).then(setMatchCount);
+      void track(countPatternMatches(editPattern, editMatchType)).then(setMatchCount);
     } else {
       setMatchCount(0);
     }
   }, [mode, editPattern, editMatchType]);
+
+  if (loadError) return <LoadError message={loadError} />;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>

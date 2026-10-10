@@ -37,6 +37,7 @@ import { handleNavKey } from './nav.js';
 import { useLoadGuard } from './useLoadGuard.js';
 import { useTerminalWidth, MONTHS, SUBTYPE_DISPLAY, C_POSITIVE, C_NEGATIVE, C_WARNING, C_NEUTRAL, C_ACCENT, C_MANUAL, C_DIM } from './ui.js';
 import { ModalPanel, TextInput, SelectableRow, useStatusMessage, PageHeader, EditTextField, EditToggleField } from './components/index.js';
+import { useLoadError, LoadError } from './useLoadError.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ function fmtDate(d: string | null): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; showHints: boolean }) {
+  const { loadError, track } = useLoadError();
   const refreshKey = useRefreshKey();
   // Main view toggle
   const [mainView, setMainView] = useState<MainView>('accounts');
@@ -113,7 +115,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Checked once on mount; a persistent banner above the Links list is the
   // right severity here since it affects every item at once, not a single row.
   const [keyHealth, setKeyHealth] = useState<KeyHealth | null>(null);
-  useEffect(() => { void checkKeyHealth().then(setKeyHealth); }, []);
+  useEffect(() => { void track(checkKeyHealth()).then(setKeyHealth); }, []);
 
   // Accounts view state
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
@@ -156,7 +158,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Default history window derived from the start date set during setup.
   const [defaultDays, setDefaultDays] = useState(MAX_DAYS_REQUESTED);
   useEffect(() => {
-    void getDefaultDaysRequested().then(setDefaultDays);
+    void track(getDefaultDaysRequested()).then(setDefaultDays);
   }, []);
 
   // CSV import state
@@ -302,11 +304,11 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // Resolves to the loaded list so callers can act on it — the post-link handler
   // reads the placeholder rows to learn which items need a first sync.
   async function loadAccounts(): Promise<LinkedAccount[]> {
-    const accts = await getLinkedAccounts();
+    const accts = await track(getLinkedAccounts());
     setLinkedAccounts(accts);
     // Cheap item-level query; kept in step with the account list so a sync or a
     // link updates both views at once.
-    void getLinkedItems().then((items) => {
+    void track(getLinkedItems()).then((items) => {
       setLinkedItems(items);
       setItemCursor((c) => Math.min(c, Math.max(0, items.length - 1)));
     });
@@ -317,18 +319,18 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
     // Dupes view reports it as still running instead of claiming a clean result.
     const token = dupesGuard.begin();
     setDupesLoading(true);
-    void getCsvPlaidDupeCandidates()
+    void track(getCsvPlaidDupeCandidates())
       .then((rows) => { if (dupesGuard.isLatest(token)) setDupes(rows); })
       .finally(() => { if (dupesGuard.isLatest(token)) setDupesLoading(false); });
     return accts;
   }
   useEffect(() => { void loadAccounts(); }, [refreshKey]);
-  useEffect(() => { void getImports().then(setImports); }, [refreshKey]);
+  useEffect(() => { void track(getImports()).then(setImports); }, [refreshKey]);
   // Targets are loaded on mount, not just partway through the import wizard:
   // the move-import picker on the Add Data landing needs them too.
-  useEffect(() => { void getImportTargets().then(setCsvAccounts); }, [refreshKey]);
+  useEffect(() => { void track(getImportTargets()).then(setCsvAccounts); }, [refreshKey]);
   useEffect(() => {
-    void loadProfile().then((p) => setOwnerMembers(householdMembers(p)));
+    void track(loadProfile()).then((p) => setOwnerMembers(householdMembers(p)));
   }, [isActive]);
 
   function openEdit(acct: LinkedAccount) {
@@ -565,7 +567,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
   function saveNewAcct() {
     void createCsvAccount(newAcctName, newAcctType, newAcctSubtype.trim() || null).then(() => {
-      void getImportTargets().then((accts) => {
+      void track(getImportTargets()).then((accts) => {
         setCsvAccounts(accts);
         setCsvAccountCursor(accts.length - 1);
         setAddStep('account');
@@ -672,7 +674,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
           // that alone answers "did it work?" even if the sync is slow. The
           // placeholders *are* the items needing a first sync, so the ids come
           // from the loaded list rather than out of the link subprocess's stdout.
-          void loadAccounts().then((accts) => {
+          void track(loadAccounts()).then((accts) => {
             const itemIds = [...new Set(accts.filter((a) => a.awaitingFirstSync).map((a) => a.item_id!))];
             syncItemsWhenFree(itemIds);
           });
@@ -733,7 +735,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       setCsvRows(parsed.rows);
       setCsvLines(parsed.lines);
       setCsvFile({ name: parsed.fileName, hash: parsed.fileHash });
-      void getImportsOfFile(parsed.fileHash).then(setPriorImports);
+      void track(getImportsOfFile(parsed.fileHash)).then(setPriorImports);
       setFileError('');
       const h = parsed.headers.map((x) => x.toLowerCase());
       const dateGuess = h.findIndex((x) => x.includes('date') || x.includes('posted'));
@@ -753,7 +755,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       amountMode, dateCol: dateCol!, nameCol: nameCol!,
       amountCol, debitCol, creditCol, positiveIsInflow,
     }, csvFile, csvLines).then((result) => {
-      void getImports().then(setImports);
+      void track(getImports()).then(setImports);
       setImportResult(result);
       setAddStep('done');
     });
@@ -994,7 +996,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (key.downArrow) { setDupeCursor((c) => Math.min(dupes.length - 1, c + 1)); return; }
       if (input === 'x' && dupes[dupeCursor]) {
         void deleteDuplicate(dupes[dupeCursor].csvId).then(() => {
-          void getCsvPlaidDupeCandidates().then((next) => {
+          void track(getCsvPlaidDupeCandidates()).then((next) => {
             setDupes(next);
             setDupeCursor((c) => Math.min(c, Math.max(0, next.length - 1)));
           });
@@ -1039,7 +1041,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         if (key.downArrow) { setImportCursor((c) => Math.min(imports.length - 1, c + 1)); return; }
         if (input === 'u' && imports[importCursor]) {
           setImportMsg('');
-          void getImportImpact(imports[importCursor].id).then((impact) => {
+          void track(getImportImpact(imports[importCursor].id)).then((impact) => {
             setImportImpact(impact);
             setImportAction('undo');
           });
@@ -1132,7 +1134,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
         else if (addStep === 'map-debit')  { setDebitCol(colCursor); setColCursor(0); setAddStep('map-credit'); }
         else if (addStep === 'map-credit') {
           setCreditCol(colCursor);
-          void getImportTargets().then((accts) => { setCsvAccounts(accts); setAddStep('account'); });
+          void track(getImportTargets()).then((accts) => { setCsvAccounts(accts); setAddStep('account'); });
         }
       }
       return;
@@ -1147,8 +1149,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
 
     if (addStep === 'direction') {
       if (key.escape) { setAddStep('landing'); return; }
-      if (input === 'i') { setPositiveIsInflow(true);  void getImportTargets().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
-      if (input === 'o') { setPositiveIsInflow(false); void getImportTargets().then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
+      if (input === 'i') { setPositiveIsInflow(true);  void track(getImportTargets()).then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
+      if (input === 'o') { setPositiveIsInflow(false); void track(getImportTargets()).then((a) => { setCsvAccounts(a); setAddStep('account'); }); }
       return;
     }
 
@@ -1236,6 +1238,8 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
   // rather than inflating the account count.
   const awaitingCount = linkedAccounts.filter((a) => a.awaitingFirstSync).length;
   const realAcctCount = linkedAccounts.length - awaitingCount;
+
+  if (loadError) return <LoadError message={loadError} />;
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>
