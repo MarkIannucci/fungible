@@ -6,7 +6,7 @@ vi.mock('../../../core/transactions-refresh.js', () => ({ refreshTransactions: v
 
 import { refreshTransactions } from '../../../core/transactions-refresh.js';
 import { getSyncFailures, setSyncResult, clearSyncFailures } from '../../../core/sync-status.js';
-import { registerSyncIpc } from '../../../gui/main/sync-ipc.js';
+import { registerSyncIpc, abortInflightRefreshes } from '../../../gui/main/sync-ipc.js';
 
 const refresh = vi.mocked(refreshTransactions);
 
@@ -141,7 +141,13 @@ describe('sync:refresh concurrency', () => {
     expect(await electronMock.invoke('sync:refresh-cancel', 'i1')).toBeUndefined();
   });
 
-  // Smell: the comment in sync-ipc.ts says a cancel path exists for "a window
-  // close", but nothing aborts inflight polls when a window closes.
-  it.todo('aborts in-flight polls when the window closes');
+  it('aborts every in-flight poll when the window closes', async () => {
+    const { d, signals } = pending();
+    const p1 = electronMock.invoke('sync:refresh', 'i1');
+    const p2 = electronMock.invoke('sync:refresh', 'i2');
+    abortInflightRefreshes();
+    expect(signals.map((s) => s.aborted)).toEqual([true, true]);
+    d.resolve(ok());
+    await Promise.all([p1, p2]);
+  });
 });

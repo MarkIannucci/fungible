@@ -28,7 +28,10 @@ vi.mock('../../../gui/main/agent-ipc.js', () => ({
   registerAgentIpc: vi.fn(() => { h.log.push('registerAgentIpc'); }),
   rejectPendingConfirms: vi.fn(),
 }));
-vi.mock('../../../gui/main/sync-ipc.js', () => ({ registerSyncIpc: vi.fn(() => { h.log.push('registerSyncIpc'); }) }));
+vi.mock('../../../gui/main/sync-ipc.js', () => ({
+  registerSyncIpc: vi.fn(() => { h.log.push('registerSyncIpc'); }),
+  abortInflightRefreshes: vi.fn(),
+}));
 vi.mock('../../../gui/main/plaid-link.js', () => ({ cancelActivePlaidLink: vi.fn(), runPlaidLink: vi.fn() }));
 vi.mock('../../../gui/main/menu.js', () => ({
   // windows.length at call time proves the window is created AFTER the menu.
@@ -71,6 +74,7 @@ async function boot(env: Record<string, string> = {}) {
     seed: await import('../../../scripts/seed-demo.js'),
     agent: await import('../../../gui/main/agent-ipc.js'),
     plaidLink: await import('../../../gui/main/plaid-link.js'),
+    syncIpc: await import('../../../gui/main/sync-ipc.js'),
     progress: await import('../../../gui/main/sync-progress.js'),
     status: await import('../../../core/sync-status.js'),
     refresh: await import('../../../core/refresh.js'),
@@ -285,9 +289,10 @@ describe('window creation', () => {
     expect(f.endsWith(join('renderer', 'index.html'))).toBe(true);
   });
 
-  it("'closed' rejects pending confirms and cancels an active Plaid link", async () => {
+  it("'closed' rejects pending confirms, aborts refresh polls and cancels an active Plaid link", async () => {
     const m = await boot();
     win().emit('closed');
+    expect(m.syncIpc.abortInflightRefreshes).toHaveBeenCalledTimes(1);
     expect(m.agent.rejectPendingConfirms).toHaveBeenCalledTimes(1);
     expect(m.plaidLink.cancelActivePlaidLink).toHaveBeenCalledTimes(1);
   });
@@ -328,9 +333,8 @@ describe('window state persistence', () => {
 });
 
 describe('app lifecycle events', () => {
-  // SMELL S6: quitting on every window-all-closed (also on macOS) means closing
-  // the last window quits the app, so the macOS-style 'activate' re-open path
-  // below is unreachable in practice outside the brief window before quit.
+  // Closing the last window always quits (no macOS stay-resident behaviour),
+  // so there is deliberately no 'activate' re-open handler.
   it("'window-all-closed' quits the app", async () => {
     await boot();
     electronMock.app.quit.mockClear();
@@ -338,16 +342,10 @@ describe('app lifecycle events', () => {
     expect(electronMock.app.quit).toHaveBeenCalledTimes(1);
   });
 
-  it("'activate' with no windows creates one", async () => {
+  it("'activate' is not handled", async () => {
     await boot();
     electronMock.windows.length = 0;
     electronMock.app.emit('activate');
-    expect(electronMock.windows).toHaveLength(1);
-  });
-
-  it("'activate' with a window already open does not create another", async () => {
-    await boot();
-    electronMock.app.emit('activate');
-    expect(electronMock.windows).toHaveLength(1);
+    expect(electronMock.windows).toHaveLength(0);
   });
 });

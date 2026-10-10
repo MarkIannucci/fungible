@@ -285,6 +285,9 @@ export const registry = {
     deleteCursorAndResync: async (itemId: string) => withSyncProgress(async () => {
       await deleteSyncCursor(itemId);
       const results = await syncAll(true, [itemId]);
+      // syncAll returns [] for an item that does not exist; surface that rather
+      // than resolving undefined and merging [] (which would clear its badge).
+      if (results.length === 0) throw new Error(`Unknown connection: ${itemId}`);
       mergeSyncResult(results, [itemId]);
       return results[0];
     }),

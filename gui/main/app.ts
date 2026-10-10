@@ -15,7 +15,7 @@ import { registerSyncStatusPush } from './sync-status-ipc.js';
 import { registerSyncProgressPush } from './sync-progress-ipc.js';
 import { syncProgressStart, syncProgressEnd } from './sync-progress.js';
 import { registerAgentIpc, rejectPendingConfirms } from './agent-ipc.js';
-import { registerSyncIpc } from './sync-ipc.js';
+import { registerSyncIpc, abortInflightRefreshes } from './sync-ipc.js';
 import { cancelActivePlaidLink } from './plaid-link.js';
 import { buildMenu } from './menu.js';
 
@@ -84,9 +84,6 @@ if (!app.requestSingleInstanceLock()) {
         });
     }
 
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    });
   });
 
   app.on('window-all-closed', () => {
@@ -146,6 +143,7 @@ function createWindow() {
   });
   win.on('closed', () => {
     rejectPendingConfirms();
+    abortInflightRefreshes();
     cancelActivePlaidLink();
   });
 

@@ -154,22 +154,47 @@ describe('agent:reset', () => {
     expect(histRef).toHaveLength(0);
   });
 
-  // Smell: reset mid-turn is silently ignored (resolves undefined, history kept),
-  // so the renderer's "new chat" appears to succeed but the old context survives.
-  it('mid-turn reset leaves history intact (current behaviour, silently ignored)', async () => {
+  it('mid-turn reset aborts the turn, then clears history; the run resolves quietly', async () => {
     const d = deferred();
+    const ev = makeEvent();
     let histRef!: Hist;
-    runAgentTurn.mockImplementation(async (m: string, h: Hist) => {
+    let sawAbort = false;
+    runAgentTurn.mockImplementation(async (m: string, h: Hist, cb: any) => {
       histRef = h;
       h.push({ role: 'user', content: m });
       await d.promise;
+      try { cb.onText('late'); } catch { sawAbort = true; throw new Error('unwound'); }
     });
-    const run = electronMock.invoke('agent:run', 'one');
+    const run = electronMock.invokeWith(ev, 'agent:run', 'one');
     await tick();
-    await expect(electronMock.invoke('agent:reset')).resolves.toBeUndefined();
-    expect(histRef).toHaveLength(1);
+    const reset = electronMock.invoke('agent:reset');
     d.resolve();
+    await reset;
+    await expect(run).resolves.toBeUndefined();
+    expect(sawAbort).toBe(true);
+    expect(histRef).toHaveLength(0);
+    expect(ev.sender.send).not.toHaveBeenCalled();
+    // a fresh turn works afterwards
+    runAgentTurn.mockImplementation(async (m: string, h: Hist) => { h.push({ role: 'user', content: m }); });
+    await electronMock.invoke('agent:run', 'two');
+    expect(histRef).toHaveLength(1);
+  });
+
+  it('mid-turn reset declines a pending confirmation', async () => {
+    let answer!: Promise<boolean>;
+    const gate = deferred();
+    runAgentTurn.mockImplementation(async (_m: string, _h: unknown, cb: any) => {
+      answer = cb.onConfirm('delete?');
+      await answer;
+      await gate.promise;
+    });
+    const run = electronMock.invoke('agent:run', 'x');
+    await tick();
+    const reset = electronMock.invoke('agent:reset');
+    gate.resolve();
+    await reset;
     await run;
+    await expect(answer).resolves.toBe(false);
   });
 });
 
