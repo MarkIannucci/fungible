@@ -228,26 +228,8 @@ describe('GUI Settings — household profile', () => {
     expect(saveBtn().disabled).toBe(false);
   });
 
-  // ── Failure probes ────────────────────────────────────────────────────────
-  // Settings calls `void save()` / `void api.profile.loadProfile().then(...)` with
-  // no catch, so a rejected bridge call is an unhandled rejection and the user
-  // sees nothing. Expected behaviour (an error toast / not stuck on "Loading…")
-  // is pinned as it.fails so it flips to a failure the day the screen handles it.
-  // The rejection is swallowed locally so it does not fail the whole run.
-  async function swallowingUnhandled<T>(fn: () => Promise<T>): Promise<T> {
-    const saved = process.listeners('unhandledRejection');
-    process.removeAllListeners('unhandledRejection');
-    process.on('unhandledRejection', () => {});
-    try {
-      return await fn();
-    } finally {
-      process.removeAllListeners('unhandledRejection');
-      for (const l of saved) process.on('unhandledRejection', l);
-    }
-  }
-
-  it.fails('PRODUCT BUG: a rejected saveProfile shows an error toast instead of failing silently', async () => {
-    await swallowingUnhandled(async () => {
+  // ── Failure paths ─────────────────────────────────────────────────────────
+  it('a rejected saveProfile shows an error toast instead of failing silently', async () => {
       await renderLoaded();
       const prev = bridge().call;
       bridge().call = async (ns, fn, args) => {
@@ -257,22 +239,22 @@ describe('GUI Settings — household profile', () => {
       await userEvent.type(names()[0], 'Alex');
       await userEvent.type(years()[0], '1985');
       await userEvent.click(saveBtn());
-      await new Promise((r) => setTimeout(r, 50));
-      expect(screen.queryByText('Profile saved')).toBeNull(); // (true today)
-      expect(document.querySelector('[class*="toast"]')).not.toBeNull(); // (fails today: no toast)
-    });
+      expect(screen.queryByText('Profile saved')).toBeNull();
+      expect(await screen.findByText(/Save failed: disk full/)).toBeTruthy();
   });
 
-  it.fails('PRODUCT BUG: a rejected loadProfile does not leave the screen on "Loading…" forever', async () => {
-    await swallowingUnhandled(async () => {
+  it('a rejected loadProfile shows an error with Retry instead of "Loading…" forever', async () => {
       const prev = bridge().call;
       bridge().call = async (ns, fn, args) => {
         if (ns === 'profile' && fn === 'loadProfile') throw new Error('db locked');
         return prev(ns, fn, args);
       };
       renderScreen(<Settings />);
-      await new Promise((r) => setTimeout(r, 50));
+      expect(await screen.findByText(/db locked/)).toBeTruthy();
       expect(screen.queryByText('Loading…')).toBeNull();
-    });
+      // Retry recovers once the bridge works again.
+      bridge().call = prev;
+      await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy());
   });
 });
