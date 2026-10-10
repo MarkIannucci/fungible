@@ -611,15 +611,9 @@ describe('GUI Transactions: bulk actions', () => {
     expect(r.category).not.toBe('Dining');
   });
 
-  // PRODUCT BUG: the bulk actions bypass the guards the single-row UI applies to
-  // source='manual' rows. A hand-entered row is also "pinned" (addTransaction
-  // sets manual_category = category) with no raw category to revert to, so the
-  // single-row UI hides both clear and ignore for it. Bulk Clear overrides
-  // (core clearOverridesBulk selects every manual_category IS NOT NULL row) wipes
-  // the manual row's category; bulk Ignore ignores it. Fix: exclude
-  // source = 'manual' ids in clearOverridesBulk/setIgnoredBulk (or filter them
-  // out of selectedTxs in Transactions.tsx), then flip these to plain `it`.
-  it.fails('BUG: bulk Clear overrides keeps a manual-source row\'s category', async () => {
+  // Core's clearOverridesBulk/setIgnoredBulk skip source='manual' rows, matching
+  // the single-row UI, which hides clear and ignore for hand-entered rows.
+  it('bulk Clear overrides keeps a manual-source row\'s category', async () => {
     await db.execute(
       `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, pending, ignored, source)
        VALUES ('tx-manual-3', 'test-checking', '2026-05-12', 'Cash Tip', 12.50, 'Dining', 'Dining', 0, 0, 'manual')`,
@@ -634,7 +628,7 @@ describe('GUI Transactions: bulk actions', () => {
     expect(r.manual_category).toBe('Dining');
   });
 
-  it.fails('BUG: bulk Ignore does not ignore a manual-source row (single-row UI forbids it)', async () => {
+  it('bulk Ignore does not ignore a manual-source row (single-row UI forbids it)', async () => {
     await db.execute(
       `INSERT INTO transactions (id, account_id, date, name, amount, category, manual_category, pending, ignored, source)
        VALUES ('tx-manual-4', 'test-checking', '2026-05-12', 'Cash Tip', 12.50, 'Dining', 'Dining', 0, 0, 'manual')`,
