@@ -2,10 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { Modal } from './Modal.js';
 import type { BalanceImportPreview, BalanceImportResult } from '../../../../core/balance-import.js';
-import { BALANCE_IMPORT_SKIP_COPY, summarizeSkips } from '../../../../core/balance-import-copy.js';
+import { BALANCE_IMPORT_SKIP_COPY, previewBalanceSkips } from '../../../../core/balance-import-copy.js';
 import styles from '../screens/Accounts.module.css';
 
-export const SKIPPED_LIST_CAP = 20;
 const FORMAT_HELP =
   'date (YYYY-MM-DD), account name, balance. For credit cards and loans, enter the amount owed as a positive number.';
 
@@ -84,6 +83,8 @@ export function BalanceHistoryImportModal({
     </select>
   );
 
+  const skipPreview = previewBalanceSkips(preview?.skipped ?? []);
+
   return (
     <Modal title="Import balance history" onClose={onClose}>
       {!preview ? (
@@ -102,7 +103,7 @@ export function BalanceHistoryImportModal({
           <p>
             {preview.willInsert} balances will be added, {preview.willOverwrite.count} will replace existing values,{' '}
             {preview.skipped.length} skipped
-            {preview.skipped.length > 0 && ` (${summarizeSkips(preview.skipped)})`}
+            {preview.skipped.length > 0 && ` (${skipPreview.summary})`}
           </p>
           {preview.warnings.map((w, i) => (
             <p key={i} className="dim">{w}</p>
@@ -151,11 +152,11 @@ export function BalanceHistoryImportModal({
             <>
               <h3 className="sectionLabel">Skipped rows</h3>
               <ul className="dim">
-                {preview.skipped.slice(0, SKIPPED_LIST_CAP).map((s) => (
+                {skipPreview.shown.map((s) => (
                   <li key={s.line}>Line {s.line}: {BALANCE_IMPORT_SKIP_COPY[s.reason]}</li>
                 ))}
-                {preview.skipped.length > SKIPPED_LIST_CAP && (
-                  <li>…and {preview.skipped.length - SKIPPED_LIST_CAP} more</li>
+                {skipPreview.hiddenCount > 0 && (
+                  <li>…and {skipPreview.hiddenCount} more</li>
                 )}
               </ul>
             </>
