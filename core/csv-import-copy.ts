@@ -1,3 +1,5 @@
+import { previewSkipped, type SkippedPreview } from './skipped-rows.js';
+
 export type CsvSkipReason = 'bad_amount' | 'empty_amount' | 'bad_date' | 'missing_name' | 'duplicate';
 
 /** `rowIndex` is 0-based among data rows (part of stored ids); `line` is the 1-based source line (always set by importCsvTransactions; optional so UI fixtures may omit it). */
@@ -19,4 +21,9 @@ export function summarizeCsvSkips(skipped: CsvSkippedRow[]): string {
   const counts = new Map<CsvSkipReason, number>();
   for (const s of skipped) counts.set(s.reason, (counts.get(s.reason) ?? 0) + 1);
   return ORDER.filter((r) => counts.has(r)).map((r) => `${counts.get(r)} ${CSV_SKIP_COPY[r]}`).join(', ');
+}
+
+/** Reason summary plus the first SKIPPED_ROWS_SHOWN skipped CSV rows and how many are hidden. */
+export function previewCsvSkips(skipped: CsvSkippedRow[]): SkippedPreview<CsvSkippedRow> {
+  return previewSkipped(skipped, summarizeCsvSkips(skipped));
 }

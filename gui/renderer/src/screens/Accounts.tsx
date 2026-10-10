@@ -20,7 +20,7 @@ import {
 } from '../../../../core/transactions-refresh-format.js';
 import { resolveCsvAmount } from '../../../../core/csv-amount.js';
 import { parseDate } from '../../../../core/csv-date.js';
-import { summarizeCsvSkips, CSV_SKIP_COPY, type CsvSkippedRow } from '../../../../core/csv-import-copy.js';
+import { previewCsvSkips, summarizeCsvSkips, CSV_SKIP_COPY, type CsvSkippedRow } from '../../../../core/csv-import-copy.js';
 import styles from './Accounts.module.css';
 
 type Tab = 'accounts' | 'links' | 'add-data' | 'dupes';
@@ -1304,18 +1304,15 @@ function MoveImportModal({ imp, onClose, onDone }: {
 
 // ── CSV import wizard (single-form, unlike the TUI's step flow) ─────────────
 
-const SKIPPED_LINES_SHOWN = 3;
-
 /** Done message for a CSV import. Uses the true source line core reports;
  *  rowIndex + 2 is only a fallback (it ignores blank lines and embedded newlines). */
 export function csvDoneMessage(imported: number, skipped: number, skippedRows: CsvSkippedRow[]): string {
   let msg = `Imported ${imported} · skipped ${skipped}`;
   if (skippedRows.length === 0) return msg;
-  msg += ` (${summarizeCsvSkips(skippedRows)})`;
-  const shown = skippedRows.slice(0, SKIPPED_LINES_SHOWN)
-    .map((r) => `line ${r.line ?? r.rowIndex + 2}: ${CSV_SKIP_COPY[r.reason]}`);
-  const more = skippedRows.length - shown.length;
-  return `${msg}. ${shown.join('; ')}${more > 0 ? `; and ${more} more` : ''}`;
+  const { summary, shown, hiddenCount } = previewCsvSkips(skippedRows);
+  msg += ` (${summary})`;
+  const lines = shown.map((r) => `line ${r.line ?? r.rowIndex + 2}: ${CSV_SKIP_COPY[r.reason]}`);
+  return `${msg}. ${lines.join('; ')}${hiddenCount > 0 ? `; …and ${hiddenCount} more` : ''}`;
 }
 
 type CsvData = { path: string; headers: string[]; rows: string[][]; lines: number[]; fileName: string; fileHash: string };
