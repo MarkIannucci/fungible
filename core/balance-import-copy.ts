@@ -1,3 +1,5 @@
+import { previewSkipped, type SkippedPreview } from './skipped-rows.js';
+
 export type BalanceImportSkipReason =
   | 'no_matching_account'
   | 'ambiguous_account'
@@ -33,4 +35,9 @@ export function summarizeSkips(skipped: { reason: BalanceImportSkipReason }[]): 
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   return [...counts].map(([label, n]) => `${n} ${label}`).join(', ');
+}
+
+/** Reason summary plus the first SKIPPED_ROWS_SHOWN skipped balance rows and how many are hidden. */
+export function previewBalanceSkips<T extends { reason: BalanceImportSkipReason }>(skipped: T[]): SkippedPreview<T> {
+  return previewSkipped(skipped, summarizeSkips(skipped));
 }
