@@ -221,19 +221,6 @@ function hasStringLiteral(file: string, value: string): boolean {
   return found;
 }
 
-/** `const NAME = <number>` value (undefined if no such declaration) and whether `.slice(0, NAME)` is called anywhere. */
-function constCap(src: string, fileName: string, name: string): { value: number | undefined; usedInSlice: boolean } {
-  let value: number | undefined;
-  let usedInSlice = false;
-  walk(parseSource(src, fileName).body, (n) => {
-    if (n.type === 'VariableDeclarator' && n.id.type === 'Identifier' && n.id.name === name && n.init?.type === 'NumericLiteral') value = n.init.value;
-    if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && n.callee.property.name === 'slice'
-      && n.arguments[0]?.type === 'NumericLiteral' && n.arguments[0].value === 0
-      && n.arguments[1]?.type === 'Identifier' && n.arguments[1].name === name) usedInSlice = true;
-  });
-  return { value, usedInSlice };
-}
-
 /** Literal caps in `<expr>.<prop>.slice(0, <number>)` calls. */
 function literalSliceCaps(src: string, fileName: string, prop: string): number[] {
   const caps: number[] = [];
@@ -316,11 +303,11 @@ const EXPECTED_UNBRIDGED: Record<string, Claim> = {
   // Handled differently in the GUI
   parseCSV: { kind: 'main-direct', module: 'csv', files: ['gui/main/bridge.ts'], why: 'gui/main/bridge.ts parses the picked file itself (files.pickCsv: native dialog + parse in main)' },
   parseDate: rd('csv-date', 'pure core/csv-date.ts'),
-  summarizeCsvSkips: rd('csv-import-copy', 'pure core/csv-import-copy.ts'),
+  previewCsvSkips: rd('csv-import-copy', 'pure core/csv-import-copy.ts'),
   householdMembers: { kind: 'bridged-composed', via: ['profile.getHouseholdMembers'], why: 'exposed as profile.getHouseholdMembers' },
   onRefresh: { kind: 'ipc-channel', file: 'gui/main/refresh-ipc.ts', needle: 'onRefresh', why: 'main process subscribes and pushes refresh events over IPC' },
   notifyChange: { kind: 'main-direct', module: 'refresh', files: ['gui/main/app.ts', 'gui/main/plaid-link.ts'], why: 'gui/main (app.ts, plaid-link.ts) calls it after sync/link; the renderer gets the bump over the refresh channel' },
-  summarizeSkips: rd('balance-import-copy', 'pure copy helper in core/balance-import-copy.ts (browser-safe)'),
+  previewBalanceSkips: rd('balance-import-copy', 'pure copy helper in core/balance-import-copy.ts (browser-safe)'),
 
   // Agent chat is wired through dedicated IPC channels (gui/main/agent-ipc.ts)
   runAgentTurn: { kind: 'ipc-channel', file: 'gui/main/agent-ipc.ts', needle: "'agent:run'", why: 'agent:run channel' },
@@ -574,10 +561,10 @@ describe('GUI bridge feature parity with TUI', { timeout: 30_000 }, () => {
   it('TUI and GUI take CSV / balance-import skip copy from the same core exports', () => {
     const tuiUses = collectCoreUses(join(ROOT, 'tui'));
     for (const [name, module] of [
-      ['summarizeCsvSkips', 'csv-import-copy'],
       ['CSV_SKIP_COPY', 'csv-import-copy'],
-      ['summarizeSkips', 'balance-import-copy'],
       ['BALANCE_IMPORT_SKIP_COPY', 'balance-import-copy'],
+      ['previewCsvSkips', 'csv-import-copy'],
+      ['previewBalanceSkips', 'balance-import-copy'],
     ] as const) {
       expect(tuiUses.some((u) => u.name === name && modOf(u.originFile) === module), `TUI no longer imports ${name} from core/${module}`).toBe(true);
       expect(rendererUses.some((u) => u.name === name && modOf(u.originFile) === module), `GUI renderer no longer imports ${name} from core/${module}`).toBe(true);
@@ -594,28 +581,33 @@ describe('GUI bridge feature parity with TUI', { timeout: 30_000 }, () => {
     expect(unexpected, `These files load core dynamically, which this test cannot attribute. Use a static import:\n  ${unexpected.join('\n  ')}`).toEqual([]);
   });
 
-  // KNOWN DRIFT (pinned, not endorsed): list caps differ between surfaces. Reconciling them is a
-  // product call; when you do, update these numbers on purpose.
-  it('KNOWN DRIFT: balance-import skipped-row preview cap is TUI 5 vs GUI 20', () => {
-    const tuiPath = join(ROOT, 'tui/Accounts.tsx');
-    const guiPath = join(ROOT, 'gui/renderer/src/components/BalanceHistoryImportModal.tsx');
-    const tui = constCap(readFileSync(tuiPath, 'utf-8'), tuiPath, 'CAP');
-    const gui = constCap(readFileSync(guiPath, 'utf-8'), guiPath, 'SKIPPED_LIST_CAP');
-    expect(tui.value, 'TUI CAP constant not found in tui/Accounts.tsx').toBeDefined();
-    expect(gui.value, 'SKIPPED_LIST_CAP constant not found in BalanceHistoryImportModal.tsx').toBeDefined();
-    expect(tui.usedInSlice, 'TUI CAP is no longer used in .slice(0, CAP)').toBe(true);
-    expect(gui.usedInSlice, 'GUI SKIPPED_LIST_CAP is no longer used in .slice(0, SKIPPED_LIST_CAP)').toBe(true);
-    expect({ tui: tui.value, gui: gui.value }).toEqual({ tui: 5, gui: 20 });
-  });
+  // #271: skipped-row previews (reason summary + first N rows) come from one core constant
+  // and the preview helpers; no surface may re-introduce its own cap for skipped lists.
+  it('skipped-row previews use the shared core helpers, not a surface-local cap', () => {
+    const files = {
+      tui: join(ROOT, 'tui/Accounts.tsx'),
+      guiModal: join(ROOT, 'gui/renderer/src/components/BalanceHistoryImportModal.tsx'),
+      guiScreen: join(ROOT, 'gui/renderer/src/screens/Accounts.tsx'),
+    };
+    const src = Object.fromEntries(Object.entries(files).map(([k, f]) => [k, readFileSync(f, 'utf-8')]));
+    const imports = (text: string, name: string, mod: string) =>
+      new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from\\s*'[^']*core/${mod}\\.js'`).test(text);
+    expect(imports(src.tui, 'previewCsvSkips', 'csv-import-copy'), 'tui/Accounts.tsx must import previewCsvSkips').toBe(true);
+    expect(imports(src.tui, 'previewBalanceSkips', 'balance-import-copy'), 'tui/Accounts.tsx must import previewBalanceSkips').toBe(true);
+    expect(imports(src.tui, 'SKIPPED_ROWS_SHOWN', 'skipped-rows'), 'tui/Accounts.tsx must import SKIPPED_ROWS_SHOWN').toBe(true);
+    expect(imports(src.guiModal, 'previewBalanceSkips', 'balance-import-copy'), 'BalanceHistoryImportModal must import previewBalanceSkips').toBe(true);
+    expect(imports(src.guiScreen, 'previewCsvSkips', 'csv-import-copy'), 'gui screens/Accounts.tsx must import previewCsvSkips').toBe(true);
 
-  it('KNOWN DRIFT: CSV-import done-message skipped-line cap is TUI 5 vs GUI 3', () => {
-    const tuiPath = join(ROOT, 'tui/Accounts.tsx');
-    const guiPath = join(ROOT, 'gui/renderer/src/screens/Accounts.tsx');
-    const tuiCaps = literalSliceCaps(readFileSync(tuiPath, 'utf-8'), tuiPath, 'skippedRows');
-    const gui = constCap(readFileSync(guiPath, 'utf-8'), guiPath, 'SKIPPED_LINES_SHOWN');
-    expect(tuiCaps.length, 'no <x>.skippedRows.slice(0, N) found in tui/Accounts.tsx').toBeGreaterThan(0);
-    expect(gui.value, 'SKIPPED_LINES_SHOWN constant not found in gui Accounts.tsx').toBeDefined();
-    expect(gui.usedInSlice, 'GUI SKIPPED_LINES_SHOWN is no longer used in .slice(0, SKIPPED_LINES_SHOWN)').toBe(true);
-    expect({ tui: tuiCaps, gui: gui.value }).toEqual({ tui: [5], gui: 3 });
+    // The old surface-local caps are gone.
+    for (const [k, text] of Object.entries(src)) {
+      expect(text, `${k} still defines SKIPPED_LIST_CAP`).not.toMatch(/\bSKIPPED_LIST_CAP\b/);
+      expect(text, `${k} still defines SKIPPED_LINES_SHOWN`).not.toMatch(/\bSKIPPED_LINES_SHOWN\b/);
+      for (const prop of ['skipped', 'skippedRows']) {
+        expect(literalSliceCaps(text, files[k as keyof typeof files], prop), `${k} slices .${prop} with a literal cap`).toEqual([]);
+      }
+    }
+    // TUI's local CAP (unmatched/ambiguous/overwrite lists) must derive from the shared constant.
+    const tuiCap = src.tui.match(/const CAP\s*=\s*([^;]+);/);
+    expect(tuiCap?.[1].trim(), 'TUI CAP must be set from SKIPPED_ROWS_SHOWN').toBe('SKIPPED_ROWS_SHOWN');
   });
 });
