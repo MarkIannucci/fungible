@@ -156,23 +156,16 @@ describe('known narrow-width defects (pinned with it.fails)', () => {
       await oneLine(screen, CONTROL_WIDTH[screen] ?? 60, parts);
     }, 10000);
 
-  // DialRow keeps a fixed 12-wide value column; whenever the terminal squeezes it
-  // the value is middle-truncated and the LEADING digits are the ones dropped
-  // ("$100.00" -> "…0.00", "$500" -> "…00" -> bare "…"), so an editable dollar
-  // amount is unreadable. Already broken at 80 columns (the default terminal).
-  const dialValuesReadable = async (screen: string, width: number) => {
-    const m = await mount(byName(screen), width, screen === 'Health' ? 'ASSUMPTIONS' : 'Narrow Canvas');
-    const t = m.text();
-    m.unmount();
-    expect(t).not.toMatch(/\[\s*\+?…/);
-  };
-  it.fails.each([['Health', 80], ['Health', 60], ['Health', 40], ['Canvas', 80], ['Canvas', 60], ['Canvas', 40]] as const)(
-    '%s: dial values are not ellipsized at %i columns', async (screen, width) => {
-      await dialValuesReadable(screen, width);
-    }, 10000);
-  it.each([['Health', 100], ['Canvas', 100]] as const)(
-    '%s: control - dial values are intact at 100 columns', async (screen, width) => {
-      await dialValuesReadable(screen, width);
+  // DialRow's label and value columns refuse to shrink, so the description gives
+  // way first and values render in full instead of middle-truncating ("$100.00"
+  // -> "…0.00") at any of these widths (#284).
+  it.each([['Health', 100], ['Canvas', 100], ['Health', 80], ['Canvas', 80], ['Health', 60], ['Canvas', 60], ['Health', 40], ['Canvas', 40]] as const)(
+    '%s: dial values are intact at %i columns', async (screen, width) => {
+      const m = await mount(byName(screen), width, screen === 'Health' ? 'ASSUMPTIONS' : 'Narrow Canvas');
+      const t = m.text();
+      m.unmount();
+      expect(t).not.toMatch(/\[\s*\+?…/);
+      if (screen === 'Health') expect(t).toMatch(/\[\s*\$100\.00\s*\]/);
     }, 10000);
 });
 
