@@ -43,17 +43,13 @@ const CASES: Array<[string, React.ComponentType<ScreenProps>, string[]]> = [
 ];
 
 /*
- * BUG (pinned with it.fails, product code untouched): every screen loads with
- * `void query().then(setX)` and no .catch, so when the database rejects the load
- * becomes an unhandled promise rejection (which kills the process under Node's default
- * --unhandled-rejections=throw), or the screen masks the failure as its empty state
- * ("No tags yet.") or sits on "Loading..." forever. The contract asserted below is
- * copy-agnostic about the eventual error text: no unhandled rejection, no empty-state
- * copy (that would tell the user their data is gone), and not a bare "Loading...".
- * Flipping `.fails` to a plain `it` is the job of the PR that fixes the screens.
+ * Every screen wraps its loads in useLoadError().track, so a rejected query shows an
+ * error panel instead of an unhandled rejection (process crash) or a misleading empty
+ * state ("No tags yet.") / endless "Loading...". The assertions are copy-agnostic about
+ * the error text: no unhandled rejection, no empty-state copy, not a bare "Loading...".
  */
 describe('a rejected load must be surfaced, not swallowed', () => {
-  it.fails.each(CASES)('%s', async (name, C, emptyCopy) => {
+  it.each(CASES)('%s', async (name, C, emptyCopy) => {
     const unhandled = captureUnhandled();
     const restore = failDb(db, 'boom');
     try {
