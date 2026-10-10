@@ -12,7 +12,7 @@ vi.mock('../../core/db.js', async () => {
 import { db } from '../../core/db.js';
 import { installBridge, renderScreen } from './helpers/renderGui.js';
 import { Accounts } from '../../gui/renderer/src/screens/Accounts.js';
-import { SKIPPED_LIST_CAP } from '../../gui/renderer/src/components/BalanceHistoryImportModal.js';
+import { SKIPPED_ROWS_SHOWN } from '../../core/skipped-rows.js';
 
 type Call = { ns: string; fn: string; args: unknown[] };
 let calls: Call[];
@@ -221,11 +221,11 @@ describe('GUI Accounts — import balance history', () => {
 
   it('caps the skipped list and shows "…and N more"', async () => {
     const extra = 5;
-    const rows = Array.from({ length: SKIPPED_LIST_CAP + extra }, (_, i) => `2026-04-01,Nobody${i},5`);
+    const rows = Array.from({ length: SKIPPED_ROWS_SHOWN + extra }, (_, i) => `2026-04-01,Nobody${i},5`);
     picked = { path: '/x/s.csv', fileName: 's.csv', text: ['date,account,balance', ...rows].join('\n') };
     await openModal();
     await screen.findByText(/balances will be added/);
-    expect(screen.getAllByText(/^Line \d+: /).length).toBe(SKIPPED_LIST_CAP);
+    expect(screen.getAllByText(/^Line \d+: /).length).toBe(SKIPPED_ROWS_SHOWN);
     expect(screen.getByText(`…and ${extra} more`)).toBeTruthy();
   });
 

@@ -16,6 +16,7 @@ import { Accounts } from '../../gui/renderer/src/screens/Accounts.js';
 import { makeCsvRow } from '../helpers/makeCsvRow.js';
 import { parseCsvText } from '../../core/csv.js';
 import { summarizeCsvSkips } from '../../core/csv-import-copy.js';
+import { SKIPPED_ROWS_SHOWN } from '../../core/skipped-rows.js';
 
 const CFG = makeCsvRow();
 
@@ -313,13 +314,15 @@ describe('GUI Accounts — CSV import modal', () => {
   });
 
   it('says "and N more" when many rows are skipped', async () => {
-    const bad = Array.from({ length: 5 }, (_, i) => [`2025-01-0${i + 1}`, `BAD${i}`, 'abc']);
+    const total = SKIPPED_ROWS_SHOWN + 2;
+    const bad = Array.from({ length: total }, (_, i) => [`2025-01-0${i + 1}`, `BAD${i}`, 'abc']);
     await openModal(bad);
-    await userEvent.click(await screen.findByRole('button', { name: 'Import 5 rows' }));
+    await userEvent.click(await screen.findByRole('button', { name: `Import ${total} rows` }));
     const msg = await screen.findByText(/^Imported 0/);
     expect(msg.textContent).toContain('line 2:');
-    expect(msg.textContent).toContain('and 2 more');
-    expect(msg.textContent).not.toContain('line 6:');
+    expect(msg.textContent).toContain(`line ${SKIPPED_ROWS_SHOWN + 1}:`);
+    expect(msg.textContent).not.toContain(`line ${SKIPPED_ROWS_SHOWN + 2}:`);
+    expect(msg.textContent).toContain('…and 2 more');
   });
 
   it('reports the true file line when a blank line precedes the bad row', async () => {
