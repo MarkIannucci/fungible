@@ -6,10 +6,10 @@ import { parseDate, assignOrdinals, dedupKey } from './csv.js';
 import { deleteDuplicatesKeepingEdits } from './dedup.js';
 import { openImport, closeImport, importTxId } from './imports.js';
 import { isLiabilityAccount } from './account-class.js';
-import { resolveCsvAmount, type CsvAmountConfig } from './csv-amount.js';
+import { resolveCsvAmount } from './csv-amount.js';
 import type { CsvSkippedRow } from './csv-import-copy.js';
 
-export { resolveCsvAmount, type CsvAmountConfig } from './csv-amount.js';
+export { resolveCsvAmount } from './csv-amount.js';
 
 export async function updateAccountTypeSubtype(id: string, type: string, subtype: string | null): Promise<void> {
   await db.execute({ sql: 'UPDATE accounts SET type = ?, subtype = ? WHERE id = ?', args: [type, subtype, id] });

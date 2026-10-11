@@ -7,7 +7,7 @@ import type { ImportConfig } from './accounts.js';
 
 export type CsvAmountConfig = Pick<ImportConfig, 'amountMode' | 'amountCol' | 'debitCol' | 'creditCol' | 'positiveIsInflow'>;
 
-export type CsvAmountSkipReason = 'bad_amount' | 'empty_amount';
+type CsvAmountSkipReason = 'bad_amount' | 'empty_amount';
 
 export type CsvAmountResult =
   | { ok: true; amount: number }

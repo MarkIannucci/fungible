@@ -3,7 +3,7 @@ import { buildFilterClause, buildFilterConditions, type Filter } from './filters
 import { BASIS_LABEL, type MetricBasis, parseSearchDate, isSearchDateAnyYear, type ParsedSearchDate } from './dateUtils.js';
 import { LIQUID_SUBTYPES, RETIREMENT_SUBTYPES, inClause } from './account-class.js';
 
-export type CategorySummary = { category: string; total: number };
+type CategorySummary = { category: string; total: number };
 export type MonthlySummary  = { income: number; expenses: number; net: number; byCategory: CategorySummary[] };
 export type RecentTransaction = { id: string; date: string; name: string; merchant_name: string | null; amount: number; category: string };
 
@@ -634,7 +634,7 @@ export async function getAllTags(): Promise<Tag[]> {
 }
 
 export type SortMode = 'date-desc' | 'date-asc' | 'amount-desc' | 'amount-asc' | 'name-asc' | 'name-desc' | 'category-asc' | 'category-desc';
-export const SORT_ORDER_BY: Record<SortMode, string> = {
+const SORT_ORDER_BY: Record<SortMode, string> = {
   'date-desc':     't.date DESC, t.id DESC',
   'date-asc':      't.date ASC, t.id ASC',
   'amount-desc':   't.amount DESC',

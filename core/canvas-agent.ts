@@ -31,7 +31,7 @@ export const BINDING_KEYS = [
   'spouse_age',
 ] as const;
 
-export type BindingKey = typeof BINDING_KEYS[number];
+type BindingKey = typeof BINDING_KEYS[number];
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
