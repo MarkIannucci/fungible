@@ -2,9 +2,8 @@
 // which strips the `export` subcommand word before forwarding the rest of
 // argv here (so process.argv[2..] is exactly the flag list below).
 //
-// No argv-parsing library is installed in this repo (see scripts/import-csv.ts
-// for the existing hand-rolled convention) -- parseArgs below follows the same
-// pattern: plain string/boolean flags, no nested commands.
+// No argv-parsing library is installed in this repo -- parseArgs below is
+// hand-rolled: plain string/boolean flags, no nested commands.
 
 import 'dotenv/config';
 import fs from 'node:fs';
