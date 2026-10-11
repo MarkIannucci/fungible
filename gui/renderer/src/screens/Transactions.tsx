@@ -645,10 +645,11 @@ function EditModal({
           maxAmount: existing?.max_amount ?? null,
           accountId: existing?.account_id ?? null,
           editingId: suggestion.conflictingRule.id,
+          sourceTransactionId: tx.id,
         });
         onSaved(`Category updated · rule updated (${suggestion.matchCount} transaction${suggestion.matchCount === 1 ? '' : 's'})`);
       } else {
-        await api.transactions.upsertCategoryRule(suggestion.pattern, suggestion.matchType, suggestion.newCategory);
+        await api.transactions.upsertCategoryRule(suggestion.pattern, suggestion.matchType, suggestion.newCategory, tx.id);
         onSaved(`Category updated · rule created (${suggestion.matchCount} transaction${suggestion.matchCount === 1 ? '' : 's'})`);
       }
     } catch (e) {
