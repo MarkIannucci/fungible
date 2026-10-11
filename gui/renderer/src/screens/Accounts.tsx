@@ -1306,7 +1306,7 @@ function MoveImportModal({ imp, onClose, onDone }: {
 
 /** Done message for a CSV import. Uses the true source line core reports;
  *  rowIndex + 2 is only a fallback (it ignores blank lines and embedded newlines). */
-export function csvDoneMessage(imported: number, skipped: number, skippedRows: CsvSkippedRow[]): string {
+function csvDoneMessage(imported: number, skipped: number, skippedRows: CsvSkippedRow[]): string {
   let msg = `Imported ${imported} · skipped ${skipped}`;
   if (skippedRows.length === 0) return msg;
   const { summary, shown, hiddenCount } = previewCsvSkips(skippedRows);

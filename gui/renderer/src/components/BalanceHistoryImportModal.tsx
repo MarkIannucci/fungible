@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { Modal } from './Modal.js';
 import type { BalanceImportPreview, BalanceImportResult } from '../../../../core/balance-import.js';

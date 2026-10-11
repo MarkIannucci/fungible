@@ -245,9 +245,3 @@
   border-color: var(--text-dim);
 }
 
-/* + N more under $X roll-up row */
-.moreRow td {
-  color: var(--text-faint);
-  font-size: 13px;
-  padding-top: 9px;
-}

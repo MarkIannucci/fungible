@@ -100,7 +100,6 @@ import {
 } from '../../core/imports.js';
 import { previewBalanceImport, commitBalanceImport } from '../../core/balance-import.js';
 import { getCsvPlaidDupeCandidates } from '../../core/dedup.js';
-import { applyCategoriesToAll } from '../../core/categorize.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
 import { syncAll, deleteSyncCursor } from '../../core/sync.js';
 import { setSyncResult, mergeSyncResult, getSyncFailures } from '../../core/sync-status.js';
@@ -233,9 +232,6 @@ export const registry = {
   balanceImport: {
     previewBalanceImport,
     commitBalanceImport,
-  },
-  categorize: {
-    applyCategoriesToAll,
   },
   profile: {
     loadProfile,

@@ -55,7 +55,6 @@ const GOLDEN: Record<string, string[]> = {
   ],
   imports: ['getImports', 'getImportsOfFile', 'getImportImpact', 'deleteImport', 'moveImport'],
   balanceImport: ['previewBalanceImport', 'commitBalanceImport'],
-  categorize: ['applyCategoriesToAll'],
   profile: ['loadProfile', 'saveProfile', 'getHouseholdMembers'],
   canvas: ['loadHistory', 'deleteHistoryEntry', 'loadCurrentSpec', 'updateSpec'],
   sync: ['syncAll', 'deleteCursorAndResync', 'getStatus', 'getLastSyncedAt', 'isSyncing'],
@@ -89,7 +88,6 @@ describe('read-only methods against an empty DB', () => {
     ['accounts.checkKeyHealth', () => registry.accounts.checkKeyHealth(), { ok: true }],
     // unknown transaction id: no suggestion (null, not undefined/throw)
     ['rules.suggestRuleForTransaction', () => registry.rules.suggestRuleForTransaction('nope', 'A', 'B'), null],
-    ['categorize.applyCategoriesToAll', () => registry.categorize.applyCategoriesToAll(), 0],
   ];
 
   it.each(EMPTY)('%s resolves to the empty value and is structured-clone safe', async (_l, call, expected) => {
@@ -181,20 +179,5 @@ describe('health.getHealthHistory periods', () => {
 
   it('periods larger than the data returns all rows', async () => {
     expect(await hist('month', 99)).toHaveLength(3);
-  });
-});
-
-describe('categorize.applyCategoriesToAll with data', () => {
-  it('re-categorizes an uncategorized row via a matching rule, persisted, and returns the count', async () => {
-    await db.execute({ sql: "INSERT INTO category_rules (match_type, pattern, category) VALUES ('name', 'Starbucks', 'Coffee')", args: [] });
-    const hit = await seedTx(db, { name: 'Starbucks #12', category: 'Uncategorized' });
-    const miss = await seedTx(db, { name: 'Unknown Vendor', category: 'Uncategorized' });
-    expect(await registry.categorize.applyCategoriesToAll()).toBe(1);
-    const cat = async (id: string) =>
-      ((await db.execute({ sql: 'SELECT category FROM transactions WHERE id = ?', args: [id] })).rows[0] as any).category;
-    expect(await cat(hit.id)).toBe('Coffee');
-    expect(await cat(miss.id)).toBe('Uncategorized');
-    // idempotent: nothing left to change
-    expect(await registry.categorize.applyCategoriesToAll()).toBe(0);
   });
 });
