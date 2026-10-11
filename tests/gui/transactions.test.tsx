@@ -147,6 +147,9 @@ describe('GUI Transactions', () => {
 
     const rule = await db.execute("SELECT * FROM category_rules WHERE pattern = 'Trader Joes'");
     expect(rule.rows[0]).toMatchObject({ match_type: 'name', category: 'Dining' });
+
+    // The edited transaction was pinned manually; accepting hands it to the rule.
+    expect(await readTx(db, 'tx-groc-2')).toMatchObject({ category: 'Dining', manual_category: null });
   });
 
   it('edit modal offers to update a conflicting rule instead of creating a new one', async () => {
@@ -167,6 +170,14 @@ describe('GUI Transactions', () => {
     const rule = await db.execute("SELECT * FROM category_rules WHERE pattern = 'Sweetgreen'");
     expect(rule.rows).toHaveLength(1);
     expect(rule.rows[0]).toMatchObject({ category: 'Shopping' });
+
+    // No Sweetgreen row (including the one just edited) stays manually pinned.
+    const pinned = await db.execute(
+      "SELECT id FROM transactions WHERE name = 'Sweetgreen' AND manual_category IS NOT NULL",
+    );
+    expect(pinned.rows).toHaveLength(0);
+    const cats = await db.execute("SELECT DISTINCT category FROM transactions WHERE name = 'Sweetgreen'");
+    expect(cats.rows.map((r) => r.category)).toEqual(['Shopping']);
   });
 
   it('edit modal reattributes a transaction date and preserves the posting date', async () => {

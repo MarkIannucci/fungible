@@ -86,7 +86,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   // Inline "always categorize as…?" prompt shown after a plain manual
   // recategorize (no Pattern typed — that path goes through saveAsRule
   // instead, which is already an explicit rule save).
-  const [ruleSuggestion, setRuleSuggestion] = useState<RuleSuggestion | null>(null);
+  const [ruleSuggestion, setRuleSuggestion] = useState<(RuleSuggestion & { sourceTransactionId: string }) | null>(null);
 
   // Add-transaction panel state. Amount is entered as a bare magnitude plus a
   // separate Expense/Income toggle rather than a signed number — typing "-42.50"
@@ -363,7 +363,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
     if (catChanged) {
       const suggestion = await suggestRuleForTransaction(txId, oldCategory, newCat);
       if (suggestion) {
-        setRuleSuggestion(suggestion);
+        setRuleSuggestion({ ...suggestion, sourceTransactionId: txId });
         setMode('rule-prompt');
         load(search, true);
         return;
@@ -392,9 +392,10 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
           maxAmount: existing?.max_amount ?? null,
           accountId: existing?.account_id ?? null,
           editingId: conflicting.id,
+          sourceTransactionId: ruleSuggestion.sourceTransactionId,
         });
       } else {
-        count = await upsertCategoryRule(ruleSuggestion.pattern, ruleSuggestion.matchType, ruleSuggestion.newCategory);
+        count = await upsertCategoryRule(ruleSuggestion.pattern, ruleSuggestion.matchType, ruleSuggestion.newCategory, ruleSuggestion.sourceTransactionId);
       }
       showStatus(`Saved: category rule (${count} updated)`);
     } catch (e) {

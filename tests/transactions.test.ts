@@ -6,6 +6,7 @@ vi.mock('../core/db.js', async () => {
 });
 
 import { db } from '../core/db.js';
+import { saveCategoryRule } from '../core/rules.js';
 import {
   setTransactionCategory,
   clearTransactionOverride,
@@ -15,6 +16,7 @@ import {
   clearTransactionDate,
   deleteTransaction,
   upsertCategoryRule,
+  releaseSourcePin,
   upsertNameRule,
   setTransactionCategoryBulk,
   clearOverridesBulk,
@@ -471,5 +473,54 @@ describe('setTransactionDate', () => {
     await expect(setTransactionDate(id, '2025-13-01')).rejects.toThrow(/Invalid transaction date/);
     await expect(setTransactionDate(id, '2025-02-30')).rejects.toThrow(/Invalid transaction date/);
     expect(await dateOf(id)).toEqual({ date: '2025-01-15', original_date: null });
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+describe('accepting a rule suggestion releases the source pin', () => {
+  async function rowOf(id: string) {
+    return (await db.execute({ sql: 'SELECT category, manual_category FROM transactions WHERE id = ?', args: [id] })).rows[0] as unknown as { category: string; manual_category: string | null };
+  }
+
+  it('upsertCategoryRule with sourceTransactionId unpins the source and keeps its category', async () => {
+    const src = await insertTx({ name: 'COSTCO', category: 'Uncategorized' });
+    const other = await insertTx({ name: 'COSTCO #2', category: 'Uncategorized' });
+    await setTransactionCategory(src, 'Groceries');
+    await upsertCategoryRule('COSTCO', 'name', 'Groceries', src);
+    expect(await rowOf(src)).toEqual({ category: 'Groceries', manual_category: null });
+    expect((await rowOf(other)).category).toBe('Groceries');
+  });
+
+  it('without sourceTransactionId the pin is kept (Pattern-typed path unchanged)', async () => {
+    const src = await insertTx({ name: 'COSTCO', category: 'Uncategorized' });
+    await setTransactionCategory(src, 'Groceries');
+    await upsertCategoryRule('COSTCO', 'name', 'Groceries');
+    expect(await rowOf(src)).toEqual({ category: 'Groceries', manual_category: 'Groceries' });
+  });
+
+  it('saveCategoryRule (conflict repoint) with sourceTransactionId unpins the source', async () => {
+    const src = await insertTx({ name: 'COSTCO', category: 'Uncategorized' });
+    await upsertCategoryRule('COSTCO', 'name', 'Shopping');
+    await setTransactionCategory(src, 'Groceries');
+    const ruleId = ((await db.execute('SELECT id FROM category_rules')).rows[0] as unknown as { id: number }).id;
+    await saveCategoryRule({
+      pattern: 'COSTCO', matchType: 'name', category: 'Groceries',
+      minAmount: null, maxAmount: null, editingId: ruleId, sourceTransactionId: src,
+    });
+    expect(await rowOf(src)).toEqual({ category: 'Groceries', manual_category: null });
+  });
+
+  it('never unpins source=manual rows', async () => {
+    const src = await insertTx({ name: 'COSTCO', category: 'Groceries', manual_category: 'Groceries', source: 'manual' });
+    expect(await releaseSourcePin(src)).toBe(false);
+    await upsertCategoryRule('COSTCO', 'name', 'Groceries', src);
+    expect(await rowOf(src)).toEqual({ category: 'Groceries', manual_category: 'Groceries' });
+  });
+
+  it('is a no-op for a missing id or an already-unpinned row', async () => {
+    const id = await insertTx({ name: 'X', category: 'Shopping' });
+    expect(await releaseSourcePin('nope')).toBe(false);
+    expect(await releaseSourcePin(id)).toBe(false);
+    expect(await rowOf(id)).toEqual({ category: 'Shopping', manual_category: null });
   });
 });
