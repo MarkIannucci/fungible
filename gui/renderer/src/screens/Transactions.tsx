@@ -397,7 +397,6 @@ export function Transactions() {
                   }`}
                   title={isPinned ? 'Manually categorized' : undefined}
                 >
-                  {isIgnored ? '~ ' : ''}
                   {tx.category}
                 </td>
                 <td className={styles.tdTags}>
