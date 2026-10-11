@@ -20,7 +20,6 @@
     "setup": "node --import tsx/esm tui/index.tsx --setup",
     "link": "node --import tsx/esm scripts/link.ts",
     "import-csv": "node --import tsx/esm scripts/import-csv.ts",
-    "seed-rules": "node --import tsx/esm scripts/seed-rules.ts",
     "mcp": "node --import tsx/esm mcp/server.ts",
     "api": "node --import tsx/esm api/server.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p gui/renderer",
