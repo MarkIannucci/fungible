@@ -804,21 +804,23 @@ describe('Transactions', () => {
   });
 
   it('[i] ignores/un-ignores a synced (non-manual) transaction', async () => {
-    // Chalk is colourless under vitest; force colour on so strikethrough
-    // (SGR 9) is visible in the raw frame.
+    // Chalk is colourless under vitest; force colour on so the dim SGR (2)
+    // is visible in the raw frame. Ignored rows are dimmed, not struck through.
     const prevLevel = chalk.level;
     chalk.level = 1;
+    const dimCount = (s: string) => s.split('\x1b[2m').length - 1;
     try {
       const r = txns();
       await waitFor(() => expect(frame(r)).toContain('Trader Joes')); // newest May row, source=null (seeded)
-      expect(r.lastFrame() ?? '').not.toContain('\x1b[9m');
+      const before = dimCount(r.lastFrame() ?? '');
       r.stdin.write('i');
-      // Ignored row is struck through, and the category cell carries no '~' prefix.
-      await waitFor(() => expect(r.lastFrame() ?? '').toContain('\x1b[9m'));
+      await waitFor(() => expect(dimCount(r.lastFrame() ?? '')).toBeGreaterThan(before));
+      expect(r.lastFrame() ?? '').not.toContain('\x1b[9m'); // no strikethrough
+      expect(frame(r)).toContain('Trader Joes');
       expect(frame(r)).toContain('Grocery');
       expect(frame(r)).not.toContain('~');
       r.stdin.write('i');
-      await waitFor(() => expect(r.lastFrame() ?? '').not.toContain('\x1b[9m'));
+      await waitFor(() => expect(dimCount(r.lastFrame() ?? '')).toBe(before));
     } finally {
       chalk.level = prevLevel;
     }

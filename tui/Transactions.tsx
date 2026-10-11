@@ -892,17 +892,17 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
         return (
           <Box key={tx.id} flexDirection="column">
             <SelectableRow selected={isSelected}>
-              <Text color={isManualRow ? C_MANUAL : isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected} strikethrough={isIgnored}>
+              <Text color={isManualRow ? C_MANUAL : isSelected ? C_ACCENT : undefined} dimColor={isIgnored && !isSelected}>
                 {tx.date}{tx.original_date ? <Text color={C_MANUAL}>*</Text> : null}
               </Text>
-              <Text color={isManualRow ? C_MANUAL : undefined} dimColor={isIgnored} strikethrough={isIgnored}>{padTruncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW)}</Text>
-              <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored} strikethrough={isIgnored}>
+              <Text color={isManualRow ? C_MANUAL : undefined} dimColor={isIgnored}>{padTruncate(tx.display_name ?? tx.merchant_name ?? tx.name, descW)}</Text>
+              <Text color={isIgnored ? undefined : tx.amount < 0 ? C_POSITIVE : undefined} dimColor={isIgnored}>
                 {fmtTxAmount(tx.amount).padStart(10)}
               </Text>
               <Text
                 color={isIgnored ? undefined : tx.category === 'Uncategorized' ? C_WARNING : (isPinned || isManualRow) ? C_MANUAL : undefined}
                 dimColor={isIgnored || !isSelected}
-                strikethrough={isIgnored}
+               
               >
                 {padTruncate('  ' + tx.category, catW)}
               </Text>
