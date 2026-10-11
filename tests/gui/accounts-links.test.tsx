@@ -24,6 +24,7 @@ import { installBridge, renderScreen, type BridgeHarness } from './helpers/rende
 import { Accounts } from '../../gui/renderer/src/screens/Accounts.js';
 import { SyncStatusProvider } from '../../gui/renderer/src/hooks/useSyncStatus.js';
 import { clearSyncFailures } from '../../core/sync-status.js';
+import { encryptSeedToken } from '../helpers/seedDb.js';
 
 /** Plaid returning `added` rows and no removals, the shape a cursor-zero replay
  *  produces. Returns the stub so a test can assert on the cursor it was sent. */
@@ -44,7 +45,7 @@ const tx = (id: string) => ({
   personal_finance_category: { primary: 'FOOD_AND_DRINK' },
 });
 
-const addItem = (
+const addItem = async (
   itemId: string,
   institution: string | null,
   lastSyncedAt: number | null,
@@ -53,7 +54,7 @@ const addItem = (
   db.execute({
     sql: `INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at, days_requested)
           VALUES (?, ?, ?, ?, ?)`,
-    args: [itemId, 'tok', institution, lastSyncedAt, daysRequested],
+    args: [itemId, await encryptSeedToken('tok'), institution, lastSyncedAt, daysRequested],
   });
 
 const addAccount = (id: string, itemId: string) =>
