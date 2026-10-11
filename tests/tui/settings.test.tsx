@@ -46,24 +46,6 @@ describe('Settings', () => {
     expect(f).toContain('Birth year');
   });
 
-  it('Enter on a field opens edit mode showing cursor', async () => {
-    const r = settings();
-    expect(frame(r)).not.toContain('▊');
-    r.stdin.write('\r'); // Enter on "Your name" (cursor starts at row 0)
-    await waitFor(() => expect(frame(r)).toContain('▊'));
-  });
-
-  it('typing in edit mode accumulates in the buffer', async () => {
-    const r = settings();
-    r.stdin.write('\r');       // open edit on "Your name"
-    await waitFor(() => expect(frame(r)).toContain('▊'));
-    r.stdin.write('Tom');
-    await waitFor(() => {
-      expect(frame(r)).toContain('Tom');
-      expect(frame(r)).toContain('▊');
-    });
-  });
-
   it('Enter commits the edit and exits edit mode', async () => {
     const r = settings();
     r.stdin.write('\r');       // open

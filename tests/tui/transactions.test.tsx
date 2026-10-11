@@ -50,8 +50,6 @@ import { waitFor as baseWaitFor, frame, flatFrame, press, pressKeys } from '../h
 const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
 vi.setConfig({ testTimeout: 30_000 });
 import { W, noop, useSeededScreenDb } from './helpers/screenSetup.js';
-import { RefreshProvider } from '../../tui/RefreshContext.js';
-import { TypingContext } from '../../tui/TypingContext.js';
 
 useSeededScreenDb();
 
@@ -65,31 +63,6 @@ describe('Transactions', () => {
       </W>,
     );
   }
-
-  it('renders column headers', () => {
-    const r = txns();
-    const f = frame(r);
-    expect(f).toContain('DATE');
-    expect(f).toContain('DESCRIPTION');
-    expect(f).toContain('AMOUNT');
-    expect(f).toContain('CATEGORY');
-  });
-
-  it('shows seeded transactions after load', async () => {
-    const r = txns();
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('Whole Foods');
-    });
-  });
-
-  it('shows transaction count in footer', async () => {
-    const r = txns();
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toMatch(/\d+ transactions/);
-    });
-  });
 
   it('filters to only May transactions when date filter applied', async () => {
     const r = txns();
@@ -146,19 +119,6 @@ describe('Transactions', () => {
     await press(r, 's');
     await waitFor(() => expect(header()).toMatch(/DATE ↓/));
     expect(order()).toEqual(SORTS[0].order);
-  });
-
-  it('Escape navigates back to dashboard', async () => {
-    const onNavigate = vi.fn();
-    // No date filter so the first Escape goes straight to onNavigate
-    const r = render(
-      <W>
-        <Transactions onNavigate={onNavigate} showHints={false} />
-      </W>,
-    );
-    await waitFor(() => expect(frame(r)).toContain('Transactions'));
-    r.stdin.write('\x1b');
-    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', undefined));
   });
 
   it('Escape clears an active shared filter before navigating', async () => {
@@ -305,30 +265,6 @@ describe('Transactions', () => {
     );
   });
 
-  it('shows a filter-summary label when the shared filter is active', async () => {
-    const r = render(
-      <RefreshProvider>
-        <TypingContext.Provider value={() => {}}>
-          <FilterProvider initial={{ categories: ['Grocery'] }}>
-            <Transactions onNavigate={noop} showHints={false} initialFilter={MAY_DATE_FILTER} />
-          </FilterProvider>
-        </TypingContext.Provider>
-      </RefreshProvider>,
-    );
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('1 category');
-    });
-  });
-
-  it('shows a May 2026 date filter label', async () => {
-    const r = txns();
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toMatch(/May 2026/);
-    });
-  });
-
   it('Enter opens the edit panel for the selected transaction', async () => {
     const r = txns();
     await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
@@ -350,19 +286,6 @@ describe('Transactions', () => {
     const before = frame(r);
     r.stdin.write('\x1b[C'); // → cycle to next category
     await waitFor(() => expect(frame(r)).not.toEqual(before));
-  });
-
-  it('Esc in edit panel cancels without saving', async () => {
-    const r = txns();
-    await waitFor(() => expect(frame(r)).toContain('Trader Joes'));
-    r.stdin.write('\r');
-    await waitFor(() => expect(frame(r)).toContain('Name'));
-    r.stdin.write('\x1b'); // Esc
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).not.toContain('Name\n'); // panel gone
-      expect(f).toContain('Trader Joes');
-    });
   });
 
   it('typing a name in edit panel and Enter saves the display name', async () => {

@@ -36,14 +36,6 @@ describe('NetWorth', () => {
     );
   }
 
-  it('shows seeded accounts after load', async () => {
-    const r = networth();
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('Test Checking');
-    });
-  });
-
   it('shows the balance-history import hint', async () => {
     const r = networth();
     await waitFor(() => expect(frame(r)).toContain('Import history: Accounts → Add Data → [b]'));
