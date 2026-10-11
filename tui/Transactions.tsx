@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -48,12 +48,6 @@ const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const SORT_CYCLE: SortMode[] = ['date-desc', 'date-asc', 'name-asc', 'name-desc', 'amount-desc', 'amount-asc', 'category-asc', 'category-desc'];
 
-const SORT_LABEL: Record<SortMode, string> = {
-  'date-desc':     'date ↓', 'date-asc':      'date ↑',
-  'amount-desc':   'amount ↓', 'amount-asc':  'amount ↑',
-  'name-asc':      'name ↑', 'name-desc':     'name ↓',
-  'category-asc':  'category ↑', 'category-desc': 'category ↓',
-};
 
 export function Transactions({ onNavigate, initialFilter, isActive, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; initialFilter?: TxFilter; isActive?: boolean; showHints: boolean }) {
   const { loadError, track } = useLoadError();
@@ -785,7 +779,7 @@ export function Transactions({ onNavigate, initialFilter, isActive, showHints }:
   const catW  = Math.max(8,  txFlex - descW);
 
   const PAGE = 20;
-  const { visible, pageStart } = usePagination(txs, cursor, PAGE);
+  const { visible } = usePagination(txs, cursor, PAGE);
 
   function dateLabel(): string | null {
     if (!from) return null;

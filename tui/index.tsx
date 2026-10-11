@@ -2,7 +2,6 @@ import { config } from 'dotenv';
 import { join } from 'node:path';
 import { DATA_DIR } from '../core/paths.js';
 config({ path: join(DATA_DIR, '.env'), quiet: true });
-import React from 'react';
 import { render } from 'ink';
 import { writeFileSync } from 'node:fs';
 import stripAnsi from 'strip-ansi';
@@ -74,7 +73,7 @@ if (process.argv.includes('--setup')) {
     if (e?.code !== 'EADDRINUSE') console.warn(`[${tag}]`, e?.message ?? e);
   };
   startMcpHttpServer(mcpPort).catch(warnStartup('fungible-mcp'));
-  startApiServer(apiPort, { quiet: true }).catch(warnStartup('fungible-api'));
+  startApiServer({ port: apiPort, quiet: true }).catch(warnStartup('fungible-api'));
 
   render(<App />);
 }

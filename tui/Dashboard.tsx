@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   getRangeSummary, getFlexSummary, getUncategorizedCount, getDataBounds, getAccountRows, getOwnerRows,
@@ -28,7 +28,6 @@ import { useLoadGuard } from './useLoadGuard.js';
 import { mergeFilters, type Filter } from '../core/filters.js';
 import { useLoadError, LoadError } from './useLoadError.js';
 
-const BAR_WIDTH = 20;
 
 type DashView = 'categories' | 'flex' | 'account' | 'owner';
 

@@ -1,4 +1,3 @@
-import React from 'react';
 import { Text } from 'ink';
 import { SelectableRow } from './SelectableRow.js';
 import { TruncatedText } from './TruncatedText.js';
