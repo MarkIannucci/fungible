@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import React from 'react';
 import { render } from 'ink-testing-library';
 import { homedir } from 'node:os';
+import chalk from 'chalk';
 
 vi.mock('../../core/db.js', async () => {
   const { makeTestDb } = await import('../helpers/makeTestDb.js');
@@ -797,12 +798,24 @@ describe('Transactions', () => {
   });
 
   it('[i] ignores/un-ignores a synced (non-manual) transaction', async () => {
-    const r = txns();
-    await waitFor(() => expect(frame(r)).toContain('Trader Joes')); // newest May row, source=null (seeded)
-    r.stdin.write('i');
-    await waitFor(() => expect(frame(r)).toContain('~Grocery')); // ignored marker on the category cell
-    r.stdin.write('i');
-    await waitFor(() => expect(frame(r)).not.toContain('~Grocery'));
+    // Chalk is colourless under vitest; force colour on so strikethrough
+    // (SGR 9) is visible in the raw frame.
+    const prevLevel = chalk.level;
+    chalk.level = 1;
+    try {
+      const r = txns();
+      await waitFor(() => expect(frame(r)).toContain('Trader Joes')); // newest May row, source=null (seeded)
+      expect(r.lastFrame() ?? '').not.toContain('\x1b[9m');
+      r.stdin.write('i');
+      // Ignored row is struck through, and the category cell carries no '~' prefix.
+      await waitFor(() => expect(r.lastFrame() ?? '').toContain('\x1b[9m'));
+      expect(frame(r)).toContain('Grocery');
+      expect(frame(r)).not.toContain('~');
+      r.stdin.write('i');
+      await waitFor(() => expect(r.lastFrame() ?? '').not.toContain('\x1b[9m'));
+    } finally {
+      chalk.level = prevLevel;
+    }
   });
 
   it('[i] is a no-op on a manually-added row, and the hint line drops [i] ignore for it', async () => {
