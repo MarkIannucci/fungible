@@ -4,7 +4,7 @@ import { DATA_DIR } from '../core/paths.js';
 config({ path: join(DATA_DIR, '.env'), quiet: true });
 import { render } from 'ink';
 import { writeFileSync } from 'node:fs';
-import stripAnsi from 'strip-ansi';
+import { stripVTControlCharacters as stripAnsi } from 'node:util';
 import { initDb } from '../core/db.js';
 import { backupDb } from '../core/backup.js';
 import { syncAll } from '../core/sync.js';
