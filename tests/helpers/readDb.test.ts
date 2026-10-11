@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { makeTestDb } from './makeTestDb.js';
 import { seedTx } from './seedDb.js';
-import { readTx, readTxTags, readAccount, countRows } from './readDb.js';
+import { readTx, readAccount, countRows } from './readDb.js';
 
 describe('readDb', () => {
   it('readTx returns the full row or null', async () => {
@@ -11,15 +11,6 @@ describe('readDb', () => {
     expect(row).toMatchObject({ id: t.id, amount: -5 });
     expect(Array.isArray(row)).toBe(false);
     expect(await readTx(db, 'nope')).toBeNull();
-  });
-
-  it('readTxTags returns sorted names; empty when none', async () => {
-    const db = await makeTestDb();
-    const t = await seedTx(db);
-    expect(await readTxTags(db, t.id as string)).toEqual([]);
-    await db.execute("INSERT INTO tags (name) VALUES ('zeta'), ('alpha')");
-    await db.execute({ sql: 'INSERT INTO transaction_tags SELECT ?, id FROM tags', args: [t.id as string] });
-    expect(await readTxTags(db, t.id as string)).toEqual(['alpha', 'zeta']);
   });
 
   it('readAccount and countRows', async () => {

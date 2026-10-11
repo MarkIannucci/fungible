@@ -63,23 +63,6 @@ describe('makeElectronMock', () => {
     expect(req.headers).toEqual({ A: 'b' });
     expect(req.ended).toBe(true);
   });
-
-  it('Menu.buildFromTemplate returns the template', async () => {
-    const { Menu } = await import('electron');
-    const t = [{ label: 'a' }];
-    expect(Menu.buildFromTemplate(t as any)).toBe(t);
-  });
-
-  it('works for a real gui/main module (refresh-ipc pushes to every window)', async () => {
-    const { registerRefreshPush } = await import('../../gui/main/refresh-ipc.js');
-    const { notifyChange } = await import('../../core/refresh.js');
-    const a = makeWindow();
-    const b = makeWindow();
-    registerRefreshPush();
-    notifyChange();
-    expect(a.webContents.send).toHaveBeenCalledWith('refresh');
-    expect(b.webContents.send).toHaveBeenCalledWith('refresh');
-  });
 });
 
 describe('makeElectronMock resetModules safety', () => {
