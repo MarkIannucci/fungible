@@ -1,5 +1,6 @@
 import type { Client } from '@libsql/client';
 import { isoDaysAgo } from './dates.js';
+import { encryptSeedToken } from './seedDb.js';
 
 export type SeedAccountOpts = {
   /** Account id. Manual accounts are conventionally `manual-*`; getBalanceAge keys off that prefix. */
@@ -45,7 +46,7 @@ export async function seedPlaidAccount(db: Client, o: SeedAccountOpts & { itemId
   const itemId = o.itemId ?? `item-${o.id}`;
   await db.execute({
     sql: 'INSERT OR IGNORE INTO plaid_items (item_id, access_token, institution_name, last_synced_at, days_requested) VALUES (?, ?, ?, ?, ?)',
-    args: [itemId, 'tok', 'Test Bank', o.lastSyncedAt ?? Date.now(), 90],
+    args: [itemId, await encryptSeedToken('tok'), 'Test Bank', o.lastSyncedAt ?? Date.now(), 90],
   });
   await insertAccount(db, o, itemId);
 }
