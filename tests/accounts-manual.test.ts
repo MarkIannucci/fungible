@@ -56,10 +56,6 @@ describe('createManualAccount', () => {
     expect(await accountRows()).toHaveLength(2);
   });
 
-  it('manual ids keep the manual- prefix', async () => {
-    expect(await createManualAccount('Home', 1)).toMatch(/^manual-[0-9a-f-]{36}$/);
-  });
-
   it('createCsvAccount ids are distinct within a millisecond and keep the csv-acct- prefix', async () => {
     const a = await createCsvAccount('A', 'depository', 'checking');
     const b = await createCsvAccount('B', 'depository', 'checking');

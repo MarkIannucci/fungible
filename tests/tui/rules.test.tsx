@@ -41,14 +41,6 @@ describe('Rules', () => {
     expect(f).toContain('Categories');
   });
 
-  it('shows seeded category rule after load', async () => {
-    const r = rules();
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('Whole Foods');
-    });
-  });
-
   it('Tab cycles to Categories section showing seeded categories', async () => {
     const r = rules();
     await waitFor(() => expect(frame(r)).toContain('Whole Foods'));

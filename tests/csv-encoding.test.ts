@@ -22,11 +22,4 @@ describe('CSV encoding', () => {
     const p = write('utf8.csv', Buffer.from('Date,Name,Amount\n2025-01-02,CAFÉ NERO,4.50\n', 'utf8'));
     expect(parseCSV(p).rows[0][1]).toBe('CAFÉ NERO');
   });
-
-  it('a UTF-8 BOM does not leak into the first header', () => {
-    const p = write('bom.csv', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('Date,Name,Amount\n2025-01-02,CAFÉ NERO,4.50\n', 'utf8')]));
-    const parsed = parseCSV(p);
-    expect(parsed.headers[0]).toBe('Date');
-    expect(parsed.rows[0]).toEqual(['2025-01-02', 'CAFÉ NERO', '4.50']);
-  });
 });

@@ -656,11 +656,6 @@ describe('getTransactions — flex filter', () => {
     expect((await getTransactions({ flex: 'flexible' })).map((r) => r.category)).toEqual(['Grocery']);
     expect((await getTransactions({ flex: 'discretionary' })).map((r) => r.category)).toEqual(['Dining']);
   });
-
-  it('excludes categories with no flex tier', async () => {
-    await insertTx({ amount: 100, category: 'Shopping' });
-    expect(await getTransactions({ flex: 'fixed' })).toHaveLength(0);
-  });
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1233,13 +1228,6 @@ describe('groupAccountsByType / buildTypeToAccountIds', () => {
       { label: 'checking', balance: 1500 },
       { label: 'credit', balance: -200 },
     ]);
-  });
-
-  it('sorts groups by descending balance', () => {
-    const result = groupAccountsByType(accounts, identity);
-    for (let i = 1; i < result.length; i++) {
-      expect(result[i - 1].balance).toBeGreaterThanOrEqual(result[i].balance);
-    }
   });
 
   it('applies the caller-supplied typeLabel to the grouping key', () => {

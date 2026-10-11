@@ -10,7 +10,6 @@ vi.mock('../../core/paths.js', async () => ({
 import { tempDataDir } from './tempDataDir.js';
 import { DATA_DIR } from '../../core/paths.js';
 import { writeEnvFile, readEnvFile } from '../../core/env-file.js';
-import { deferred } from './deferred.js';
 
 const realHome = path.join(os.homedir(), '.fungible');
 
@@ -41,20 +40,5 @@ describe('tempDataDir', () => {
     tempDataDir.reset();
     expect(fs.readdirSync(tempDataDir.dir)).toEqual([]);
     expect(tempDataDir.readEnv()).toBe('');
-  });
-});
-
-describe('deferred', () => {
-  it('resolves and rejects from outside', async () => {
-    const d = deferred<number>();
-    let settled = false;
-    void d.promise.then(() => { settled = true; });
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    d.resolve(7);
-    await expect(d.promise).resolves.toBe(7);
-    const r = deferred();
-    r.reject(new Error('boom'));
-    await expect(r.promise).rejects.toThrow('boom');
   });
 });

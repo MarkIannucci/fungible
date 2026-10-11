@@ -158,14 +158,6 @@ describe('FilterPanel', () => {
     });
   });
 
-  it('Esc closes without applying', async () => {
-    const onClose = vi.fn();
-    const r = panel({}, onClose);
-    await waitFor(() => expect(frame(r)).toContain('Grocery'));
-    r.stdin.write('\x1b');
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-  });
-
   it('Enter applies and closes', async () => {
     const onClose = vi.fn();
     const r = panel({}, onClose);

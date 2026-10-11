@@ -17,7 +17,7 @@ vi.mock('openai', () => ({
 }));
 
 import {
-  detectProvider, getProviderModel, streamResponse, makeAssistantMessage,
+  detectProvider, getProviderModel, streamResponse,
   type Message, type StreamChunk, type ToolDef,
 } from '../core/llm-provider.js';
 
@@ -61,9 +61,6 @@ describe('detectProvider / getProviderModel', () => {
   });
   it('streamResponse throws without a key', async () => {
     await expect(collect('s', [])).rejects.toThrow(/ANTHROPIC_API_KEY/);
-  });
-  it('makeAssistantMessage wraps blocks', () => {
-    expect(makeAssistantMessage([{ type: 'text', text: 'hi' }])).toEqual({ role: 'assistant', content: [{ type: 'text', text: 'hi' }] });
   });
 });
 

@@ -183,8 +183,6 @@
 
 .rowIgnored td {
   color: var(--text-dim);
-  text-decoration: line-through;
-  text-decoration-color: var(--border);
 }
 
 /* Whole row is manually-added (source === 'manual') — not a Plaid/CSV row.

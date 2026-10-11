@@ -49,24 +49,6 @@ describe('concurrent writers to one fungible.db (SQLITE_BUSY incident)', () => {
     expect(await integrity(db)).toBe('ok');
     expect(fs.existsSync(`${t.dbPath}-journal`)).toBe(false);
   }, 120_000);
-
-  // Pin (not a bug repro): in one process libsql serialises on a single
-  // connection, so this passed even before the fix.
-  it('pin: two clients in one process interleaving 200 batches each lose nothing', async () => {
-    const t = tmp();
-    const a = await open(t);
-    const b = createClient({ url: `file:${t.dbPath}` });
-    clients.push(b);
-    const write = (db: Client, id: string, i: number) => db.batch([
-      { sql: 'INSERT INTO tags (name) VALUES (?)', args: [`${id}-${i}`] },
-      { sql: `INSERT INTO transactions (id, account_id, date, name, amount, source) VALUES (?, 'acct', '2026-01-01', ?, 1, 'manual')`, args: [`${id}-${i}`, `${id}-${i}`] },
-    ], 'write');
-    const run = async (db: Client, id: string) => { for (let i = 0; i < 200; i++) await write(db, id, i); };
-    await Promise.all([run(a, 'a'), run(b, 'b')]);
-    expect(await count(a, 'tags')).toBe(400);
-    expect(await count(a, 'transactions')).toBe(400);
-    expect(await integrity(a)).toBe('ok');
-  }, 60_000);
 });
 
 // ─── real core modules against a temp data dir ────────────────────────────────

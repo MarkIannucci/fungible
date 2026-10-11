@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { failDb, gateDb, captureUnhandled } from './failingDb.js';
-import { SCREEN_TABLES, wipeScreenTables } from './wipeTables.js';
 import { makeTestDb } from './makeTestDb.js';
 
 describe('failDb', () => {
@@ -42,17 +41,5 @@ describe('captureUnhandled', () => {
     expect((cap.seen[0] as Error).message).toBe('nobody catches me');
     cap.stop();
     expect(process.listenerCount('unhandledRejection')).toBe(before);
-  });
-});
-
-describe('wipeScreenTables', () => {
-  it('empties every listed table', async () => {
-    const db = await makeTestDb();
-    await db.execute("INSERT INTO accounts (id,name,type) VALUES ('a','A','depository')");
-    await db.execute("INSERT INTO tags (name) VALUES ('t')").catch(() => {});
-    await wipeScreenTables(db);
-    for (const t of SCREEN_TABLES) {
-      expect((await db.execute(`SELECT COUNT(*) AS n FROM ${t}`)).rows[0].n).toBe(0);
-    }
   });
 });

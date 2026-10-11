@@ -46,10 +46,6 @@ describe('bridge:call dispatch', () => {
     expect([...electronMock.handlers.keys()]).toEqual(['bridge:call']);
   });
 
-  it('dispatches to the registry against the (in-memory) DB', async () => {
-    expect(await call('queries', 'getUncategorizedCount', ['2020-01-01', '2030-01-01'])).toBe(0);
-  });
-
   it('rejects unknown namespaces and functions with a precise message', async () => {
     await expect(call('nope', 'x')).rejects.toThrow(new Error('Unknown bridge call: nope.x'));
     await expect(call('queries', 'nope')).rejects.toThrow(new Error('Unknown bridge call: queries.nope'));

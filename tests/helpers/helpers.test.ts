@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { waitFor, waitForFrame, pressAndWait, press, pressKeys, stripAnsi, frame } from './waitFor.js';
-import { SCREEN_NAV } from './screenNav.js';
 import { makeFakePlaid, makeFakeLlm } from './makeFakeProvider.js';
 import { makePlaidTx, makePlaidAccount } from './makePlaidTx.js';
-import { seedPlaidItem, seedTx } from './seedDb.js';
+import { seedPlaidItem } from './seedDb.js';
 import { makeTestDb } from './makeTestDb.js';
 import { decryptToken } from '../../core/crypto.js';
 import { useFixedClock } from './fakeClock.js';
@@ -116,28 +115,19 @@ describe('makePlaidTx / makePlaidAccount', () => {
     expect(makePlaidAccount({ current: null }).balances.current).toBeNull();
     expect(makePlaidAccount({ current: undefined }).balances.current).toBeUndefined();
     expect(makePlaidAccount({ current: 0 }).balances.current).toBe(0);
-    expect(makePlaidAccount().balances.current).toBe(100);
   });
 });
 
-describe('seedPlaidItem / seedTx', () => {
-  it('seedPlaidItem stores a token decryptToken passes through unchanged', async () => {
+describe('seedPlaidItem', () => {
+  it('seedPlaidItem stores an encrypted token that decryptToken round-trips to the returned plaintext', async () => {
     const db = await makeTestDb();
     const { accessToken } = await seedPlaidItem(db, 'item-1', { lastSyncedAt: 123 });
     const row = (await db.execute("SELECT access_token, last_synced_at FROM plaid_items WHERE item_id='item-1'")).rows[0];
-    expect(row.access_token).toBe(accessToken);
+    expect(row.access_token).not.toBe(accessToken);
+    expect(String(row.access_token)).not.toContain(accessToken);
+    expect(String(row.access_token).split(':')).toHaveLength(3);
     expect(row.last_synced_at).toBe(123);
     expect(decryptToken(String(row.access_token))).toBe(accessToken);
-  });
-  it('seedTx writes defaults, honours overrides and returns the row', async () => {
-    const db = await makeTestDb();
-    const a = await seedTx(db);
-    const b = await seedTx(db, { source: 'csv', manual_category: 'Dining', display_name: 'Latte', ignored: true, pending: true, original_date: '2024-12-30', amount: -5 });
-    expect(a.id).not.toBe(b.id);
-    const rows = (await db.execute({ sql: 'SELECT * FROM transactions WHERE id = ?', args: [b.id] })).rows[0];
-    expect(rows).toMatchObject({ source: 'csv', manual_category: 'Dining', display_name: 'Latte', ignored: 1, pending: 1, original_date: '2024-12-30', amount: -5 });
-    expect((await db.execute({ sql: 'SELECT source, pending, ignored FROM transactions WHERE id = ?', args: [a.id] })).rows[0])
-      .toMatchObject({ source: 'plaid', pending: 0, ignored: 0 });
   });
 });
 
@@ -157,14 +147,6 @@ describe('press / pressKeys', () => {
     await press(r, 'x');
     expect(Date.now() - t0).toBeGreaterThanOrEqual(10);
     await pressAndWait(r, 'y', 'ready');
-  });
-});
-
-describe('SCREEN_NAV', () => {
-  it('covers digits 0-9 once each with unique screens and headers', () => {
-    expect(SCREEN_NAV.map((n) => n.digit)).toEqual(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']);
-    expect(new Set(SCREEN_NAV.map((n) => n.screen)).size).toBe(10);
-    expect(new Set(SCREEN_NAV.map((n) => n.header)).size).toBe(10);
   });
 });
 

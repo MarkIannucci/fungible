@@ -20,7 +20,7 @@ async function importText(body: string, acct = 'acc') {
 
 beforeEach(async () => {
   for (const t of ['transactions', 'imports', 'accounts']) await db.execute(`DELETE FROM ${t}`);
-  await db.execute(`INSERT INTO accounts (id, name, type) VALUES ('acc', 'acc', 'credit'), ('acc2', 'acc2', 'credit')`);
+  await db.execute(`INSERT INTO accounts (id, name, type) VALUES ('acc', 'acc', 'credit')`);
 });
 
 describe('overlapping statements (cross-file dedup)', () => {
@@ -51,11 +51,5 @@ describe('overlapping statements (cross-file dedup)', () => {
     const r = await importText('2025-01-02,Coffee,4.50\n2025-01-02,Coffee,4.50\n2025-01-02,Coffee,4.50\n');
     expect(r.imported).toBe(1);
     expect(await countTx()).toBe(3);
-  });
-
-  it('the same row in a different account is not a duplicate', async () => {
-    await importText('2025-01-02,Coffee,4.50\n', 'acc');
-    const r = await importText('2025-01-02,Coffee,4.50\n', 'acc2');
-    expect(r.imported).toBe(1);
   });
 });

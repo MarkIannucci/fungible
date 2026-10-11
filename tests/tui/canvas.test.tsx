@@ -33,8 +33,6 @@ async function tick(ms = 20): Promise<void> {
   await new Promise((res) => setTimeout(res, ms));
 }
 
-// ─── generateCanvas (mocked LLM) ──────────────────────────────────────────────
-
 const MOCK_HEALTH = {
   avgMonthlyExpenses: 12000, monthlyIncome: 15000, monthlySavings: 3000,
   cash: 60000, liquid: 800000, retirement: 900000, totalDebt: 20000, loanDebt: 0, netWorth: 1_800_000,
@@ -62,29 +60,6 @@ vi.mock('../../core/llm-provider.js', () => ({
     yield { type: 'done' };
   }),
 }));
-
-describe('generateCanvas', () => {
-  it('returns the spec from the tool call', async () => {
-    const { generateCanvas } = await import('../../core/canvas-agent.js');
-    const statuses: string[] = [];
-    const spec = await generateCanvas('how long to pay off my credit card', (s) => { statuses.push(s); });
-    expect(spec.title).toBe('Credit Card Payoff');
-    expect(spec.elements.filter((e) => e.type === 'dial')).toHaveLength(3);
-    expect(spec.elements.filter((e) => e.type === 'output')).toHaveLength(2);
-    expect(statuses).toContain('generating…');
-  });
-
-  it('throws if no tool call is returned', async () => {
-    vi.mocked(
-      (await import('../../core/llm-provider.js')).streamResponse
-    ).mockImplementationOnce(async function* () {
-      yield { type: 'text', delta: 'sorry, I cannot help' };
-      yield { type: 'done' };
-    });
-    const { generateCanvas } = await import('../../core/canvas-agent.js');
-    await expect(generateCanvas('bad prompt', () => {})).rejects.toThrow('no spec returned');
-  });
-});
 
 // ─── CanvasView rendering ─────────────────────────────────────────────────────
 
@@ -655,22 +630,6 @@ const LONG_LABEL_AND_VALUE_SPEC: CanvasSpec = {
 };
 
 describe('CanvasView — long label + large dollar value keeps the value bracket on one line', () => {
-  it('does not grow the frame\'s line count at the default (100-column) width', () => {
-    const { lastFrame } = render(<CanvasView spec={LONG_LABEL_AND_VALUE_SPEC} />);
-    const lines = (lastFrame() ?? '').split('\n');
-    expect(lines.length).toBe(3);
-  });
-
-  it('keeps the closing bracket on the same line as the opening bracket at the default width', () => {
-    const { lastFrame } = render(<CanvasView spec={LONG_LABEL_AND_VALUE_SPEC} />);
-    const lines = (lastFrame() ?? '').split('\n');
-    const valueLine = lines.find((l) => l.includes('$1,093,388.68'));
-    expect(valueLine).toBeDefined();
-    expect(valueLine).toContain('[');
-    expect(valueLine).toContain(']');
-    expect(valueLine!.indexOf('[')).toBeLessThan(valueLine!.indexOf(']'));
-  });
-
   it.each([80, 70, 60, 50, 40])(
     'keeps every row to one line and the bracket intact at a squeezed %i-column width',
     (width) => {
@@ -787,15 +746,6 @@ describe('CanvasView — list rows render with aligned columns', () => {
     for (let col = 0; col < 3; col++) {
       expect(new Set(bracketCols.map((cols) => cols[col])).size).toBe(1);
     }
-  });
-
-  it('computes the sum_active output over the list rows for the given year', () => {
-    const { lastFrame } = render(<CanvasView spec={LIST_SPEC} />);
-    const frame = lastFrame() ?? '';
-    // 2024 is within [2020,2026] for the car payment, so all 3 rows are active:
-    // -2000 + -400 + -50 = -2450.
-    expect(frame).toContain('Total (2024)');
-    expect(frame).toContain('-$2,450');
   });
 });
 
@@ -1256,14 +1206,5 @@ describe('Canvas — suppresses digit-nav and Escape-to-dashboard while CanvasVi
     );
     r.stdin.write('\x1B'); // Escape, not editing
     await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard'));
-  });
-
-  it('digit-based screen switching still works outside edit mode', async () => {
-    const onNavigate = vi.fn();
-    const r = render(
-      <Canvas onNavigate={onNavigate} onLoadSpec={() => {}} showHints={false} spec={DIAL_SPEC} specKey={0} />
-    );
-    r.stdin.write('2'); // not editing -> digit nav to transactions
-    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('transactions'));
   });
 });

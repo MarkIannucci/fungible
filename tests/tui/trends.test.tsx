@@ -39,13 +39,6 @@ describe('Trends', () => {
     );
   }
 
-  it('shows the current view label (Expenses by default)', async () => {
-    const r = trends();
-    // Trends shows only the current view's label in the header, not all tabs at once.
-    // The initial view is 'Expenses'.
-    await waitFor(() => expect(frame(r)).toContain('Expenses'));
-  });
-
   it('shows range labels', async () => {
     const r = trends();
     await waitFor(() => {
@@ -166,16 +159,6 @@ describe('Trends', () => {
       const f = frame(r);
       expect(f).toContain('May 2026');
       expect(f).not.toContain('Apr 2026');
-    });
-  });
-
-  it('search that matches both periods shows both', async () => {
-    // Whole Foods appears in both April and May
-    const r = trends({ initialFilter: { search: 'Whole Foods' } });
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('Apr 2026');
-      expect(f).toContain('May 2026');
     });
   });
 

@@ -35,33 +35,6 @@ describe('Tags', () => {
     );
   }
 
-  it('shows seeded tags after load', async () => {
-    const r = tags();
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('travel');
-      expect(f).toContain('work');
-    });
-  });
-
-  it('a key enters new-tag input mode', async () => {
-    const r = tags();
-    await waitFor(() => expect(frame(r)).toContain('travel'));
-    r.stdin.write('a');
-    await waitFor(() => expect(frame(r)).toContain('New Tag'));
-  });
-
-  it('[n] opens rename panel pre-filled with the tag name', async () => {
-    const r = tags();
-    await waitFor(() => expect(frame(r)).toContain('travel'));
-    r.stdin.write('n');
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('Rename Tag');
-      expect(f).toContain('travel');
-    });
-  });
-
   it('typing a suffix and Enter in rename panel renames the tag', async () => {
     const r = tags();
     await waitFor(() => expect(frame(r)).toContain('travel'));

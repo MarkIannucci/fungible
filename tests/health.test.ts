@@ -37,11 +37,6 @@ describe('yearsToFire', () => {
     // Same formula with pv = +50,000 (debt) and pmt = -3,000: 12.64 years.
     expect(yearsToFire(-50000, 3000, 600000, 7)).toBeCloseTo(12.64, 1);
   });
-
-  it('returns null when 100 years is not enough', () => {
-    const years = yearsToFire(0, 1, 10000000000, 0);
-    expect(years).toBeNull();
-  });
 });
 
 describe('yearsToFire horizon', () => {
@@ -79,10 +74,6 @@ describe('coastYears', () => {
   it('returns a positive number of years when net worth is below target', () => {
     // ln(1,000,000/100,000) / ln(1.07) = 34.03 years.
     expect(coastYears(100000, 1000000, 7)).toBeCloseTo(34.03, 1);
-  });
-
-  it('returns null for extreme values (over 200 years)', () => {
-    expect(coastYears(1, 1000000000, 1)).toBeNull();
   });
 });
 

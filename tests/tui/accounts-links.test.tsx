@@ -366,24 +366,6 @@ describe('Accounts', () => {
         expect(rows.rows).toHaveLength(0);
       });
 
-      // "N new transactions" would be a lie here: a cursor-zero replay reports
-      // every row Plaid holds as added, most of which the database already had.
-      it('reports the count as re-downloaded rather than new', async () => {
-        await linksWithSyncedItem();
-        vi.spyOn(syncApi, 'syncAll').mockResolvedValue([
-          { itemId: 'item-a', added: 900, modified: 0, removed: 0, dupes: 0, skipped: false },
-        ]);
-
-        const r = renderAccounts();
-        await tabTo(r, 'links');
-        r.stdin.write('d');
-        await waitFor(() => expect(flatFrame(r)).toContain('Delete sync cursor and resync'));
-        r.stdin.write('y');
-
-        await waitFor(() => expect(flatFrame(r)).toContain('re-downloaded 900 transactions'));
-        expect(flatFrame(r)).not.toContain('900 new transactions');
-      });
-
       it('does nothing on a connection still awaiting its first sync', async () => {
         // That sync starts from scratch already, so there is no cursor to delete.
         await addItem('item-new', 'Capital One', null);

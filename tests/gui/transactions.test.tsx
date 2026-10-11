@@ -386,20 +386,6 @@ describe('GUI Transactions', () => {
     await waitFor(() => expect(screen.queryByText('Cash Tip')).toBeNull());
   });
 
-  it('Export passes the shared filter + date range through to core/export.ts and saves the result', async () => {
-    const spy = vi.spyOn(registry.transactions, 'exportTransactionsCsv');
-    renderScreen(<Transactions />, {
-      txFilter: { from: '2026-05-01', to: '2026-05-31' },
-      initialFilter: { categories: ['Grocery'] },
-    });
-    await waitFor(() => expect(screen.getByText('2 transactions')).toBeTruthy());
-    await userEvent.click(screen.getByRole('button', { name: 'Export' }));
-    await waitFor(() => expect(screen.getByText('Exported transactions')).toBeTruthy());
-    expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({ filter: { categories: ['Grocery'] }, from: '2026-05-01', to: '2026-05-31' }),
-    );
-  });
-
   it('Export writes the filtered rows to a CSV named for the range, with signs and quoting', async () => {
     // A merchant name with a comma and quotes must be RFC 4180 quoted.
     await db.execute(

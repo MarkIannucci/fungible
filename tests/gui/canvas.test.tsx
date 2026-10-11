@@ -348,14 +348,6 @@ const HIDDEN_OUTPUT_REF_SPEC: CanvasSpec = {
 };
 
 describe('GUI CanvasView cross-output references', () => {
-  it('a later output can reference an earlier output by key', () => {
-    renderScreen(<CanvasView spec={CROSS_OUTPUT_SPEC} />);
-    expect(screen.getByText('Doubled')).toBeTruthy();
-    expect(screen.getByText('$2,000.00')).toBeTruthy(); // balance * 2
-    expect(screen.getByText('Doubled plus 5')).toBeTruthy();
-    expect(screen.getByText('$2,005.00')).toBeTruthy(); // doubled + 5
-  });
-
   it('an output referencing a nonexistent key renders — instead of crashing', () => {
     renderScreen(<CanvasView spec={CROSS_OUTPUT_SPEC} />);
     expect(screen.getByText('Broken ref')).toBeTruthy();

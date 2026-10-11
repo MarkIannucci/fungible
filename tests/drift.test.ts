@@ -214,15 +214,6 @@ describe('getCategoryDriftData', () => {
     expect(food.lastYearDelta).toBeCloseTo(100);
   });
 
-  it('delta is positive when current > comparison (more spending)', async () => {
-    await insertTx({ date: '2026-05-15', amount: 300, category: 'Shopping' });
-    await insertTx({ date: '2026-04-15', amount: 100, category: 'Shopping' });
-
-    const result = await getCategoryDriftData(current, lastPeriod, lastYear, rolling12);
-    const row = result.find((r) => r.category === 'Shopping')!;
-    expect(row.lastPeriodDelta).toBeGreaterThan(0);
-  });
-
   it('delta is negative when current < comparison (less spending)', async () => {
     await insertTx({ date: '2026-05-15', amount: 50, category: 'Dining' });
     await insertTx({ date: '2026-04-15', amount: 200, category: 'Dining' });

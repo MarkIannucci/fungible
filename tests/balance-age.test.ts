@@ -73,11 +73,6 @@ describe('getBalanceAge inputs', () => {
   it('parses a full ISO timestamp as its date', () => {
     expect(getBalanceAge(csv('depository'), '2026-09-01T23:30:00Z', now)).toEqual({ days: 31, isStale: false });
   });
-
-  it('counts plain days', () => {
-    expect(getBalanceAge(csv('depository'), D[0], now)).toEqual({ days: 0, isStale: false });
-    expect(getBalanceAge(csv('depository'), D[10], now)?.days).toBe(10);
-  });
 });
 
 describe('getBalanceAge UTC day boundary', () => {

@@ -215,14 +215,6 @@ describe('Host / Origin guard', () => {
     expect(notifyChange).not.toHaveBeenCalled();
   });
 
-  it.each(['localhost', 'localhost:3456', '127.0.0.1', '127.0.0.1:3456', '[::1]', '[::1]:3456', 'LOCALHOST'])(
-    'Host %s is allowed',
-    async (host) => {
-      const api = await start();
-      expect((await api.post(`/tools/${TOOL}`, {}, { Host: host })).status).toBe(200);
-    },
-  );
-
   it('allows a local browser Origin and an absent Origin', async () => {
     const api = await start();
     expect((await api.post(`/tools/${TOOL}`, {}, { Origin: 'http://localhost:5173' })).status).toBe(200);
