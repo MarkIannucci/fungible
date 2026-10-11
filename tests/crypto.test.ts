@@ -60,19 +60,9 @@ describe('encryptToken / decryptToken', () => {
     expect(a.split(':')[0]).not.toBe(b.split(':')[0]);
   });
 
-  it('returns a legacy plaintext token (no 2 colons) unchanged', async () => {
-    const c = await loadCrypto(tmp());
-    expect(c.decryptToken('access-sandbox-abc')).toBe('access-sandbox-abc');
-  });
-
   it('throws on a malformed value that has 3 parts but is not valid ciphertext', async () => {
     const c = await loadCrypto(tmp());
     expect(() => c.decryptToken('aaaa:bbbb:cccc')).toThrow();
-  });
-
-  it('treats a 2-part value as legacy plaintext, not an error', async () => {
-    const c = await loadCrypto(tmp());
-    expect(c.decryptToken('only:one-colon')).toBe('only:one-colon');
   });
 
   it('throws when the ciphertext is tampered with', async () => {

@@ -119,11 +119,13 @@ describe('makePlaidTx / makePlaidAccount', () => {
 });
 
 describe('seedPlaidItem', () => {
-  it('seedPlaidItem stores a token decryptToken passes through unchanged', async () => {
+  it('seedPlaidItem stores an encrypted token that decryptToken round-trips to the returned plaintext', async () => {
     const db = await makeTestDb();
     const { accessToken } = await seedPlaidItem(db, 'item-1', { lastSyncedAt: 123 });
     const row = (await db.execute("SELECT access_token, last_synced_at FROM plaid_items WHERE item_id='item-1'")).rows[0];
-    expect(row.access_token).toBe(accessToken);
+    expect(row.access_token).not.toBe(accessToken);
+    expect(String(row.access_token)).not.toContain(accessToken);
+    expect(String(row.access_token).split(':')).toHaveLength(3);
     expect(row.last_synced_at).toBe(123);
     expect(decryptToken(String(row.access_token))).toBe(accessToken);
   });

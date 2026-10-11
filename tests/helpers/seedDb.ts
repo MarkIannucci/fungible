@@ -3,12 +3,23 @@ import type { Client } from '@libsql/client';
 let seq = 0;
 
 /**
- * Inserts a plaid_items row. The token is stored PLAINTEXT on purpose:
- * core/crypto.ts decryptToken passes any value that does not have exactly two
- * ':' straight through (legacy-token path), so syncAll's decryptToken(...)
- * works with no key file and no mocking. Do not use a token containing ':'.
- * The decrypted token is what reaches the fake Plaid client, so a test can
- * assert `plaid.transactionsSync.mock.calls[0][0].access_token`.
+ * Encrypts a plaid access token the way production stores it. crypto is
+ * imported dynamically so the encryption runs in the SAME module instance
+ * (and so the same DATA_DIR / key file) that core/sync.ts decrypts with, even
+ * when a test resets modules and sets FUNGIBLE_DATA_DIR before importing core.
+ * The key file is created lazily in DATA_DIR, so no key fixture is needed.
+ */
+export async function encryptSeedToken(plaintext: string): Promise<string> {
+  const { encryptToken } = await import('../../core/crypto.js');
+  return encryptToken(plaintext);
+}
+
+/**
+ * Inserts a plaid_items row. The token is stored ENCRYPTED, exactly as
+ * production does, and the PLAINTEXT is what this returns: syncAll decrypts
+ * the stored value and hands the plaintext to the fake Plaid client, so a
+ * test can assert `plaid.transactionsSync.mock.calls[0][0].access_token`
+ * against the returned `accessToken`.
  *
  * `lastSyncedAt` is epoch ms (syncAll's 15-minute debounce reads it); pair it
  * with useFixedClock to make debounce tests deterministic.
@@ -19,9 +30,10 @@ export async function seedPlaidItem(
   opts: { accessToken?: string; institutionName?: string | null; lastSyncedAt?: number | null; daysRequested?: number | null } = {},
 ): Promise<{ itemId: string; accessToken: string }> {
   const accessToken = opts.accessToken ?? `access-${itemId}`;
+  const stored = await encryptSeedToken(accessToken);
   await db.execute({
     sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at, days_requested) VALUES (?, ?, ?, ?, ?)',
-    args: [itemId, accessToken, opts.institutionName ?? null, opts.lastSyncedAt ?? null, opts.daysRequested ?? null],
+    args: [itemId, stored, opts.institutionName ?? null, opts.lastSyncedAt ?? null, opts.daysRequested ?? null],
   });
   return { itemId, accessToken };
 }
