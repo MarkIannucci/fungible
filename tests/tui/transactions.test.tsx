@@ -463,6 +463,9 @@ describe('Transactions', () => {
     await waitFor(() => expect(frame(r)).toContain('Saved: category rule'));
     const rule = await db.execute("SELECT category FROM category_rules WHERE pattern = 'Trader Joes'");
     expect((rule.rows[0] as unknown as { category: string }).category).toBe('Dining');
+    // The source row is released from its manual pin; the new rule drives it.
+    const src = await db.execute("SELECT category, manual_category FROM transactions WHERE name = 'Trader Joes'");
+    expect(src.rows[0]).toMatchObject({ category: 'Dining', manual_category: null });
   });
 
   it('[n] on the rule prompt declines and creates no rule', async () => {
@@ -520,6 +523,9 @@ describe('Transactions', () => {
     expect(rule.min_amount).toBe(50);
     expect(rule.max_amount).toBe(200);
     expect(rule.account_id).toBe('test-credit');
+    // Conflict-repoint path also releases the source row's manual pin.
+    const src = await db.execute("SELECT category, manual_category FROM transactions WHERE name = 'Trader Joes'");
+    expect(src.rows[0]).toMatchObject({ category: 'Income', manual_category: null });
   });
 
   it('edit panel shows a Date field prefilled with the transaction date', async () => {
