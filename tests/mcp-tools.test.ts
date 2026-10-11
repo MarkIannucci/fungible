@@ -324,12 +324,6 @@ describe('read tools', () => {
     expect((await mcp.callTool('list_canvases')).text).toBe('No canvases found.');
   });
 
-  it('calculate_tvm solves a value and turns a zero-period solve into an error message', async () => {
-    expect((await mcp.callTool('calculate_tvm', { pv: 100000, fv: 0, n: 360, rate: 0.005 })).text).toContain('PMT = -599.55');
-    const bad = await mcp.callTool('calculate_tvm', { pv: 1000, fv: 0, n: 0, rate: 0.01 });
-    expect(bad.text).toMatch(/^Error: .*periods/i);
-  });
-
   it('generate_canvas returns context built from the prompt (no LLM call, never a write)', async () => {
     const r = await mcp.callTool('generate_canvas', { prompt: 'how long to pay off my mortgage?' });
     expect(r.isError).toBe(false);

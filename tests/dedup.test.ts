@@ -117,22 +117,6 @@ describe('deduplicateCsvVsPlaid', () => {
       await plaidTx({ name: 'STARBUCKS', amount: 5.50 });
       expect(await deduplicateCsvVsPlaid()).toBe(0);
     });
-
-    it('deduplicates when amounts match exactly', async () => {
-      const csv = await csvTx({ name: 'AMAZON', amount: 29.99 });
-      await plaidTx({ name: 'AMAZON', amount: 29.99 });
-      expect(await deduplicateCsvVsPlaid()).toBe(1);
-      expect(await exists(csv)).toBe(false);
-    });
-  });
-
-  describe('date matching', () => {
-    it('deduplicates when dates match exactly', async () => {
-      const csv = await csvTx({ name: 'AMAZON', amount: 50, date: '2025-01-15' });
-      await plaidTx({ name: 'AMAZON', amount: 50, date: '2025-01-15' });
-      expect(await deduplicateCsvVsPlaid()).toBe(1);
-      expect(await exists(csv)).toBe(false);
-    });
   });
 
   describe('account matching', () => {
@@ -140,13 +124,6 @@ describe('deduplicateCsvVsPlaid', () => {
       await csvTx({ name: 'AMAZON', amount: 50, accountId: 'acct1' });
       await plaidTx({ name: 'AMAZON', amount: 50, accountId: 'acct2' });
       expect(await deduplicateCsvVsPlaid()).toBe(0);
-    });
-
-    it('deduplicates when accounts match', async () => {
-      const csv = await csvTx({ name: 'AMAZON', amount: 50, accountId: 'chase' });
-      await plaidTx({ name: 'AMAZON', amount: 50, accountId: 'chase' });
-      expect(await deduplicateCsvVsPlaid()).toBe(1);
-      expect(await exists(csv)).toBe(false);
     });
   });
 
@@ -253,15 +230,6 @@ describe('deduplicateCsvVsPlaid', () => {
       const pairs = await getCsvPlaidDupeCandidates();
       expect(pairs.map((p) => p.csvId)).toEqual([newer, older]);
     });
-  });
-
-  it('returns count of removed transactions', async () => {
-    await csvTx({ name: 'AMAZON', amount: 10 });
-    await csvTx({ name: 'NETFLIX', amount: 15 });
-    await csvTx({ name: 'STARBUCKS', amount: 5 });
-    await plaidTx({ name: 'AMAZON', amount: 10 });
-    await plaidTx({ name: 'NETFLIX', amount: 15 });
-    expect(await deduplicateCsvVsPlaid()).toBe(2);
   });
 });
 

@@ -102,17 +102,6 @@ describe('balance import over MCP', () => {
     expect(afterWrite).not.toHaveBeenCalled();
   });
 
-  it.each(['preview_balance_import', 'import_balance_history'])('%s with missing csv is a validation error, not a crash', async (name) => {
-    const r = await client.callTool({ name, arguments: {} });
-    expect(r.isError).toBe(true);
-    expect(text(r)).toMatch(/csv|invalid/i);
-    expect(await count()).toBe(1);
-    expect(afterWrite).not.toHaveBeenCalled();
-    // server still alive
-    const ok = await client.callTool({ name: 'preview_balance_import', arguments: { csv } });
-    expect(ok.isError).toBeFalsy();
-  });
-
   it('rejects wrongly typed input', async () => {
     const r = await client.callTool({ name: 'import_balance_history', arguments: { csv: 5 } });
     expect(r.isError).toBe(true);

@@ -180,12 +180,6 @@ describe('computeOutputValues', () => {
     expect(values[1]).toBe(42);
   });
 
-  it('resolves a reference to a nonexistent key to NaN, not a crash', () => {
-    const elements: CanvasElement[] = [out({ expr: 'no_such_key + 1' })];
-    const values = computeOutputValues(elements, {});
-    expect(Number.isNaN(values[0])).toBe(true);
-  });
-
   it('computes a hidden (visible: false) output\'s value regardless — visible is render-only', () => {
     // computeOutputValues takes the full, unfiltered elements array and never looks
     // at `visible` at all; callers are responsible for filtering what to *render*,

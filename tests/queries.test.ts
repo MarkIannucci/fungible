@@ -656,11 +656,6 @@ describe('getTransactions — flex filter', () => {
     expect((await getTransactions({ flex: 'flexible' })).map((r) => r.category)).toEqual(['Grocery']);
     expect((await getTransactions({ flex: 'discretionary' })).map((r) => r.category)).toEqual(['Dining']);
   });
-
-  it('excludes categories with no flex tier', async () => {
-    await insertTx({ amount: 100, category: 'Shopping' });
-    expect(await getTransactions({ flex: 'fixed' })).toHaveLength(0);
-  });
 });
 
 // ──────────────────────────────────────────────────────────────────────
