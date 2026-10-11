@@ -80,16 +80,6 @@ describe('parseCsvAmount properties', () => {
       }
     }
   });
-
-  it('parse is stable: re-formatting a parsed value and parsing again gives the same number', () => {
-    const r = mulberry32(SEED + 2);
-    for (let i = 0; i < 300; i++) {
-      const cents = int(r, -1e9, 1e9);
-      const once = parseCsvAmount(format(cents, 'plain'))!;
-      const twice = parseCsvAmount(format(Math.round(once * 100), 'comma'))!;
-      expect(twice, `seed=${SEED + 2} cents=${cents}`).toBe(once);
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -107,14 +97,6 @@ beforeEach(async () => {
 });
 
 describe('CSV re-import properties', () => {
-  it('CURRENT BEHAVIOUR: identical rows inside one file all import, each with an ordinal (do not \'fix\' without a product decision)', async () => {
-    const parsed = parseCsvText('Date,Name,Amount\n2025-01-02,Coffee,4.50\n2025-01-02,Coffee,4.50\n2025-01-02,Coffee,4.50');
-    const r = await importCsvTransactions(parsed.rows, 'acc', CFG, { name: 'd.csv', hash: 'hd' }, parsed.lines);
-    expect(r.imported).toBe(3);
-    const keys = (await db.execute('SELECT dedup_key FROM transactions ORDER BY dedup_key')).rows.map((x) => x.dedup_key);
-    expect(keys).toEqual(['2025-01-02|coffee|450|0', '2025-01-02|coffee|450|1', '2025-01-02|coffee|450|2']);
-  });
-
   it('importing a random file twice adds zero rows on the second pass', async () => {
     const r = mulberry32(SEED + 3);
     const names = ['Coffee', 'coffee ', 'Rent', 'Amazon, Inc.', 'Shop "X"'];

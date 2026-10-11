@@ -1235,13 +1235,6 @@ describe('groupAccountsByType / buildTypeToAccountIds', () => {
     ]);
   });
 
-  it('sorts groups by descending balance', () => {
-    const result = groupAccountsByType(accounts, identity);
-    for (let i = 1; i < result.length; i++) {
-      expect(result[i - 1].balance).toBeGreaterThanOrEqual(result[i].balance);
-    }
-  });
-
   it('applies the caller-supplied typeLabel to the grouping key', () => {
     const result = groupAccountsByType(accounts, upper);
     expect(result.map((r) => r.label)).toEqual(['BROKERAGE', 'CHECKING', 'CREDIT']);

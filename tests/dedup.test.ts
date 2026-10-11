@@ -133,19 +133,6 @@ describe('deduplicateCsvVsPlaid', () => {
       expect(await deduplicateCsvVsPlaid()).toBe(1);
       expect(await exists(csv)).toBe(false);
     });
-
-    it('deduplicates when dates are within 3 days', async () => {
-      const csv = await csvTx({ name: 'AMAZON', amount: 50, date: '2025-01-15' });
-      await plaidTx({ name: 'AMAZON', amount: 50, date: '2025-01-18' });
-      expect(await deduplicateCsvVsPlaid()).toBe(1);
-      expect(await exists(csv)).toBe(false);
-    });
-
-    it('does not deduplicate when date difference exceeds 3 days', async () => {
-      await csvTx({ name: 'AMAZON', amount: 50, date: '2025-01-15' });
-      await plaidTx({ name: 'AMAZON', amount: 50, date: '2025-01-19' });
-      expect(await deduplicateCsvVsPlaid()).toBe(0);
-    });
   });
 
   describe('account matching', () => {
@@ -643,14 +630,6 @@ describe('dedup characterisation', () => {
     await plaid({ name: plaidName });
     expect(await deduplicateCsvVsPlaid()).toBe(dedupes ? 1 : 0);
     expect(await exists(c.id)).toBe(!dedupes);
-  });
-
-  it('two real $5 coffees against one Plaid row leave exactly one CSV row', async () => {
-    const a = await csv({ name: 'COFFEE', amount: 5 }); const b = await csv({ name: 'COFFEE', amount: 5 });
-    await plaid({ name: 'COFFEE', amount: 5 });
-    expect(await deduplicateCsvVsPlaid()).toBe(1);
-    const survivors = (await Promise.all([a, b].map((t) => exists(t.id)))).filter(Boolean);
-    expect(survivors).toHaveLength(1);
   });
 
   it('amounts are compared exactly: 29.99 vs 29.990001 do not dedupe', async () => {

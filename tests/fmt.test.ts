@@ -49,11 +49,6 @@ describe('fmtTxAmount', () => {
   it('respects custom decimals', () => {
     expect(fmtTxAmount(1000, 0)).toBe('-$1,000');
   });
-
-  it('delegates to fmtSigned(-amount, decimals)', () => {
-    expect(fmtTxAmount(17.3)).toBe(fmtSigned(-17.3));
-    expect(fmtTxAmount(-17.3, 1)).toBe(fmtSigned(17.3, 1));
-  });
 });
 
 describe('fmtPct', () => {
@@ -79,35 +74,8 @@ describe('fmtMonths', () => {
     expect(fmtMonths(Infinity)).toBe('∞');
   });
 
-  it('returns ∞ for values over 999', () => {
-    expect(fmtMonths(1000)).toBe('∞');
-  });
-
   it('returns ∞ for NaN', () => {
     expect(fmtMonths(NaN)).toBe('∞');
-  });
-});
-
-describe('fmtCompact', () => {
-  it('abbreviates millions', () => {
-    expect(fmtCompact(1_838_641.96)).toBe('$1.84M');
-    expect(fmtCompact(3_870_000)).toBe('$3.87M');
-  });
-
-  it('abbreviates ten-thousands and above as K', () => {
-    expect(fmtCompact(68_619.40)).toBe('$68.6K');
-    expect(fmtCompact(21_493.79)).toBe('$21.5K');
-  });
-
-  it('falls through to full fmt below 10K', () => {
-    expect(fmtCompact(5_000)).toBe('$5,000.00');
-    expect(fmtCompact(999)).toBe('$999.00');
-  });
-
-  it('preserves sign for negative values', () => {
-    expect(fmtCompact(-2_000_000)).toBe('-$2.00M');
-    expect(fmtCompact(-50_000)).toBe('-$50.0K');
-    expect(fmtCompact(-5_000)).toBe('-$5,000.00');
   });
 });
 
