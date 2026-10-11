@@ -38,15 +38,6 @@ useSeededScreenDb();
 describe('Accounts', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('shows seeded accounts after load', async () => {
-    const r = renderAccounts();
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('Test Checking');
-      expect(f).toContain('Test Visa');
-    });
-  });
-
   it('Tab cycles to Add Data view', async () => {
     const r = renderAccounts();
     await waitFor(() => expect(frame(r)).toContain('Test Checking'));

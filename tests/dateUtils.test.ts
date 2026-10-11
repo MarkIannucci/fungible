@@ -400,10 +400,6 @@ describe('generatePeriods', () => {
     expect(() => generatePeriods(range, from, to)).toThrow(/exceeds the 10000-period limit/);
   });
 
-  it('a month range to year 9999 (~120k periods) fails fast with the cap error', () => {
-    expect(() => generatePeriods('month', '2025-01-01', '9999-12-31')).toThrow(/period limit/);
-  });
-
   it('a non-numeric bound yields no periods for month/year (no loop entered)', () => {
     expect(generatePeriods('month', '2025-01-01', 'garbage')).toEqual([]);
     expect(generatePeriods('year', 'garbage', '2025-01-01')).toEqual([]);

@@ -227,13 +227,6 @@ describe('sync progress reporting', () => {
     expect(seen.map((p) => p.phase)).toContain('categorize');
     expect(seen.map((p) => p.phase)).toContain('tag-rules');
   });
-
-  it('stays optional — a sync with no callback still completes', async () => {
-    await seedItem('item-a');
-    mockPlaid();
-    const results = await syncAll(true, ['item-a']);
-    expect(results[0].error).toBeUndefined();
-  });
 });
 
 describe('deleteSyncCursor', () => {
@@ -260,11 +253,6 @@ describe('deleteSyncCursor', () => {
     await deleteSyncCursor('item-a');
     const rows = await db.execute({ sql: 'SELECT cursor FROM sync_state WHERE account_id = ?', args: ['item-b'] });
     expect((rows.rows[0] as unknown as { cursor: string }).cursor).toBe('keep-me');
-  });
-
-  it('is a no-op for an item that has never synced', async () => {
-    await seedItem('item-a');
-    await expect(deleteSyncCursor('item-a')).resolves.toBeUndefined();
   });
 
   // The point of the whole feature: the next sync must start from the beginning

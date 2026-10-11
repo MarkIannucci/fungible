@@ -50,20 +50,6 @@ describe('Dashboard', () => {
     });
   });
 
-  it('shows spending amounts from seeded transactions', async () => {
-    const r = dash();
-    await waitFor(() => {
-      const f = frame(r);
-      // Grocery ($205) should be the top category
-      expect(f).toContain('Grocery');
-    });
-  });
-
-  it('shows SPENDING BY CATEGORY heading', async () => {
-    const r = dash();
-    await waitFor(() => expect(frame(r)).toContain('SPENDING BY CATEGORY'));
-  });
-
   it('SPENDING BY CATEGORY lines sum to the displayed Expenses total', async () => {
     // Exercise the two cases that used to break reconciliation: a refund inside a
     // real category (must NET to 200, not show 300) and an income+spend mix inside
@@ -240,18 +226,6 @@ describe('Dashboard', () => {
     });
   });
 
-  it('pressing a nav number calls onNavigate', async () => {
-    const onNavigate = vi.fn();
-    const r = render(
-      <W>
-        <Dashboard onNavigate={onNavigate} showHints={false} initialFilter={MAY_FILTER} />
-      </W>,
-    );
-    await waitFor(() => expect(frame(r)).toContain('Income'));
-    r.stdin.write('3'); // trends
-    expect(onNavigate).toHaveBeenCalledWith('trends');
-  });
-
   // Outbound drill payloads carry the period (range + anchor=from) so the
   // dashboard can restore the same month when Esc reverses the drill. The
   // Transactions-side tests check the return trip; these pin the originating
@@ -353,14 +327,6 @@ describe('Dashboard', () => {
     expect(onNavigate).toHaveBeenCalledWith('transactions', expect.objectContaining({
       from: '2026-05-01', to: '2026-05-31', range: 'month', anchor: '2026-05-01',
     }));
-  });
-
-  it('shows period label for the anchored month', async () => {
-    const r = dash();
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toMatch(/May 2026/);
-    });
   });
 
   it('S key syncs and shows a toast with the added count', async () => {

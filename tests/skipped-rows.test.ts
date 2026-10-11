@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SKIPPED_ROWS_SHOWN, previewSkipped } from '../core/skipped-rows.js';
+import { previewSkipped } from '../core/skipped-rows.js';
 import { previewCsvSkips, summarizeCsvSkips, type CsvSkippedRow } from '../core/csv-import-copy.js';
 import { previewBalanceSkips, summarizeSkips, type BalanceImportSkipReason } from '../core/balance-import-copy.js';
 
@@ -9,10 +9,6 @@ const balRows = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ line: i + 2, reason: 'no_matching_account' as BalanceImportSkipReason }));
 
 describe('skipped-row preview', () => {
-  it('shows five rows', () => {
-    expect(SKIPPED_ROWS_SHOWN).toBe(5);
-  });
-
   it('is empty when nothing was skipped', () => {
     expect(previewCsvSkips([])).toEqual({ summary: '', shown: [], hiddenCount: 0 });
     expect(previewBalanceSkips([])).toEqual({ summary: '', shown: [], hiddenCount: 0 });

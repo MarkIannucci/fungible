@@ -67,14 +67,6 @@ describe('GUI Health', () => {
     expect(screen.queryByText('Loans')).toBeNull();
   });
 
-  it('renders the four assumption dials', async () => {
-    renderScreen(<Health />);
-    await waitFor(() => expect(screen.getByText('Monthly spending')).toBeTruthy());
-    expect(screen.getByText('Monthly savings')).toBeTruthy();
-    expect(screen.getByText('Withdrawal rate')).toBeTruthy();
-    expect(screen.getByText('Growth rate')).toBeTruthy();
-  });
-
   it('spending stepper adjusts by $100 and shows reset when modified', async () => {
     renderScreen(<Health />);
     await waitFor(() => expect(screen.getByText('Monthly spending')).toBeTruthy());

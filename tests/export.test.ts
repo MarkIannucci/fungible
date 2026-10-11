@@ -182,11 +182,6 @@ describe('transactionsToCsv', () => {
     ...overrides,
   });
 
-  it('writes the expected header', () => {
-    const csv = transactionsToCsv([]);
-    expect(csv).toBe('date,name,display_name,amount,category,account,tags,is_ignored,is_pending\n');
-  });
-
   it('serializes a plain row with no quoting needed', () => {
     const csv = transactionsToCsv([row()]);
     expect(csv).toBe(

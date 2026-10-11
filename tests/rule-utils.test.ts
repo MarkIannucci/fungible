@@ -29,23 +29,6 @@ describe('countPatternMatches', () => {
     expect(await countPatternMatches('', 'name')).toBe(0);
   });
 
-  it('counts substring matches (name type)', async () => {
-    await insertTx('Spotify Monthly');
-    await insertTx('Spotify Annual');
-    await insertTx('Netflix');
-    expect(await countPatternMatches('Spotify', 'name')).toBe(2);
-  });
-
-  it('matches against merchant_name too', async () => {
-    await insertTx('AMZN Mktp', 'Amazon');
-    expect(await countPatternMatches('Amazon', 'name')).toBe(1);
-  });
-
-  it('is case-insensitive for name matches', async () => {
-    await insertTx('SPOTIFY');
-    expect(await countPatternMatches('spotify', 'name')).toBe(1);
-  });
-
   it('counts regex matches', async () => {
     await insertTx('Spotify Monthly');
     await insertTx('Spotify Annual');

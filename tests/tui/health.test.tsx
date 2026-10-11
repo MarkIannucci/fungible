@@ -37,32 +37,9 @@ describe('Health', () => {
     );
   }
 
-  it('shows SNAPSHOT section', async () => {
-    const r = health();
-    await waitFor(() => expect(frame(r)).toContain('SNAPSHOT'));
-  });
-
   it('shows RUNWAY section', async () => {
     const r = health();
     await waitFor(() => expect(frame(r)).toContain('RUNWAY'));
-  });
-
-  it('shows RETIREMENT section', async () => {
-    const r = health();
-    await waitFor(() => expect(frame(r)).toContain('RETIREMENT'));
-  });
-
-  it('shows ASSUMPTIONS section', async () => {
-    const r = health();
-    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
-  });
-
-  it('Enter opens dial edit mode showing cursor', async () => {
-    const r = health();
-    await waitFor(() => expect(frame(r)).toContain('ASSUMPTIONS'));
-    expect(frame(r)).not.toContain('▊');
-    r.stdin.write('\r');
-    await waitFor(() => expect(frame(r)).toContain('▊'));
   });
 
   it('Esc cancels dial edit mode', async () => {

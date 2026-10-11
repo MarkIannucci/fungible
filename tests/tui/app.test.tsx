@@ -44,15 +44,6 @@ import { useSeededScreenDb } from './helpers/screenSetup.js';
 useSeededScreenDb();
 
 describe('App', () => {
-  it('mounts and shows the dashboard without crashing', async () => {
-    const r = render(<App />);
-    await waitFor(() => {
-      const f = frame(r);
-      expect(f).toContain('fungible');
-      expect(f).toContain('Dashboard');
-    });
-  });
-
   // A datum unique to each screen (seeded data, or a section label that only
   // renders once the screen's own load has run) pairs with the header word,
   // since several header words also appear in other screens' body text

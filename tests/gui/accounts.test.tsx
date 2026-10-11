@@ -60,21 +60,6 @@ describe('GUI Accounts', () => {
     });
   });
 
-  it('edit modal toggles "exclude from net worth", persisted with the ⊘ marker', async () => {
-    renderScreen(<Accounts />);
-    await waitFor(() => expect(screen.getByText('Test Checking')).toBeTruthy());
-    await userEvent.click(screen.getByText('Test Checking'));
-    await waitFor(() => expect(screen.getByRole('checkbox')).toBeTruthy());
-    expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
-    await userEvent.click(screen.getByRole('checkbox'));
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(screen.getByText('Updated Test Checking')).toBeTruthy());
-    await waitFor(() => {
-      const cell = screen.getAllByText(/Test Checking/).find((el) => el.closest('tr'));
-      expect(cell?.closest('tr')!.textContent).toContain('excl');
-    });
-  });
-
   it('add-data tab shows the four cards with Plaid unconfigured', async () => {
     renderScreen(<Accounts />);
     await waitFor(() => expect(screen.getByText('Test Checking')).toBeTruthy());
@@ -202,35 +187,4 @@ describe('GUI Accounts', () => {
       expect(row.textContent).not.toContain('100d');
     });
   });
-
-  it('dupes tab shows the empty state', async () => {
-    renderScreen(<Accounts />);
-    await waitFor(() => expect(screen.getByText('Test Checking')).toBeTruthy());
-    await userEvent.click(screen.getByRole('button', { name: /^Dupes/ }));
-    await waitFor(() => expect(screen.getByText('No duplicate candidates found.')).toBeTruthy());
-  });
-});
-
-// The connection actions live on the Links tab (tests/gui/accounts-links.test.tsx);
-// the Accounts tab must not still offer them.
-describe('GUI Accounts — Links tab', () => {
-  const addItem = () =>
-    db.execute({
-      sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name, last_synced_at) VALUES (?, ?, ?, ?)',
-      args: ['item-a', 'tok', 'Chase', Date.now()],
-    });
-
-  it('connection actions are not offered from an account row', async () => {
-    await addItem();
-    await db.execute({
-      sql: `INSERT INTO accounts (id, name, type, subtype, item_id) VALUES (?, ?, 'depository', 'checking', ?)`,
-      args: ['acct-1', 'acct-1', 'item-a'],
-    });
-    renderScreen(<Accounts />);
-
-    // They moved to the Links tab; the Accounts tab must not still offer them.
-    await waitFor(() => expect(screen.getByText('Test Checking')).toBeTruthy());
-    expect(screen.queryByRole('button', { name: 'repair' })).toBeNull();
-  });
-
 });

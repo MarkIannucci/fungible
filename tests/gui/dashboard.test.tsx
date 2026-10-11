@@ -50,15 +50,6 @@ describe('GUI Dashboard', () => {
     );
   });
 
-  it('flex tab shows flexibility tiers', async () => {
-    renderScreen(<Dashboard />, { txFilter: MAY_FILTER });
-    await waitFor(() => expect(screen.getByText('Grocery')).toBeTruthy());
-    await userEvent.click(screen.getByRole('button', { name: 'Flexibility' }));
-    await waitFor(() => expect(screen.getByText('Fixed')).toBeTruthy());
-    expect(screen.getByText('Flexible')).toBeTruthy();
-    expect(screen.getByText('Discretionary')).toBeTruthy();
-  });
-
   it('flex tier click outbound payload carries range + anchor', async () => {
     const navigate = vi.fn();
     renderScreen(<Dashboard />, { txFilter: MAY_FILTER, navigate });

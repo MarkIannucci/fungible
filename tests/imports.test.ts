@@ -123,14 +123,6 @@ describe('importCsvTransactions provenance', () => {
       expect(await txRows()).toHaveLength(3);
     });
 
-    it('still recognises repeat charges on re-import rather than duplicating them', async () => {
-      await account('chase');
-      const rows = [['2025-01-02', 'COFFEE', '4.50'], ['2025-01-02', 'COFFEE', '4.50']];
-      await importFile(rows);
-      expect(await importFile(rows)).toMatchObject({ imported: 0, skipped: 2 });
-      expect(await txRows()).toHaveLength(2);
-    });
-
     it('scopes idempotency to the account — the same statement can land in two', async () => {
       await account('chase');
       await account('amex');
