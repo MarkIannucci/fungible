@@ -14,7 +14,7 @@ import { db } from '../core/db.js';
 import { getPlaidClient } from '../core/plaid.js';
 import { makeFakePlaid } from './helpers/makeFakeProvider.js';
 import { makePlaidTx, makePlaidAccount } from './helpers/makePlaidTx.js';
-import { seedPlaidItem, seedTx } from './helpers/seedDb.js';
+import { seedPlaidItem, seedTx, encryptSeedToken } from './helpers/seedDb.js';
 import { useFixedClock } from './helpers/fakeClock.js';
 import { syncTransactions, syncAll, deleteSyncCursor, describeSyncProgress, type SyncProgress } from '../core/sync.js';
 
@@ -92,16 +92,15 @@ describe('syncTransactions — removing tagged transactions', () => {
 });
 
 describe('syncAll item filter', () => {
-  // access_token is stored plaintext here: decryptToken passes through any value
-  // that isn't an iv:authTag:ciphertext triple, so no key file is needed.
+  // access_token is stored encrypted (as in production); the plaintext is `tok-<id>`.
   async function seedItems(...itemIds: string[]) {
-    await db.batch(
-      itemIds.map((id) => ({
+    const stmts = await Promise.all(
+      itemIds.map(async (id) => ({
         sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES (?, ?, ?)',
-        args: [id, `tok-${id}`, id],
+        args: [id, await encryptSeedToken(`tok-${id}`), id],
       })),
-      'write',
     );
+    await db.batch(stmts, 'write');
   }
 
   const syncedItemIds = async () => {
@@ -178,7 +177,7 @@ describe('sync progress reporting', () => {
   async function seedItem(id: string) {
     await db.execute({
       sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES (?, ?, ?)',
-      args: [id, `tok-${id}`, id],
+      args: [id, await encryptSeedToken(`tok-${id}`), id],
     });
   }
 
@@ -233,7 +232,7 @@ describe('deleteSyncCursor', () => {
   async function seedItem(itemId: string, cursor?: string) {
     await db.execute({
       sql: 'INSERT INTO plaid_items (item_id, access_token, institution_name) VALUES (?, ?, ?)',
-      args: [itemId, `tok-${itemId}`, itemId],
+      args: [itemId, await encryptSeedToken(`tok-${itemId}`), itemId],
     });
     if (cursor !== undefined) {
       await db.execute({ sql: 'INSERT INTO sync_state (account_id, cursor) VALUES (?, ?)', args: [itemId, cursor] });
