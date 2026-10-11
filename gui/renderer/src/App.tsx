@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Screen, TxFilter } from '../../shared/nav.js';
 import { SCREEN_KEYS } from '../../shared/nav.js';
 import { api } from './api.js';

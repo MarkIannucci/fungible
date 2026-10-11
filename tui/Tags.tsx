@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { getTagSummary, getAllTags, type MonthlySummary, type Tag } from '../core/queries.js';
 import { createTag, renameTag, deleteTag } from '../core/tags.js';

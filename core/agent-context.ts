@@ -12,7 +12,7 @@ import type { MetricBasis } from './dateUtils.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type AccountWithBalance = {
+type AccountWithBalance = {
   id: string;
   name: string;
   type: string;

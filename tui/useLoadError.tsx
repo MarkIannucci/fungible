@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Box, Text } from 'ink';
 import { C_NEGATIVE } from './ui.js';
 

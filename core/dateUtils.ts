@@ -21,7 +21,7 @@ export const BASIS_LABEL: Record<MetricBasis, string> = {
 // last30 is a trailing 30-day window; the anchor is the window START (today−29
 // when anchored to now), keeping the anchor-is-period-start convention of the
 // other ranges. Unlike calendar ranges it never has unelapsed days.
-export const LAST30_DAYS = 30;
+const LAST30_DAYS = 30;
 
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -245,7 +245,7 @@ export function formatPeriodLabel(range: Range, anchor: Date): string {
 // silently match unrelated dates too. Every other form resolves to a
 // day-in-range pair, usable with the from <= date <= to idiom already used
 // everywhere else in this file.
-export type SearchDateRange = { from: string; to: string };
+type SearchDateRange = { from: string; to: string };
 export type SearchDateAnyYear = { month: number; day: number }; // month is 1-12
 export type ParsedSearchDate = SearchDateRange | SearchDateAnyYear;
 

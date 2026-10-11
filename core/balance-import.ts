@@ -16,7 +16,7 @@ import { db } from './db.js';
 import { notifyChange } from './refresh.js';
 
 export const BALANCE_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
-export const BALANCE_IMPORT_MAX_ROWS = 50_000;
+const BALANCE_IMPORT_MAX_ROWS = 50_000;
 
 import {
   BALANCE_IMPORT_SKIP_REASONS,
@@ -26,10 +26,9 @@ import {
 } from './balance-import-copy.js';
 
 export { BALANCE_IMPORT_SKIP_REASONS, BALANCE_IMPORT_SKIP_COPY, summarizeSkips };
-export type { BalanceImportSkipReason };
 
 
-export type BalanceImportSkip = {
+type BalanceImportSkip = {
   line: number;
   raw: string;
   reason: BalanceImportSkipReason;
@@ -68,7 +67,7 @@ export type BalanceImportResult = {
 
 // ─── CSV parsing ──────────────────────────────────────────────────────────────
 
-export { tokenizeCsv, type BalanceCsvRecord } from './csv-tokenize.js';
+export { tokenizeCsv } from './csv-tokenize.js';
 import { tokenizeCsv } from './csv-tokenize.js';
 
 export type ParsedBalanceCsv = {

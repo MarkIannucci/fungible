@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
@@ -772,14 +772,14 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
       if (d === null) { date = 'invalid date'; dateBad = true; } else date = d;
     }
     const name = nameCol !== null ? truncate(row[nameCol] ?? '', 28) : '—';
-    let amount = '—', amountBad = false;
+    let amount = '—';
     const columnsChosen = amountMode === 'single' ? amountCol !== null : (debitCol !== null && creditCol !== null);
     if (columnsChosen) {
       const v = resolveCsvAmount(row, { amountMode, amountCol, debitCol, creditCol, positiveIsInflow });
       if (v.ok) amount = `$${Math.abs(v.amount).toFixed(2)}`;
-      else { amount = v.reason === 'empty_amount' ? 'blank' : 'invalid'; amountBad = true; }
+      else { amount = v.reason === 'empty_amount' ? 'blank' : 'invalid'; }
     }
-    return { date, name, amount, dateBad, amountBad };
+    return { date, name, amount, dateBad };
   }
 
   // Rows the import will skip for being unreadable, judged by the same core
@@ -1947,7 +1947,7 @@ export function Accounts({ onNavigate, isActive, showHints }: { onNavigate: (s: 
                   <Text dimColor>AMOUNT</Text>
                 </Box>
                 {csvRows.slice(0, 5).map((row, i) => {
-                  const { date, name, amount, dateBad, amountBad } = previewRow(row);
+                  const { date, name, amount, dateBad } = previewRow(row);
                   return (
                     <Box key={i} gap={2}>
                       <Text color={dateBad ? C_WARNING : undefined}>{date.padEnd(12)}</Text>

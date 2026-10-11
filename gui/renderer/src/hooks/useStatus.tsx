@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import styles from './useStatus.module.css';
 
 /** Toast-style status message, analog of the TUI's useStatusMessage. */

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import type { Screen } from './App.js';
 import {
@@ -294,7 +294,6 @@ export function Health({ onNavigate, isActive, showHints }: { onNavigate: (s: Sc
 
   // ── Derived ─────────────────────────────────────────────────────────────────
   const {
-    annualSpend,
     fireNumber,
     fireProgress,
     cashRunwayMonths: cashMonths,
