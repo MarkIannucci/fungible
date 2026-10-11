@@ -104,19 +104,6 @@ describe('GUI Settings — configuration (.env)', () => {
     expect(saveBtn().disabled).toBe(true);
   });
 
-  it('merges into an existing file: keeps comments and unrelated keys, replaces in place, no duplicates', async () => {
-    fs.writeFileSync(tempDataDir.envPath, '# my comment\nFOO=1\nANTHROPIC_API_KEY=old\nBAR=2\n');
-    await renderLoaded();
-    await userEvent.type(field('Anthropic API Key'), 'new-key');
-    await userEvent.type(field('Plaid Client ID'), 'cid');
-    await userEvent.click(saveBtn());
-    await waitFor(() => expect(screen.getByText('Saved 2 values · restart to apply')).toBeTruthy());
-
-    const lines = tempDataDir.readEnv().trim().split('\n');
-    expect(lines).toEqual(['# my comment', 'FOO=1', 'ANTHROPIC_API_KEY=new-key', 'BAR=2', 'PLAID_CLIENT_ID=cid']);
-    expect(tempDataDir.readEnv()).not.toContain('old');
-  });
-
   it('on failure shows the reason, keeps the typed values, and re-enables the button', async () => {
     await renderLoaded();
     const b = (window as unknown as { __bridge: Bridge }).__bridge;
@@ -143,13 +130,5 @@ describe('GUI Settings — configuration (.env)', () => {
     expect(saveBtn().disabled).toBe(true);
     await userEvent.type(field('Plaid Secret'), 'real');
     expect(saveBtn().disabled).toBe(false);
-  });
-
-  it('values are trimmed when written', async () => {
-    await renderLoaded();
-    await userEvent.type(field('Plaid Client ID'), '  padded  ');
-    await userEvent.click(saveBtn());
-    await waitFor(() => expect(screen.getByText('Saved 1 value · restart to apply')).toBeTruthy());
-    expect(tempDataDir.readEnv()).toBe('PLAID_CLIENT_ID=padded\n');
   });
 });

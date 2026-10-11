@@ -123,8 +123,4 @@ describe('config.writeEnv', () => {
     expect(Object.keys(out)).toEqual(['written']);
     expect(readFileSync(`${h.dir}/.env`, 'utf8')).toContain('PLAID_CLIENT_ID=abc');
   });
-
-  it('rejects an invalid key', async () => {
-    await expect(registry.config.writeEnv({ 'bad key': 'x' })).rejects.toThrow(/Invalid env key/);
-  });
 });

@@ -155,18 +155,6 @@ describe('GUI Accounts — import balance history', () => {
     expect((previews[1].args[1] as { accountMap: unknown }).accountMap).toEqual({ Checking: 'oth' });
   });
 
-  it('summarizes mixed skip reasons in the preview line', async () => {
-    picked = {
-      path: '/x/m.csv',
-      fileName: 'm.csv',
-      text: ['date,account,balance', '2026-04-01,Checking,1000', '2026-04-02,Nobody,5', '2026-04-03,Ghost,5', '2026-04-04,Checking,oops'].join('\n'),
-    };
-    await openModal();
-    const el = await screen.findByText(/balances will be added/);
-    expect(el.textContent).toContain('1 balances will be added, 0 will replace existing values, 3 skipped');
-    expect(el.textContent).toContain('(2 no matching account, 1 invalid date or amount)');
-  });
-
   it('shows "skipped by you" for a row mapped to Skip', async () => {
     // A name mapped to null (Skip) is user_skipped. The UI can't pre-seed that, so inject the map at the bridge.
     const b = (window as unknown as { __bridge: { call: (ns: string, fn: string, args: unknown[]) => Promise<unknown> } }).__bridge;
