@@ -37,14 +37,8 @@ const VALID_TOOLS = new Set(TOOL_DEFS.map((t) => t.name));
 /**
  * Start the REST API. Resolves with the listening server; rejects on any
  * listen error (EADDRINUSE, EACCES, EADDRNOTAVAIL, ...).
- * Legacy form startApiServer(port, { quiet }) still works.
  */
-export function startApiServer(
-  portOrOpts: number | ApiServerOptions = {},
-  legacyOpts: { quiet?: boolean } = {},
-): Promise<Server> {
-  const opts: ApiServerOptions = typeof portOrOpts === 'number' ? { port: portOrOpts, ...legacyOpts } : portOrOpts;
-
+export function startApiServer(opts: ApiServerOptions = {}): Promise<Server> {
   const envPort = parseInt(process.env.FUNGIBLE_API_PORT ?? '', 10);
   const port = opts.port ?? (Number.isNaN(envPort) ? 3456 : envPort);
   const host = opts.host ?? process.env.FUNGIBLE_BIND_HOST ?? '127.0.0.1';

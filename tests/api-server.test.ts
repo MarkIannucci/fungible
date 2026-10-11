@@ -22,7 +22,7 @@ const TOOL = TOOL_DEFS[0].name;
 
 const connectHost = (o: { host?: string }) => (o.host && o.host !== '0.0.0.0' && o.host !== '::' ? o.host : undefined);
 let servers: http.Server[] = [];
-async function start(opts: Exclude<Parameters<typeof startApiServer>[0], number> = {}) {
+async function start(opts: Parameters<typeof startApiServer>[0] = {}) {
   const server = await startApiServer({ port: 0, quiet: true, apiKey: undefined, ...(opts as object) });
   servers.push(server);
   const port = (server.address() as AddressInfo).port;
@@ -348,12 +348,6 @@ describe('startup options', () => {
     const s = await startApiServer({ quiet: true, apiKey: undefined });
     servers.push(s);
     expect((s.address() as AddressInfo).port).toBeGreaterThan(0);
-  });
-
-  it('keeps the legacy (port, {quiet}) call form working', async () => {
-    const s = await startApiServer(0, { quiet: true });
-    servers.push(s);
-    expect(s.listening).toBe(true);
   });
 
   it('rejects with EADDRINUSE and leaves the first server running', async () => {
