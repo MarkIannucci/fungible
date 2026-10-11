@@ -230,7 +230,8 @@ describe('GUI Transactions', () => {
     await userEvent.click(ignoreBtn);
     await waitFor(() => {
       const updated = screen.getAllByText('Sweetgreen')[0].closest('tr')!;
-      expect(updated.textContent).toContain('~');
+      expect(updated.className).toMatch(/rowIgnored/);
+      expect(updated.textContent).not.toContain('~');
     });
     const ignored = await db.execute("SELECT id, ignored FROM transactions WHERE name = 'Sweetgreen' ORDER BY date DESC");
     expect(ignored.rows.map((r) => Number(r.ignored))).toEqual([1, 0]); // only the clicked (May) row
@@ -564,7 +565,10 @@ describe('GUI Transactions: bulk actions', () => {
     expect((await readTx(db, 'tx-bills-1'))!.ignored).toBe(1);
     expect((await readTx(db, 'tx-groc-1'))!.ignored).toBe(0);
 
-    await waitFor(() => expect(rowOf('Amazon').textContent).toContain('~'));
+    await waitFor(() => {
+      expect(rowOf('Amazon').className).toMatch(/rowIgnored/);
+      expect(rowOf('Amazon').textContent).not.toContain('~');
+    });
     await check('Amazon');
     await check('Con Edison');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Un-ignore' })).toBeTruthy());
