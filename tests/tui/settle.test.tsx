@@ -275,6 +275,20 @@ describe('Settle up', () => {
       await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', { dashView: 'owner', range: 'month', anchor: '2026-05-01' }));
     });
 
+    it('shows a window of 12 months that follows the cursor when the split goes back years', async () => {
+      await configuredMay();
+      await db.execute("UPDATE split_ratios SET start_date = '2024-01-01'"); // Jan 2024 – Jun 2026: 30 months
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toContain('1–12 of 30 months'));
+      expect(frame(r)).not.toContain('Jan 2024');
+      await pressKeys(r, Array(29).fill(DOWN));
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('19–30 of 30 months');
+        expect(f).toContain('JAN 2024');
+      });
+    });
+
     it('number keys still navigate away', async () => {
       await configuredMay();
       const onNavigate = vi.fn();
