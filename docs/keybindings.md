@@ -73,7 +73,12 @@ Your spouse's share is 100 minus yours. Both names come from Settings `[0]`, and
 | `Enter` | Open that month's joint transactions in Transactions (`Esc` there comes back) |
 | `s` | Settle the selected month (`y` to confirm, `n` to cancel) |
 | `u` | Unsettle the selected month: removes the settled tag from all its transactions (`y` / `n`) |
+| `r` | Split ratios: `a` add, `Enter` edit, `x` delete, `Esc` back |
 | `Esc` | Back to the Dashboard's Owner view |
+
+Once splitting is set up, Settings `[0]` also has a **Settle up joint expenses** row that opens this screen. The joint and settled tags can be renamed on the Tags screen, but not deleted while splitting uses them.
+
+**Ratios** take effect on their start date, and each transaction uses the ratio in effect on its date. A ratio can't be added, edited or deleted on or before the date of a settled transaction, so a ratio change never moves an amount you've already settled. A new ratio defaults to the 1st of next month and your current share.
 
 For each month, the detail pane shows what your spouse owes you (their share of what you paid) and what you owe your spouse (your share of what they paid). Whoever is owed more gets paid the difference. When the ratio changes partway through a month, each transaction uses the ratio in effect on its date.
 
@@ -169,7 +174,7 @@ Shows assets (depository, investment, manual), liabilities (credit), and net wor
 | `t` | View all transactions for selected tag |
 | `a` | Add new tag |
 | `n` | Rename selected tag |
-| `x` | Delete selected tag (immediately, no confirmation) |
+| `x` | Delete selected tag (immediately, no confirmation). The joint and settled tags used by [Settle up](#settle-up) can't be deleted |
 
 In tag detail, `↑ ↓` selects a category and `Enter` drills into transactions for that tag + category. `← →` cycles to the previous/next tag.
 

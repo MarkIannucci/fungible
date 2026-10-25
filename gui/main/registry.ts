@@ -103,6 +103,7 @@ import { getCsvPlaidDupeCandidates } from '../../core/dedup.js';
 import { loadProfile, saveProfile, householdMembers } from '../../core/profile.js';
 import {
   getSplitConfig, getSettleMonths, setupSplit, settleMonth, unsettleMonth, countTransactionsTagged,
+  addRatio, updateRatio, deleteRatio,
 } from '../../core/split.js';
 import { syncAll, deleteSyncCursor } from '../../core/sync.js';
 import { setSyncResult, mergeSyncResult, getSyncFailures } from '../../core/sync-status.js';
@@ -249,6 +250,9 @@ export const registry = {
     settleMonth,
     unsettleMonth,
     countTransactionsTagged,
+    addRatio,
+    updateRatio,
+    deleteRatio,
   },
   canvas: {
     loadHistory,

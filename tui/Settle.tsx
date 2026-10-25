@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   getSplitConfig, getSettleMonths, setupSplit, settleMonth, unsettleMonth, countTransactionsTagged,
+  addRatio, updateRatio, deleteRatio,
   type SplitConfig,
 } from '../core/split.js';
 import type { SettleMonth, RatioSlice } from '../core/split-math.js';
@@ -21,7 +22,7 @@ import { useLoadGuard } from './useLoadGuard.js';
 // calendar month. Opened with [s] from the Dashboard's Owner view; runs setup
 // first when the split isn't configured yet.
 
-type Mode = 'list' | 'setup' | 'confirm-settle' | 'confirm-unsettle';
+type Mode = 'list' | 'setup' | 'confirm-settle' | 'confirm-unsettle' | 'ratios' | 'ratio-edit';
 type Ready = Extract<SplitConfig, { status: 'ready' }>;
 
 const SETUP_FIELDS = ['joint', 'settled', 'pct', 'start'] as const;
@@ -32,8 +33,12 @@ const SETUP_LABELS: Record<SetupField, string> = {
 // Characters each setup field accepts as you type.
 const SETUP_CHARS: Partial<Record<SetupField, RegExp>> = { pct: /^[0-9.]$/, start: /^[0-9-]$/ };
 
-function firstOfThisMonth(): string {
-  const d = new Date();
+const RATIO_FIELDS = ['start', 'pct'] as const;
+type RatioField = typeof RATIO_FIELDS[number];
+
+function firstOfMonth(offset = 0): string {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
 }
 
@@ -83,10 +88,16 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [setup, setSetup] = useState<Record<SetupField, string>>({ joint: 'joint', settled: 'settled', pct: '', start: firstOfThisMonth() });
+  const [setup, setSetup] = useState<Record<SetupField, string>>({ joint: 'joint', settled: 'settled', pct: '', start: firstOfMonth() });
   const [setupField, setSetupField] = useState(0);
   // Set once the settled tag name was found already on transactions; a second Enter proceeds.
   const [setupWarned, setSetupWarned] = useState<string | null>(null);
+
+  // Ratio list ([r]): newest first. ratioEditing is the start date being edited, null for a new one.
+  const [ratioCursor, setRatioCursor] = useState(0);
+  const [ratioForm, setRatioForm] = useState<Record<RatioField, string>>({ start: '', pct: '' });
+  const [ratioField, setRatioField] = useState(0);
+  const [ratioEditing, setRatioEditing] = useState<string | null>(null);
 
   const initialCursorDone = useRef(false);
   function load() {
@@ -110,12 +121,13 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
 
   const setTyping = useSetTyping();
   useEffect(() => {
-    setTyping(mode === 'setup');
+    setTyping(mode === 'setup' || mode === 'ratio-edit');
     return () => setTyping(false);
   }, [mode]);
 
   const ready = config?.status === 'ready' ? config : null;
   const month = months[cursor];
+  const ratiosDesc = ready ? [...ready.ratios].reverse() : [];
 
   function back() {
     onNavigate('dashboard', { dashView: 'owner', range: 'month', ...(month ? { anchor: month.from } : {}) });
@@ -142,6 +154,39 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
       });
       setMode('list');
       showStatus('Expense split is set up');
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveRatio() {
+    setError(null);
+    const start = ratioForm.start.trim();
+    const selfPct = ratioForm.pct.trim() === '' ? Number.NaN : Number(ratioForm.pct);
+    setBusy(true);
+    try {
+      if (ratioEditing === null) await addRatio(start, selfPct);
+      else await updateRatio(ratioEditing, start, selfPct);
+      setMode('ratios');
+      showStatus(ratioEditing === null ? `Added the ratio starting ${start}` : `Updated the ratio starting ${start}`);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeRatio(startDate: string) {
+    setError(null);
+    setBusy(true);
+    try {
+      await deleteRatio(startDate);
+      setRatioCursor((c) => Math.max(0, c - 1));
+      showStatus(`Deleted the ratio starting ${startDate}`);
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -197,6 +242,47 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
       return;
     }
 
+    if (mode === 'ratio-edit') {
+      const field = RATIO_FIELDS[ratioField];
+      if (key.escape) { setError(null); setMode('ratios'); return; }
+      if (key.upArrow) { setRatioField(0); return; }
+      if (key.downArrow || key.tab) { setRatioField(1); return; }
+      if (key.return) { void saveRatio(); return; }
+      if (key.backspace || key.delete) { setRatioForm((f) => ({ ...f, [field]: f[field].slice(0, -1) })); return; }
+      if (input && !key.ctrl && !key.meta) {
+        const allowed = SETUP_CHARS[field]!;
+        const typed = [...input].filter((ch) => allowed.test(ch)).join('');
+        if (typed) setRatioForm((f) => ({ ...f, [field]: f[field] + typed }));
+      }
+      return;
+    }
+
+    if (mode === 'ratios') {
+      if (key.escape) { setError(null); setMode('list'); return; }
+      if (handleNavKey(input, 'settle', onNavigate)) return;
+      const selected = ratiosDesc[ratioCursor];
+      if (key.upArrow) { setRatioCursor((c) => Math.max(0, c - 1)); setError(null); return; }
+      if (key.downArrow) { setRatioCursor((c) => Math.min(ratiosDesc.length - 1, c + 1)); setError(null); return; }
+      if (input === 'a') {
+        setError(null);
+        setRatioEditing(null);
+        setRatioForm({ start: firstOfMonth(1), pct: ratiosDesc[0] ? String(ratiosDesc[0].selfPct) : '' });
+        setRatioField(0);
+        setMode('ratio-edit');
+        return;
+      }
+      if (key.return && selected) {
+        setError(null);
+        setRatioEditing(selected.startDate);
+        setRatioForm({ start: selected.startDate, pct: String(selected.selfPct) });
+        setRatioField(0);
+        setMode('ratio-edit');
+        return;
+      }
+      if (input === 'x' && selected) { void removeRatio(selected.startDate); return; }
+      return;
+    }
+
     // list mode
     if (handleNavKey(input, 'settle', onNavigate)) return;
     if (key.escape) { back(); return; }
@@ -224,6 +310,7 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
       setMode('confirm-unsettle');
       return;
     }
+    if (input === 'r') { setError(null); setRatioCursor(0); setMode('ratios'); return; }
   }, { isActive: isActive !== false });
 
   const termW = useTerminalWidth();
@@ -243,7 +330,7 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
         )}
       </Text>
       {mode === 'list' && ready && (
-        <Text dimColor>{showHints ? '↑↓ month  ·  Enter joint txns  ·  [s] settle  ·  [u] unsettle  ·  Esc back' : '[s] settle  ·  [u] unsettle'}</Text>
+        <Text dimColor>{showHints ? '↑↓ month  ·  Enter joint txns  ·  [s] settle  ·  [u] unsettle  ·  [r] ratios  ·  Esc back' : '[s] settle  ·  [u] unsettle  ·  [r] ratios'}</Text>
       )}
     </Box>
   );
@@ -272,6 +359,35 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
           </Box>
           <Box marginTop={1}><Text dimColor>↑↓ field  ·  Enter save  ·  Esc cancel</Text></Box>
           {error && <Text color={C_NEGATIVE}>{error}</Text>}
+        </ModalPanel>
+      ) : ready && (mode === 'ratios' || mode === 'ratio-edit') ? (
+        <ModalPanel title="Split ratios">
+          <Text dimColor>Each transaction uses the ratio in effect on its date. Ratios can't change on or before a settled transaction.</Text>
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor>{'  '}{'Starts'.padEnd(12)}  {truncate(ready.self, nameW).padStart(nameW)}  {truncate(ready.spouse, nameW).padStart(nameW)}</Text>
+            {ratiosDesc.map((r, i) => {
+              const sel = mode === 'ratios' && i === ratioCursor;
+              return (
+                <SelectableRow key={r.startDate} selected={sel}>
+                  <Text color={sel ? C_ACCENT : undefined}>{r.startDate.padEnd(12)}</Text>
+                  <Text>{pct(r.selfPct).padStart(nameW)}</Text>
+                  <Text>{pct(100 - r.selfPct).padStart(nameW)}</Text>
+                </SelectableRow>
+              );
+            })}
+          </Box>
+          {mode === 'ratio-edit' ? (
+            <Box flexDirection="column" marginTop={1}>
+              <Text bold>{ratioEditing === null ? 'New ratio' : `Edit the ratio starting ${ratioEditing}`}</Text>
+              <EditTextField label="Starts" labelWidth={13} active={ratioField === 0} value={ratioForm.start} color={C_WARNING} placeholder="YYYY-MM-DD" />
+              <EditTextField label="Your share %" labelWidth={13} active={ratioField === 1} value={ratioForm.pct} color={C_WARNING} placeholder="e.g. 60" />
+              <Text dimColor>↑↓ field  ·  Enter save  ·  Esc cancel</Text>
+            </Box>
+          ) : (
+            <Box marginTop={1}><Text dimColor>[a] add  ·  Enter edit  ·  [x] delete  ·  Esc back</Text></Box>
+          )}
+          {error && <Text color={C_NEGATIVE}>{error}</Text>}
+          {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
         </ModalPanel>
       ) : ready && (
         <>

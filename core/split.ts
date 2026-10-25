@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { getSetting } from './settings.js';
+import { getSetting, SPLIT_JOINT_TAG_KEY, SPLIT_SETTLED_TAG_KEY } from './settings.js';
 import { getOrCreateTag, type TagOption } from './tags.js';
 import { loadProfile } from './profile.js';
 import { isValidIsoDate } from './transactions.js';
@@ -12,10 +12,6 @@ import { computeSplit, monthBounds, type SettleMonth, type SplitRatio, type Spli
 // and what's left to settle comes only from joint transactions without it. No
 // copy of the transactions is kept. Ratios can't be back-dated over a settled
 // transaction, so a ratio change never moves an amount already settled.
-
-/** Settings keys for the split's tags. Ids, not names, so a rename on the Tags screen keeps working. */
-export const SPLIT_JOINT_TAG_KEY = 'split_joint_tag_id';
-export const SPLIT_SETTLED_TAG_KEY = 'split_settled_tag_id';
 
 export type SplitConfig =
   | { status: 'needs-household' }

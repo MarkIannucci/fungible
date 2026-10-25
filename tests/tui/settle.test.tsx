@@ -275,6 +275,73 @@ describe('Settle up', () => {
       await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', { dashView: 'owner', range: 'month', anchor: '2026-05-01' }));
     });
 
+    describe('ratios', () => {
+      const BACKSPACE = '\x7f';
+
+      it('[r] lists the ratios and [a] adds one starting next month', async () => {
+        await configuredMay();
+        const r = settle();
+        await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
+        await press(r, 'r');
+        await waitFor(() => expect(frame(r)).toContain('Split ratios'));
+        expect(frame(r)).toMatch(/2026-05-01\s+60%\s+40%/);
+        await press(r, 'a');
+        await waitFor(() => expect(frame(r)).toContain('New ratio'));
+        expect(frame(r)).toContain('2026-07-01');
+        await pressKeys(r, [DOWN, BACKSPACE, BACKSPACE, '5', '7', '.', '5']);
+        await press(r, '\r');
+        await waitFor(() => expect(frame(r)).toContain('Added the ratio starting 2026-07-01'));
+        expect(frame(r)).toMatch(/2026-07-01\s+57\.5%\s+42\.5%/);
+        expect(await splitApi.getRatios()).toEqual([
+          { startDate: '2026-05-01', selfPct: 60 },
+          { startDate: '2026-07-01', selfPct: 57.5 },
+        ]);
+      });
+
+      it('refuses, inline, to change a ratio over a settled transaction', async () => {
+        await configuredMay();
+        await tagged('settled', ['tx-groc-1', 'tx-alex-rent']); // latest settled: May 20
+        const r = settle();
+        await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
+        await press(r, 'r');
+        await waitFor(() => expect(frame(r)).toContain('Split ratios'));
+        await press(r, '\r');
+        await waitFor(() => expect(frame(r)).toContain('Edit the ratio starting 2026-05-01'));
+        await pressKeys(r, [DOWN, BACKSPACE, BACKSPACE, '5', '0']);
+        await press(r, '\r');
+        await waitFor(() => expect(frame(r)).toContain("Ratios can't change on or before 2026-05-20"));
+        expect(await splitApi.getRatios()).toEqual([{ startDate: '2026-05-01', selfPct: 60 }]);
+      });
+
+      it('[x] deletes a ratio, but not the only one', async () => {
+        await configuredMay();
+        await splitApi.addRatio('2026-07-01', 55);
+        const r = settle();
+        await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
+        await press(r, 'r');
+        await waitFor(() => expect(frame(r)).toContain('2026-07-01'));
+        await press(r, 'x'); // newest first, so this is July
+        await waitFor(() => expect(frame(r)).toContain('Deleted the ratio starting 2026-07-01'));
+        await press(r, 'x');
+        await waitFor(() => expect(frame(r)).toContain("Can't delete the only ratio"));
+        expect(await splitApi.getRatios()).toEqual([{ startDate: '2026-05-01', selfPct: 60 }]);
+      });
+
+      it('Esc steps back from the editor to the list, then to the months', async () => {
+        await configuredMay();
+        const r = settle();
+        await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
+        await press(r, 'r');
+        await press(r, 'a');
+        await waitFor(() => expect(frame(r)).toContain('New ratio'));
+        await press(r, ESC);
+        await waitFor(() => expect(frame(r)).not.toContain('New ratio'));
+        expect(frame(r)).toContain('Split ratios');
+        await press(r, ESC);
+        await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
+      });
+    });
+
     it('number keys still navigate away', async () => {
       await configuredMay();
       const onNavigate = vi.fn();

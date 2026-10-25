@@ -82,11 +82,21 @@ describe('getSplitConfig', () => {
     expect(config.status === 'ready' && config.jointTag.name).toBe('shared');
   });
 
-  it('goes back to unconfigured when a configured tag is deleted', async () => {
+  it('goes back to unconfigured when a configured tag is gone', async () => {
     await seedHousehold();
     await setupSplit(SETUP);
-    await deleteTag(await getOrCreateTag('settled'));
+    // deleteTag refuses (below); this is a tag removed some other way, e.g. by hand in SQL.
+    await db.execute({ sql: 'DELETE FROM tags WHERE id = ?', args: [await getOrCreateTag('settled')] });
     expect((await getSplitConfig()).status).toBe('unconfigured');
+  });
+
+  it("refuses to delete either of the split's tags, but not other tags", async () => {
+    await seedHousehold();
+    await setupSplit(SETUP);
+    await expect(deleteTag(await getOrCreateTag('joint'))).rejects.toThrow("used by expense splitting");
+    await expect(deleteTag(await getOrCreateTag('settled'))).rejects.toThrow("used by expense splitting");
+    await deleteTag(await getOrCreateTag('vacation'));
+    expect((await getSplitConfig()).status).toBe('ready');
   });
 });
 
