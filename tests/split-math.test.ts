@@ -62,8 +62,8 @@ describe('computeSplit', () => {
     const m = month([row({ date: '2026-10-10', amount: 600 }), row({ date: '2026-10-20', amount: 500 })], '2026-10', ratios);
     expect(m.spouseOwesSelf).toBe(240 + 275);
     expect(m.slices).toEqual([
-      { selfPct: 60, from: '2026-10-01', to: '2026-10-14', selfPaid: 600, spousePaid: 0 },
-      { selfPct: 45, from: '2026-10-15', to: '2026-10-31', selfPaid: 500, spousePaid: 0 },
+      { selfPct: 60, from: '2026-10-01', to: '2026-10-14', selfPaid: 600, spousePaid: 0, spouseOwesSelf: 240, selfOwesSpouse: 0 },
+      { selfPct: 45, from: '2026-10-15', to: '2026-10-31', selfPaid: 500, spousePaid: 0, spouseOwesSelf: 275, selfOwesSpouse: 0 },
     ]);
   });
 

@@ -28,7 +28,15 @@ export type SplitTxRow = {
 };
 
 /** The part of a month covered by one ratio. */
-export type RatioSlice = { selfPct: number; from: string; to: string; selfPaid: number; spousePaid: number };
+export type RatioSlice = {
+  selfPct: number;
+  from: string;
+  to: string;
+  selfPaid: number;
+  spousePaid: number;
+  spouseOwesSelf: number;  // spouse's percentage of what self paid
+  selfOwesSpouse: number;  // self's percentage of what spouse paid
+};
 
 export type SettleStatus = 'empty' | 'open' | 'settled' | 'top-up';
 
@@ -98,7 +106,9 @@ function slicesFor(from: string, to: string, ratios: SplitRatio[]): RatioSlice[]
     const next = ratios[i + 1]?.startDate;
     const sFrom = ratios[i].startDate > from ? ratios[i].startDate : from;
     const sTo = next !== undefined && addDays(next, -1) < to ? addDays(next, -1) : to;
-    if (sFrom <= sTo) out.push({ selfPct: ratios[i].selfPct, from: sFrom, to: sTo, selfPaid: 0, spousePaid: 0 });
+    if (sFrom <= sTo) {
+      out.push({ selfPct: ratios[i].selfPct, from: sFrom, to: sTo, selfPaid: 0, spousePaid: 0, spouseOwesSelf: 0, selfOwesSpouse: 0 });
+    }
   }
   return out;
 }
@@ -106,7 +116,7 @@ function slicesFor(from: string, to: string, ratios: SplitRatio[]): RatioSlice[]
 function summarizeMonth(month: string, rows: SplitTxRow[], ratios: SplitRatio[], names: SplitNames, today: string): SettleMonth {
   const { from, to } = monthBounds(month);
   const slices = slicesFor(from, to, ratios);
-  let jointC = 0, spouseOwesC = 0, selfOwesC = 0, settledC = 0, toSettleC = 0;
+  let jointC = 0, settledC = 0, toSettleC = 0;
   let pendingCount = 0, hiddenCount = 0, anySettled = false;
   const tagIds: string[] = [], untagIds: string[] = [], blockedIds: string[] = [];
 
@@ -129,8 +139,8 @@ function summarizeMonth(month: string, rows: SplitTxRow[], ratios: SplitRatio[],
     if (counts) {
       jointC += cents;
       const slice = slices.find((s) => s.from <= r.date && r.date <= s.to)!;
-      if (payer === 'self') { slice.selfPaid += cents; spouseOwesC += net; }
-      if (payer === 'spouse') { slice.spousePaid += cents; selfOwesC -= net; }
+      if (payer === 'self') { slice.selfPaid += cents; slice.spouseOwesSelf += net; }
+      if (payer === 'spouse') { slice.spousePaid += cents; slice.selfOwesSpouse -= net; }
     }
     if (r.settled) {
       anySettled = true;
@@ -150,15 +160,22 @@ function summarizeMonth(month: string, rows: SplitTxRow[], ratios: SplitRatio[],
 
   const hasWork = tagIds.length > 0 || untagIds.length > 0;
   const status: SettleStatus = hasWork ? (anySettled ? 'top-up' : 'open') : (anySettled ? 'settled' : 'empty');
-  const selfPaidC = slices.reduce((s, x) => s + x.selfPaid, 0);
-  const spousePaidC = slices.reduce((s, x) => s + x.spousePaid, 0);
+  const total = (k: 'selfPaid' | 'spousePaid' | 'spouseOwesSelf' | 'selfOwesSpouse') => slices.reduce((s, x) => s + x[k], 0);
+  const spouseOwesC = total('spouseOwesSelf');
+  const selfOwesC = total('selfOwesSpouse');
 
   return {
     month, from, to,
     jointTotal: toDollars(jointC),
-    selfPaid: toDollars(selfPaidC),
-    spousePaid: toDollars(spousePaidC),
-    slices: slices.map((s) => ({ ...s, selfPaid: toDollars(s.selfPaid), spousePaid: toDollars(s.spousePaid) })),
+    selfPaid: toDollars(total('selfPaid')),
+    spousePaid: toDollars(total('spousePaid')),
+    slices: slices.map((s) => ({
+      ...s,
+      selfPaid: toDollars(s.selfPaid),
+      spousePaid: toDollars(s.spousePaid),
+      spouseOwesSelf: toDollars(s.spouseOwesSelf),
+      selfOwesSpouse: toDollars(s.selfOwesSpouse),
+    })),
     spouseOwesSelf: toDollars(spouseOwesC),
     selfOwesSpouse: toDollars(selfOwesC),
     monthNet: toDollars(spouseOwesC - selfOwesC),
