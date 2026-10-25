@@ -11,7 +11,7 @@ import type { Screen, TxFilter } from './App.js';
 import { fmt, truncate, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
-import { PageHeader, ModalPanel, SelectableRow, SectionHeader, EditTextField, useStatusMessage } from './components/index.js';
+import { PageHeader, ModalPanel, SelectableRow, SectionHeader, EditTextField, useStatusMessage, usePagination } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useFilter } from './FilterContext.js';
@@ -74,6 +74,7 @@ function sliceSpan(s: RatioSlice, i: number, n: number, m: SettleMonth): string 
 }
 
 const STATUS_LABEL: Record<SettleMonth['status'], string> = { empty: '—', open: 'open', settled: 'settled', 'top-up': 'top-up' };
+const MONTH_PAGE = 12;
 
 export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onNavigate: (s: Screen, f?: TxFilter) => void; isActive?: boolean; initialFilter?: TxFilter; showHints: boolean }) {
   const { loadError, track } = useLoadError();
@@ -318,6 +319,8 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
   const nameW = 8;
   // [sel=2] [month=8] [joint=9] [self=8] [spouse=8] [to settle] [status=7], gaps of 2
   const settleW = Math.max(18, Math.min(28, inner - 55));
+  // A split that started years ago has more months than fit beside the detail pane.
+  const { visible: visibleMonths, pageStart } = usePagination(months, cursor, MONTH_PAGE);
 
   if (loadError) return <LoadError message={loadError} />;
 
@@ -395,8 +398,8 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
             <Text dimColor>
               {'  '}{'Month'.padEnd(8)}  {'Joint'.padStart(9)}  {truncate(ready.self, nameW).padStart(nameW)}  {truncate(ready.spouse, nameW).padStart(nameW)}  {'To settle'.padEnd(settleW)}  Status
             </Text>
-            {months.map((m, i) => {
-              const sel = i === cursor;
+            {visibleMonths.map((m, j) => {
+              const sel = pageStart + j === cursor;
               const settleText = m.tagIds.length + m.untagIds.length === 0 ? '—' : arrow(m.toSettle, ready, nameW);
               const blocked = m.blockedIds.length > 0;
               return (
@@ -413,6 +416,9 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
                 </SelectableRow>
               );
             })}
+            {months.length > MONTH_PAGE && (
+              <Text dimColor>{`  ${pageStart + 1}–${pageStart + visibleMonths.length} of ${months.length} months`}</Text>
+            )}
           </Box>
 
           <Box marginTop={1}><Divider /></Box>
