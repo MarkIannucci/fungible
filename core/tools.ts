@@ -143,7 +143,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: 'list_accounts',
-    description: 'List all connected accounts (banks, credit cards, manual assets).',
+    description: 'List all connected accounts (banks, credit cards, manual assets) with their account IDs.',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -737,6 +737,8 @@ async function executeToolImpl(
           ? `${a.institution_name ?? 'New institution'} — linked, awaiting first sync`
           : `${a.nickname ?? a.name} (${a.subtype ?? a.type}) ···${a.mask ?? '?'} — ${a.institution_name ?? 'Unknown'}`
             + (a.excluded ? ' · excluded from net worth' : '')
+            // Other tools take an account_id and point here for it.
+            + `  [${a.id}]`
       ).join('\n');
     }
 

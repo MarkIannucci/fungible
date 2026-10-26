@@ -271,7 +271,7 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
 
   server.tool(
     'list_accounts',
-    'List all connected bank accounts.',
+    'List all connected bank accounts with their account IDs.',
     {},
     () => run('list_accounts', {}),
   );

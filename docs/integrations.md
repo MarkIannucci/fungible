@@ -118,7 +118,7 @@ Same set across MCP and HTTP.
 | `delete_name_rule` | Delete a name rule |
 | `list_hidden_categories` | List hidden categories |
 | `toggle_hidden_category` | Show or hide a category |
-| `list_accounts` | List connected accounts |
+| `list_accounts` | List connected accounts with their IDs (for tools that take `account_id`) |
 | `sync` | Pull latest transactions from Plaid |
 | `uncategorized_summary` | Most common uncategorized transaction names |
 | `list_tags` | List tags with transaction counts |

@@ -244,6 +244,12 @@ describe('read tools', () => {
     expect(r.text).toContain('Card (credit card)');
   });
 
+  it('list_accounts shows the account ID that account_id arguments take', async () => {
+    const lines = (await mcp.callTool('list_accounts')).text.split('\n');
+    expect(lines.find((l) => l.startsWith('Main'))).toMatch(/\[chk\]$/);
+    expect(lines.find((l) => l.startsWith('Card'))).toMatch(/\[cc\]$/);
+  });
+
   describe('uncategorized_summary', () => {
     it('counts repeated names', async () => {
       await seedTx(db, { account_id: 'cc', name: 'Mystery Co', amount: 3, category: 'Uncategorized' });
