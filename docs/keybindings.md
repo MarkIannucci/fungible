@@ -62,6 +62,7 @@ In **scorecard** mode (`s`), categories are bucketed into OVER / TYPICAL / UNDER
 Splits joint expenses between you and your spouse by a ratio you choose, and settles up one calendar month at a time. Open it with `s` on the Dashboard's **Owner** view. The first time, it asks for:
 
 - **Joint tag** (default `joint`): expenses with this tag are split.
+- **Personal tag** (default `personal`): marks a transaction you've reviewed and kept out of the split.
 - **Settled tag** (default `settled`): settling a month adds it to that month's joint transactions.
 - **Your share %** and the date it **Starts**.
 
@@ -71,12 +72,26 @@ Your spouse's share is 100 minus yours. Both names come from Settings `[0]`, and
 |-----|--------|
 | `↑ ↓` | Select month |
 | `Enter` | Open that month's joint transactions in Transactions (`Esc` there comes back) |
-| `s` | Settle the selected month (`y` to confirm, `n` to cancel) |
+| `v` | Review the selected month's unreviewed transactions (see below) |
+| `s` | Settle the selected month (`y` to confirm, `n` to cancel; `v` to review first when some transactions are unreviewed) |
 | `u` | Unsettle the selected month: removes the settled tag from all its transactions (`y` / `n`) |
 | `r` | Split ratios: `a` add, `Enter` edit, `x` delete, `Esc` back |
 | `Esc` | Back to the Dashboard's Owner view |
 
-Once splitting is set up, Settings `[0]` also has a **Settle up joint expenses** row that opens this screen. The joint and settled tags can be renamed on the Tags screen, but not deleted while splitting uses them.
+Once splitting is set up, Settings `[0]` also has a **Settle up joint expenses** row that opens this screen. The joint, personal and settled tags can be renamed on the Tags screen, but not deleted while splitting uses them.
+
+**Review** marks each transaction joint or personal, one at a time. A transaction needs review when it's on your or your spouse's account, dated on or after the first ratio, posted, not ignored, not in a hidden category, and has neither the joint nor the personal tag. Income and refunds need review too. The **Review** column and the detail pane show how many each month has left. `v` steps through the selected month oldest first, showing the account and its owner, the date, merchant, amount and category:
+
+| Key | Action |
+|-----|--------|
+| `j` | Joint, then the next transaction. In a month that's already settled it asks first (`y` / `n`), since the month becomes a top-up |
+| `p` | Personal, then the next transaction |
+| `← →` | Change the category; it's saved with the answer |
+| `k` | Skip; it stays unreviewed |
+| `z` | Undo the last answer (its tag and any category change) and go back to it |
+| `Esc` | Stop; answers so far are kept |
+
+Settling a month that still has unreviewed transactions warns and offers `v` to review first. Finishing that review brings you back to the settle prompt with the updated amount.
 
 **Ratios** take effect on their start date, and each transaction uses the ratio in effect on its date. A ratio can't be added, edited or deleted on or before the date of a settled transaction, so a ratio change never moves an amount you've already settled. A new ratio defaults to the 1st of next month and your current share.
 

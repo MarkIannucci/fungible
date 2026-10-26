@@ -90,7 +90,8 @@ describe('Settle up', () => {
       await waitFor(() => expect(frame(r)).toContain('Set up expense splitting'));
       expect(frame(r)).toContain('joint');
       expect(frame(r)).toContain('2026-06-01'); // start defaults to the 1st of this month
-      await pressKeys(r, [DOWN, DOWN]);
+      expect(frame(r)).toContain('Personal tag');
+      await pressKeys(r, [DOWN, DOWN, DOWN]);
       await press(r, '6');
       await press(r, '0');
       await press(r, '\r');
@@ -112,7 +113,7 @@ describe('Settle up', () => {
       await tagged('settled', ['tx-dining-1']); // May 9, before the default June 1 start
       const r = settle();
       await waitFor(() => expect(frame(r)).toContain('Set up expense splitting'));
-      await pressKeys(r, [DOWN, DOWN, '5', '0']);
+      await pressKeys(r, [DOWN, DOWN, DOWN, '5', '0']);
       await press(r, '\r');
       await waitFor(() => expect(frame(r)).toContain('1 transaction already carries "settled"'));
       expect((await getSplitConfig()).status).toBe('unconfigured');
@@ -388,6 +389,154 @@ describe('Settle up', () => {
       await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
       await press(r, '2');
       await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('transactions'));
+    });
+  });
+
+  // configuredMay leaves 5 May transactions untagged, oldest first: Direct Deposit (May 1,
+  // Alex's income), Con Edison (May 3), Sweetgreen (May 9), Amazon (May 11), Trader Joes (May 14).
+  describe('review', () => {
+    it('shows how many transactions each month still needs reviewed', async () => {
+      await configuredMay();
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toContain('5 transactions not reviewed as joint or personal yet'));
+      expect(frame(r)).toMatch(/May 2026.*open\s+5/);
+    });
+
+    it('[v] walks the month oldest first, showing each transaction, and j / p / k answer and move on', async () => {
+      await configuredMay();
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
+      await press(r, 'v');
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('Review May 2026  ·  1 of 5');
+        expect(f).toContain('Test Checking (Alex)');
+        expect(f).toContain('May 1, 2026');
+        expect(f).toContain('Direct Deposit');
+        expect(f).toContain('$3,500.00 in (income or refund)');
+        expect(f).toContain('← Income  →');
+      });
+      await press(r, 'p');
+      await waitFor(() => expect(frame(r)).toContain('2 of 5'));
+      expect(frame(r)).toContain('Con Edison');
+      await press(r, 'j');
+      await waitFor(() => expect(frame(r)).toContain('3 of 5'));
+      await press(r, 'k');
+      await waitFor(() => expect(frame(r)).toContain('4 of 5'));
+      expect(await tagsOn('tx-income')).toEqual(['personal']);
+      expect(await tagsOn('tx-bills-1')).toEqual(['joint']);
+      expect(await tagsOn('tx-dining-1')).toEqual([]); // skipped
+    });
+
+    it('← → changes the category, saved with the answer; z undoes both and goes back', async () => {
+      await configuredMay();
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
+      await press(r, 'v');
+      await waitFor(() => expect(frame(r)).toContain('← Income  →'));
+      await press(r, '\u001b[C'); // → Shopping (categories go alphabetically)
+      await waitFor(() => expect(frame(r)).toContain('← Shopping  →'));
+      await press(r, 'p');
+      await waitFor(() => expect(frame(r)).toContain('2 of 5'));
+      const cat = async () => (await db.execute("SELECT category, manual_category FROM transactions WHERE id = 'tx-income'")).rows[0];
+      expect(await cat()).toMatchObject({ category: 'Shopping', manual_category: 'Shopping' });
+      await press(r, 'z');
+      await waitFor(() => expect(frame(r)).toContain('1 of 5'));
+      expect(frame(r)).toContain('← Income  →');
+      expect(await tagsOn('tx-income')).toEqual([]);
+      expect(await cat()).toMatchObject({ category: 'Income', manual_category: null });
+    });
+
+    it('asks before marking a transaction joint in a settled month', async () => {
+      await configuredMay();
+      await tagged('settled', ['tx-groc-1', 'tx-alex-rent']);
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toMatch(/May 2026.*settled/));
+      await press(r, 'v');
+      await waitFor(() => expect(frame(r)).toContain('1 of 5'));
+      await press(r, 'j');
+      await waitFor(() => expect(frame(r)).toContain('marking this joint makes it a top-up'));
+      await press(r, 'n');
+      await waitFor(() => expect(frame(r)).not.toContain('marking this joint makes it a top-up'));
+      expect(await tagsOn('tx-income')).toEqual([]);
+      await pressKeys(r, ['j', 'y']);
+      await waitFor(() => expect(frame(r)).toContain('2 of 5'));
+      expect(await tagsOn('tx-income')).toEqual(['joint']);
+    });
+
+    it('settling a month with unreviewed transactions offers review first, then comes back to settle', async () => {
+      await configuredMay();
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toContain('Pat pays Alex $72.00'));
+      await press(r, 's');
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('5 transactions in May 2026 not reviewed yet');
+        expect(f).toContain('[v] review first  ·  [y] settle anyway');
+      });
+      await press(r, 'v');
+      await waitFor(() => expect(frame(r)).toContain('1 of 5'));
+      for (const n of [2, 3, 4, 5]) {
+        await press(r, 'p');
+        await waitFor(() => expect(frame(r)).toContain(`${n} of 5`));
+      }
+      await press(r, 'j'); // Trader Joes, Pat's $85: Alex now owes Pat $34 of it
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('Settle May 2026');
+        expect(f).toContain('Pat pays Alex $38.00');
+        expect(f).toContain('[y] settle  ·  [n] cancel');
+      });
+      expect(frame(r)).not.toContain('not reviewed yet');
+      await press(r, 'y');
+      await waitFor(() => expect(frame(r)).toContain('Settled May 2026'));
+      expect(await tagsOn('tx-groc-2')).toEqual(['joint', 'settled']);
+    });
+
+    it('Esc stops reviewing and keeps the answers given so far', async () => {
+      await configuredMay();
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
+      await pressKeys(r, ['v']);
+      await waitFor(() => expect(frame(r)).toContain('1 of 5'));
+      await press(r, 'p');
+      await waitFor(() => expect(frame(r)).toContain('2 of 5'));
+      await press(r, ESC);
+      await waitFor(() => {
+        const f = frame(r);
+        expect(f).toContain('Stopped reviewing May 2026: 1 marked');
+        expect(f).toContain('4 transactions not reviewed as joint or personal yet');
+      });
+      expect(await tagsOn('tx-income')).toEqual(['personal']);
+    });
+
+    it('shows a failed write inline and stays on the same transaction', async () => {
+      await configuredMay();
+      vi.spyOn(splitApi, 'reviewTransaction').mockRejectedValue(new Error('database is locked'));
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
+      await press(r, 'v');
+      await waitFor(() => expect(frame(r)).toContain('1 of 5'));
+      await press(r, 'p');
+      await waitFor(() => expect(frame(r)).toContain('Could not save: database is locked'));
+      expect(frame(r)).toContain('1 of 5');
+      expect(await tagsOn('tx-income')).toEqual([]);
+    });
+
+    it('answers once even if a key is pressed again while the write is in flight', async () => {
+      await configuredMay();
+      const real = splitApi.reviewTransaction;
+      const spy = vi.spyOn(splitApi, 'reviewTransaction').mockImplementation(
+        (...args) => new Promise<void>((res) => setTimeout(res, 60)).then(() => real(...args)),
+      );
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
+      await press(r, 'v');
+      await waitFor(() => expect(frame(r)).toContain('1 of 5'));
+      await pressKeys(r, ['p', 'p']);
+      await waitFor(() => expect(frame(r)).toContain('2 of 5'));
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(await tagsOn('tx-bills-1')).toEqual([]);
     });
   });
 });

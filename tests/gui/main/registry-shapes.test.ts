@@ -58,7 +58,7 @@ const GOLDEN: Record<string, string[]> = {
   profile: ['loadProfile', 'saveProfile', 'getHouseholdMembers'],
   split: [
     'getSplitConfig', 'getSettleMonths', 'setupSplit', 'settleMonth', 'unsettleMonth', 'countTransactionsTagged',
-    'addRatio', 'updateRatio', 'deleteRatio',
+    'addRatio', 'updateRatio', 'deleteRatio', 'getReviewQueue', 'reviewTransaction', 'undoReview',
   ],
   canvas: ['loadHistory', 'deleteHistoryEntry', 'loadCurrentSpec', 'updateSpec'],
   sync: ['syncAll', 'deleteCursorAndResync', 'getStatus', 'getLastSyncedAt', 'isSyncing'],

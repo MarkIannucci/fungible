@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { getSetting, SPLIT_JOINT_TAG_KEY, SPLIT_SETTLED_TAG_KEY } from './settings.js';
+import { getSetting, setSetting, SPLIT_JOINT_TAG_KEY, SPLIT_SETTLED_TAG_KEY, SPLIT_PERSONAL_TAG_KEY } from './settings.js';
 import { getOrCreateTag, type TagOption } from './tags.js';
 import { loadProfile } from './profile.js';
 import { isValidIsoDate } from './transactions.js';
@@ -12,11 +12,21 @@ import { computeSplit, monthBounds, type SettleMonth, type SplitRatio, type Spli
 // and what's left to settle comes only from joint transactions without it. No
 // copy of the transactions is kept. Ratios can't be back-dated over a settled
 // transaction, so a ratio change never moves an amount already settled.
+//
+// Review: every transaction on either spouse's accounts gets the joint or the
+// personal tag. One with neither hasn't been reviewed yet.
 
 export type SplitConfig =
   | { status: 'needs-household' }
   | { status: 'unconfigured'; self: string; spouse: string }
-  | { status: 'ready'; self: string; spouse: string; jointTag: TagOption; settledTag: TagOption; ratios: SplitRatio[] };
+  | {
+    status: 'ready'; self: string; spouse: string; jointTag: TagOption; settledTag: TagOption; ratios: SplitRatio[];
+    // null for a split set up before review existed; ensurePersonalTag fills it in.
+    personalTag: TagOption | null;
+  };
+
+/** A month on the Settle up screen: the split math plus how many transactions still need review. */
+export type SettleMonthView = SettleMonth & { unreviewed: number };
 
 export async function getRatios(): Promise<SplitRatio[]> {
   const result = await db.execute('SELECT start_date, self_pct FROM split_ratios ORDER BY start_date');
@@ -45,7 +55,8 @@ export async function getSplitConfig(): Promise<SplitConfig> {
   const settledTag = await tagById(await getSetting(SPLIT_SETTLED_TAG_KEY));
   const ratios = await getRatios();
   if (!jointTag || !settledTag || ratios.length === 0) return { status: 'unconfigured', self, spouse };
-  return { status: 'ready', self, spouse, jointTag, settledTag, ratios };
+  const personalTag = await tagById(await getSetting(SPLIT_PERSONAL_TAG_KEY));
+  return { status: 'ready', self, spouse, jointTag, settledTag, ratios, personalTag };
 }
 
 /** How many transactions already carry a tag with this name (0 when no such tag exists). */
@@ -93,16 +104,21 @@ async function ratioExists(startDate: string): Promise<boolean> {
   return result.rows.length > 0;
 }
 
+export const DEFAULT_PERSONAL_TAG = 'personal';
+
 /**
- * First-time setup: picks (or creates) the two tags and saves the first ratio.
+ * First-time setup: picks (or creates) the three tags and saves the first ratio.
  * Running it again after a tag was deleted re-points the tags and upserts the
  * ratio, still refusing to back-date over a settled transaction.
  */
-export async function setupSplit(opts: { jointTagName: string; settledTagName: string; selfPct: number; startDate: string }): Promise<void> {
+export async function setupSplit(opts: {
+  jointTagName: string; settledTagName: string; personalTagName?: string; selfPct: number; startDate: string;
+}): Promise<void> {
   const jointName = opts.jointTagName.trim();
   const settledName = opts.settledTagName.trim();
-  if (!jointName || !settledName) throw new Error('Both tag names are required');
-  if (jointName === settledName) throw new Error('The joint and settled tags must be different');
+  const personalName = (opts.personalTagName ?? DEFAULT_PERSONAL_TAG).trim();
+  if (!jointName || !settledName || !personalName) throw new Error('All three tag names are required');
+  if (new Set([jointName, settledName, personalName]).size < 3) throw new Error('The joint, personal and settled tags must all be different');
   checkRatio(opts.startDate, opts.selfPct);
   const existing = await db.execute({ sql: 'SELECT id FROM tags WHERE name = ?', args: [settledName] });
   const existingSettledId = existing.rows[0] ? Number((existing.rows[0] as unknown as { id: number }).id) : null;
@@ -110,16 +126,27 @@ export async function setupSplit(opts: { jointTagName: string; settledTagName: s
 
   const jointId = await getOrCreateTag(jointName);
   const settledId = existingSettledId ?? await getOrCreateTag(settledName);
+  const personalId = await getOrCreateTag(personalName);
   const upsertSetting = 'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value';
   await db.batch([
     { sql: upsertSetting, args: [SPLIT_JOINT_TAG_KEY, String(jointId)] },
     { sql: upsertSetting, args: [SPLIT_SETTLED_TAG_KEY, String(settledId)] },
+    { sql: upsertSetting, args: [SPLIT_PERSONAL_TAG_KEY, String(personalId)] },
     {
       sql: `INSERT INTO split_ratios (start_date, self_pct) VALUES (?, ?)
             ON CONFLICT(start_date) DO UPDATE SET self_pct = excluded.self_pct`,
       args: [opts.startDate, opts.selfPct],
     },
   ], 'write');
+}
+
+/** The personal tag, creating `personal` for a split set up before review existed. */
+export async function ensurePersonalTag(): Promise<TagOption> {
+  const existing = await tagById(await getSetting(SPLIT_PERSONAL_TAG_KEY));
+  if (existing) return existing;
+  const id = await getOrCreateTag(DEFAULT_PERSONAL_TAG);
+  await setSetting(SPLIT_PERSONAL_TAG_KEY, String(id));
+  return { id, name: DEFAULT_PERSONAL_TAG };
 }
 
 export async function addRatio(startDate: string, selfPct: number): Promise<void> {
@@ -156,7 +183,7 @@ function localToday(): string {
  * warning) with its account owner and whether its category is hidden; the
  * math decides what counts. Empty until the split is configured.
  */
-export async function getSettleMonths(today: string = localToday()): Promise<SettleMonth[]> {
+export async function getSettleMonths(today: string = localToday()): Promise<SettleMonthView[]> {
   const config = await getSplitConfig();
   if (config.status !== 'ready') return [];
   const jointId = config.jointTag.id;
@@ -185,13 +212,104 @@ export async function getSettleMonths(today: string = localToday()): Promise<Set
     ignored: Boolean(r.ignored),
     hidden: Boolean(r.hidden),
   }));
-  return computeSplit(rows, config.ratios, { self: config.self, spouse: config.spouse }, today);
+  const counts = await db.execute({
+    sql: `SELECT substr(t.date, 1, 7) AS month, COUNT(*) AS n
+          FROM transactions t JOIN accounts a ON a.id = t.account_id
+          WHERE ${UNREVIEWED_WHERE}
+          GROUP BY month`,
+    args: unreviewedArgs(config),
+  });
+  const unreviewed = new Map((counts.rows as unknown as { month: string; n: number }[]).map((r) => [String(r.month), Number(r.n)]));
+  return computeSplit(rows, config.ratios, { self: config.self, spouse: config.spouse }, today)
+    .map((m) => ({ ...m, unreviewed: unreviewed.get(m.month) ?? 0 }));
+}
+
+// Needs review: a posted, not-ignored transaction on either spouse's account,
+// on or after the first ratio, outside hidden categories (card payments and
+// transfers), with neither the joint nor the personal tag. Income and refunds
+// count too. Pending ones wait until they post, since a posted transaction can
+// arrive under a new id.
+const UNREVIEWED_WHERE = `t.date >= ? AND t.pending = 0 AND t.ignored = 0
+            AND TRIM(a.owner) IN (?, ?)
+            AND NOT EXISTS (SELECT 1 FROM hidden_categories h WHERE h.category = t.category)
+            AND NOT EXISTS (SELECT 1 FROM transaction_tags x WHERE x.transaction_id = t.id AND x.tag_id IN (?, ?))`;
+
+function unreviewedArgs(config: Ready): (string | number)[] {
+  return [config.ratios[0].startDate, config.self, config.spouse, config.jointTag.id, config.personalTag?.id ?? -1];
+}
+
+type Ready = Extract<SplitConfig, { status: 'ready' }>;
+
+async function requireReady(): Promise<Ready> {
+  const config = await getSplitConfig();
+  if (config.status !== 'ready') throw new Error('Expense split is not set up');
+  return config;
+}
+
+export type ReviewTx = {
+  id: string;
+  date: string;
+  name: string;
+  amount: number;
+  category: string | null;
+  manualCategory: string | null;
+  account: string;
+  owner: string;
+};
+
+/** A YYYY-MM month's transactions that still need review, oldest first. */
+export async function getReviewQueue(month: string): Promise<ReviewTx[]> {
+  const config = await requireReady();
+  const { from, to } = monthBounds(month);
+  const result = await db.execute({
+    sql: `SELECT t.id, t.date, COALESCE(t.display_name, t.merchant_name, t.name) AS name, t.amount,
+            t.category, t.manual_category, COALESCE(a.nickname, a.name) AS account, TRIM(a.owner) AS owner
+          FROM transactions t JOIN accounts a ON a.id = t.account_id
+          WHERE ${UNREVIEWED_WHERE} AND t.date >= ? AND t.date <= ?
+          ORDER BY t.date, t.id`,
+    args: [...unreviewedArgs(config), from, to],
+  });
+  return (result.rows as unknown as Record<string, unknown>[]).map((r) => ({
+    id: String(r.id),
+    date: String(r.date),
+    name: String(r.name),
+    amount: Number(r.amount),
+    category: r.category === null ? null : String(r.category),
+    manualCategory: r.manual_category === null ? null : String(r.manual_category),
+    account: String(r.account),
+    owner: String(r.owner),
+  }));
+}
+
+/**
+ * Record a review answer: tag the transaction joint or personal (or neither,
+ * for a skip) and, when `category` is given, override its category, in one
+ * batch. Tag-rule suppressions are left alone so undoReview can put things
+ * back exactly.
+ */
+export async function reviewTransaction(id: string, answer: 'joint' | 'personal' | null, category: string | null): Promise<void> {
+  const config = await requireReady();
+  const tagId = answer === 'joint' ? config.jointTag.id : answer === 'personal' ? (await ensurePersonalTag()).id : null;
+  const stmts = [
+    ...(tagId === null ? [] : [{ sql: 'INSERT OR IGNORE INTO transaction_tags (transaction_id, tag_id) VALUES (?, ?)', args: [id, tagId] }]),
+    ...(category === null ? [] : [{ sql: 'UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?', args: [category, category, id] }]),
+  ];
+  if (stmts.length > 0) await db.batch(stmts, 'write');
+}
+
+/** Undo a review answer: remove its tag and restore the category the transaction had before. */
+export async function undoReview(tx: Pick<ReviewTx, 'id' | 'category' | 'manualCategory'>, answer: 'joint' | 'personal' | null): Promise<void> {
+  const config = await requireReady();
+  const tagId = answer === 'joint' ? config.jointTag.id : answer === 'personal' ? config.personalTag?.id ?? null : null;
+  const stmts = [
+    ...(tagId === null ? [] : [{ sql: 'DELETE FROM transaction_tags WHERE transaction_id = ? AND tag_id = ?', args: [tx.id, tagId] }]),
+    { sql: 'UPDATE transactions SET category = ?, manual_category = ? WHERE id = ?', args: [tx.category, tx.manualCategory, tx.id] },
+  ];
+  await db.batch(stmts, 'write');
 }
 
 async function requireSettledTagId(): Promise<number> {
-  const config = await getSplitConfig();
-  if (config.status !== 'ready') throw new Error('Expense split is not set up');
-  return config.settledTag.id;
+  return (await requireReady()).settledTag.id;
 }
 
 /**

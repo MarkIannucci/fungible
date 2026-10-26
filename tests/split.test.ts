@@ -11,7 +11,9 @@ import { getOrCreateTag, renameTag, deleteTag, addTagToTransactions, removeTagFr
 import {
   getSplitConfig, setupSplit, getSettleMonths, settleMonth, unsettleMonth,
   getRatios, addRatio, updateRatio, deleteRatio, countTransactionsTagged,
+  getReviewQueue, reviewTransaction, undoReview, ensurePersonalTag,
 } from '../core/split.js';
+import { SPLIT_PERSONAL_TAG_KEY } from '../core/settings.js';
 
 const TODAY = '2026-11-15';
 const SETUP = { jointTagName: 'joint', settledTagName: 'settled', selfPct: 60, startDate: '2026-01-01' };
@@ -71,6 +73,7 @@ describe('getSplitConfig', () => {
     if (config.status !== 'ready') return;
     expect(config.jointTag.name).toBe('joint');
     expect(config.settledTag.name).toBe('settled');
+    expect(config.personalTag?.name).toBe('personal'); // the default when setup isn't given one
     expect(config.ratios).toEqual([{ startDate: '2026-01-01', selfPct: 60 }]);
   });
 
@@ -90,11 +93,12 @@ describe('getSplitConfig', () => {
     expect((await getSplitConfig()).status).toBe('unconfigured');
   });
 
-  it("refuses to delete either of the split's tags, but not other tags", async () => {
+  it("refuses to delete any of the split's tags, but not other tags", async () => {
     await seedHousehold();
     await setupSplit(SETUP);
     await expect(deleteTag(await getOrCreateTag('joint'))).rejects.toThrow("used by expense splitting");
     await expect(deleteTag(await getOrCreateTag('settled'))).rejects.toThrow("used by expense splitting");
+    await expect(deleteTag(await getOrCreateTag('personal'))).rejects.toThrow("used by expense splitting");
     await deleteTag(await getOrCreateTag('vacation'));
     expect((await getSplitConfig()).status).toBe('ready');
   });
@@ -111,8 +115,10 @@ describe('setupSplit', () => {
   });
 
   it.each([
-    [{ jointTagName: ' ' }, 'Both tag names are required'],
-    [{ settledTagName: 'joint' }, 'must be different'],
+    [{ jointTagName: ' ' }, 'All three tag names are required'],
+    [{ personalTagName: ' ' }, 'All three tag names are required'],
+    [{ settledTagName: 'joint' }, 'must all be different'],
+    [{ personalTagName: 'joint' }, 'must all be different'],
     [{ selfPct: 101 }, 'between 0 and 100'],
     [{ selfPct: Number.NaN }, 'between 0 and 100'],
     [{ startDate: '2026-02-30' }, 'YYYY-MM-DD'],
@@ -271,5 +277,90 @@ describe('ratios', () => {
     await db.execute('DELETE FROM transaction_tags');
     await deleteRatio('2026-11-01');
     await expect(deleteRatio('2026-01-01')).rejects.toThrow('only ratio');
+  });
+});
+
+describe('review', () => {
+  beforeEach(async () => {
+    await seedHousehold();
+    await setupSplit(SETUP);
+  });
+
+  async function unreviewedIn(month: string) {
+    return (await getSettleMonths(TODAY)).find((x) => x.month === month)?.unreviewed;
+  }
+
+  it("counts each month's untagged transactions on either spouse's account, income and refunds included", async () => {
+    await jointTx({ amount: 40 }, { joint: false });
+    await jointTx({ account_id: 'acct-alex', amount: -2000, category: 'Income' }, { joint: false });
+    await jointTx({ amount: -15 }, { joint: false }); // a refund
+    await jointTx({ amount: 100 }); // joint: reviewed
+    const personal = await jointTx({ amount: 30 }, { joint: false });
+    await addTagToTransactions([personal.id], await getOrCreateTag('personal'));
+    // Not counted: pending, ignored, hidden category, no owner.
+    await jointTx({ amount: 5, pending: true }, { joint: false });
+    await jointTx({ amount: 5, ignored: true }, { joint: false });
+    await jointTx({ amount: 500, category: 'Transfer' }, { joint: false });
+    await jointTx({ account_id: 'acct-none', amount: 5 }, { joint: false });
+    await jointTx({ date: '2026-09-12' }, { joint: false });
+    expect(await unreviewedIn('2026-10')).toBe(3);
+    expect(await unreviewedIn('2026-09')).toBe(1);
+    expect(await unreviewedIn('2026-08')).toBe(0);
+  });
+
+  it('leaves out transactions dated before the first ratio', async () => {
+    await db.execute("UPDATE split_ratios SET start_date = '2026-10-10'");
+    await jointTx({ date: '2026-10-09' }, { joint: false });
+    await jointTx({ date: '2026-10-10' }, { joint: false });
+    expect(await unreviewedIn('2026-10')).toBe(1);
+    expect(await getReviewQueue('2026-10')).toHaveLength(1);
+  });
+
+  it("queues a month's unreviewed transactions oldest first, with the account and display name", async () => {
+    await db.execute("UPDATE accounts SET nickname = 'Pat Visa' WHERE id = 'acct-pat'");
+    const later = await jointTx({ date: '2026-10-20', name: 'WHOLEFDS #123', display_name: 'Whole Foods', category: 'Groceries' }, { joint: false });
+    const earlier = await jointTx({ account_id: 'acct-alex', date: '2026-10-02', name: 'Landlord' }, { joint: false });
+    await jointTx({ date: '2026-11-01' }, { joint: false }); // another month
+    const q = await getReviewQueue('2026-10');
+    expect(q.map((t) => t.id)).toEqual([earlier.id, later.id]);
+    expect(q[0]).toMatchObject({ account: 'Alex card', owner: 'Alex', name: 'Landlord', category: null });
+    expect(q[1]).toMatchObject({ account: 'Pat Visa', owner: 'Pat', name: 'Whole Foods', category: 'Groceries', amount: 100 });
+  });
+
+  it('records an answer with a category change, and undo puts the transaction back exactly', async () => {
+    const tx = await jointTx({ category: 'Shopping' }, { joint: false });
+    const [queued] = await getReviewQueue('2026-10');
+    await reviewTransaction(tx.id, 'joint', 'Groceries');
+    expect(await tagNamesOf(tx.id)).toEqual(['joint']);
+    const row = (await db.execute({ sql: 'SELECT category, manual_category FROM transactions WHERE id = ?', args: [tx.id] })).rows[0];
+    expect([row.category, row.manual_category]).toEqual(['Groceries', 'Groceries']);
+    expect(await unreviewedIn('2026-10')).toBe(0);
+
+    await undoReview(queued, 'joint');
+    expect(await tagNamesOf(tx.id)).toEqual([]);
+    const back = (await db.execute({ sql: 'SELECT category, manual_category FROM transactions WHERE id = ?', args: [tx.id] })).rows[0];
+    expect([back.category, back.manual_category]).toEqual(['Shopping', null]);
+    expect(await unreviewedIn('2026-10')).toBe(1);
+  });
+
+  it('a skip leaves the transaction unreviewed and its category alone', async () => {
+    const tx = await jointTx({ category: 'Shopping' }, { joint: false });
+    await reviewTransaction(tx.id, null, null);
+    expect(await tagNamesOf(tx.id)).toEqual([]);
+    expect(await unreviewedIn('2026-10')).toBe(1);
+  });
+
+  it('creates the personal tag for a split set up before review existed', async () => {
+    await db.execute({ sql: 'DELETE FROM settings WHERE key = ?', args: [SPLIT_PERSONAL_TAG_KEY] });
+    await db.execute("DELETE FROM tags WHERE name = 'personal'");
+    const config = await getSplitConfig();
+    expect(config.status === 'ready' && config.personalTag).toBeNull();
+    const tx = await jointTx({}, { joint: false });
+    expect(await unreviewedIn('2026-10')).toBe(1);
+    await reviewTransaction(tx.id, 'personal', null);
+    expect(await tagNamesOf(tx.id)).toEqual(['personal']);
+    expect(await unreviewedIn('2026-10')).toBe(0);
+    expect((await ensurePersonalTag()).name).toBe('personal'); // already there now, not a second one
+    expect(await countTransactionsTagged('personal')).toBe(1);
   });
 });

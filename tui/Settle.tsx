@@ -2,16 +2,17 @@ import { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import {
   getSplitConfig, getSettleMonths, setupSplit, settleMonth, unsettleMonth, countTransactionsTagged,
-  addRatio, updateRatio, deleteRatio,
-  type SplitConfig,
+  addRatio, updateRatio, deleteRatio, getReviewQueue, reviewTransaction, undoReview,
+  type SplitConfig, type SettleMonthView, type ReviewTx,
 } from '../core/split.js';
 import type { SettleMonth, RatioSlice } from '../core/split-math.js';
+import { getAllCategories } from '../core/queries.js';
 import { MONTHS } from '../core/dateUtils.js';
 import type { Screen, TxFilter } from './App.js';
 import { fmt, truncate, Divider } from './fmt.js';
 import { handleNavKey } from './nav.js';
 import { useTerminalWidth, C_POSITIVE, C_NEGATIVE, C_WARNING, C_ACCENT } from './ui.js';
-import { PageHeader, ModalPanel, SelectableRow, SectionHeader, EditTextField, useStatusMessage, usePagination } from './components/index.js';
+import { PageHeader, ModalPanel, SelectableRow, SectionHeader, EditTextField, EditToggleField, useStatusMessage, usePagination } from './components/index.js';
 import { useSetTyping } from './TypingContext.js';
 import { useRefreshKey } from './RefreshContext.js';
 import { useFilter } from './FilterContext.js';
@@ -22,13 +23,14 @@ import { useLoadGuard } from './useLoadGuard.js';
 // calendar month. Opened with [s] from the Dashboard's Owner view; runs setup
 // first when the split isn't configured yet.
 
-type Mode = 'list' | 'setup' | 'confirm-settle' | 'confirm-unsettle' | 'ratios' | 'ratio-edit';
+type Mode = 'list' | 'setup' | 'confirm-settle' | 'confirm-unsettle' | 'ratios' | 'ratio-edit' | 'review';
 type Ready = Extract<SplitConfig, { status: 'ready' }>;
+type Answer = 'joint' | 'personal' | null;
 
-const SETUP_FIELDS = ['joint', 'settled', 'pct', 'start'] as const;
+const SETUP_FIELDS = ['joint', 'personal', 'settled', 'pct', 'start'] as const;
 type SetupField = typeof SETUP_FIELDS[number];
 const SETUP_LABELS: Record<SetupField, string> = {
-  joint: 'Joint tag', settled: 'Settled tag', pct: 'Your share %', start: 'Starts',
+  joint: 'Joint tag', personal: 'Personal tag', settled: 'Settled tag', pct: 'Your share %', start: 'Starts',
 };
 // Characters each setup field accepts as you type.
 const SETUP_CHARS: Partial<Record<SetupField, RegExp>> = { pct: /^[0-9.]$/, start: /^[0-9-]$/ };
@@ -73,6 +75,8 @@ function sliceSpan(s: RatioSlice, i: number, n: number, m: SettleMonth): string 
   return ` ${dayLabel(s.from)}–${dayLabel(s.to)}`;
 }
 
+const categoryOf = (tx: ReviewTx) => tx.category ?? 'Uncategorized';
+
 const STATUS_LABEL: Record<SettleMonth['status'], string> = { empty: '—', open: 'open', settled: 'settled', 'top-up': 'top-up' };
 const MONTH_PAGE = 12;
 
@@ -83,13 +87,13 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
   const guard = useLoadGuard();
   const { statusMsg, showStatus } = useStatusMessage(3000);
   const [config, setConfig] = useState<SplitConfig | null>(null);
-  const [months, setMonths] = useState<SettleMonth[]>([]);
+  const [months, setMonths] = useState<SettleMonthView[]>([]);
   const [cursor, setCursor] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [setup, setSetup] = useState<Record<SetupField, string>>({ joint: 'joint', settled: 'settled', pct: '', start: firstOfMonth() });
+  const [setup, setSetup] = useState<Record<SetupField, string>>({ joint: 'joint', personal: 'personal', settled: 'settled', pct: '', start: firstOfMonth() });
   const [setupField, setSetupField] = useState(0);
   // Set once the settled tag name was found already on transactions; a second Enter proceeds.
   const [setupWarned, setSetupWarned] = useState<string | null>(null);
@@ -100,11 +104,25 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
   const [ratioField, setRatioField] = useState(0);
   const [ratioEditing, setRatioEditing] = useState<string | null>(null);
 
+  // Review ([v]): one month's unreviewed transactions, oldest first, answered
+  // one at a time. answers holds each answer's queue index, for undo.
+  const [reviewMonth, setReviewMonth] = useState<string | null>(null);
+  const [queue, setQueue] = useState<ReviewTx[]>([]);
+  const [reviewIdx, setReviewIdx] = useState(0);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [catIdx, setCatIdx] = useState(0);
+  const [answers, setAnswers] = useState<{ idx: number; answer: Answer }[]>([]);
+  // Opened from the settle prompt: finishing returns to that prompt.
+  const [reviewFromSettle, setReviewFromSettle] = useState(false);
+  // Marking a transaction in a settled month joint waits for a y/n.
+  const [jointConfirm, setJointConfirm] = useState(false);
+
   const initialCursorDone = useRef(false);
-  function load() {
+  function load() { void loadMonths(); }
+  function loadMonths(): Promise<SettleMonthView[] | null> {
     const token = guard.begin();
-    void track(Promise.all([getSplitConfig(), getSettleMonths()])).then(([c, ms]) => {
-      if (!guard.isLatest(token)) return;
+    return track(Promise.all([getSplitConfig(), getSettleMonths()])).then(([c, ms]) => {
+      if (!guard.isLatest(token)) return null;
       setConfig(c);
       setMonths(ms);
       if (c.status === 'unconfigured') setMode((m) => (m === 'list' ? 'setup' : m));
@@ -116,6 +134,7 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
       } else {
         setCursor((i) => Math.min(i, Math.max(0, ms.length - 1)));
       }
+      return ms;
     });
   }
   useEffect(load, [refreshKey]);
@@ -149,6 +168,7 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
     try {
       await setupSplit({
         jointTagName: setup.joint,
+        personalTagName: setup.personal,
         settledTagName: setup.settled,
         selfPct: setup.pct.trim() === '' ? Number.NaN : Number(setup.pct),
         startDate: setup.start.trim(),
@@ -196,6 +216,85 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
     }
   }
 
+  async function startReview(m: SettleMonthView, fromSettle: boolean) {
+    setError(null);
+    setBusy(true);
+    try {
+      const [q, cats] = await Promise.all([getReviewQueue(m.month), getAllCategories()]);
+      if (q.length === 0) { setMode('list'); showStatus(`Nothing to review in ${longMonth(m.month)}`); return; }
+      // A transaction's category may not be in the categories table (e.g. Uncategorized).
+      const all = [...new Set([...cats, ...q.map(categoryOf)])].sort((a, b) => a.localeCompare(b));
+      setCategories(all);
+      setQueue(q);
+      setReviewMonth(m.month);
+      setReviewIdx(0);
+      setCatIdx(all.indexOf(categoryOf(q[0])));
+      setAnswers([]);
+      setReviewFromSettle(fromSettle);
+      setJointConfirm(false);
+      setMode('review');
+    } catch (err) {
+      setMode('list');
+      setError(`Could not start review: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finishReview(stopped: boolean, done = answers) {
+    const label = longMonth(reviewMonth!);
+    const marked = done.filter((a) => a.answer !== null).length;
+    const skipped = done.length - marked;
+    setMode('list');
+    showStatus(`${stopped ? 'Stopped reviewing' : 'Reviewed'} ${label}: ${marked} marked${skipped > 0 ? `, ${skipped} skipped` : ''}`);
+    const ms = await loadMonths();
+    if (stopped || !reviewFromSettle || !ms) return;
+    const idx = ms.findIndex((x) => x.month === reviewMonth);
+    const m = ms[idx];
+    if (m && m.blockedIds.length === 0 && m.tagIds.length + m.untagIds.length > 0) {
+      setCursor(idx);
+      setMode('confirm-settle');
+    }
+  }
+
+  async function answer(a: Answer) {
+    const tx = queue[reviewIdx];
+    setJointConfirm(false);
+    setError(null);
+    setBusy(true);
+    try {
+      const chosen = categories[catIdx];
+      await reviewTransaction(tx.id, a, chosen !== undefined && chosen !== categoryOf(tx) ? chosen : null);
+      const done = [...answers, { idx: reviewIdx, answer: a }];
+      setAnswers(done);
+      const next = reviewIdx + 1;
+      if (next >= queue.length) { await finishReview(false, done); return; }
+      setReviewIdx(next);
+      setCatIdx(categories.indexOf(categoryOf(queue[next])));
+    } catch (err) {
+      setError(`Could not save: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undoAnswer() {
+    const last = answers[answers.length - 1];
+    if (!last) { showStatus('Nothing to undo'); return; }
+    setError(null);
+    setBusy(true);
+    try {
+      await undoReview(queue[last.idx], last.answer);
+      setAnswers(answers.slice(0, -1));
+      setReviewIdx(last.idx);
+      setCatIdx(categories.indexOf(categoryOf(queue[last.idx])));
+    } catch (err) {
+      setError(`Could not undo: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function runWrite(write: () => Promise<void>, done: string, failed: string) {
     setBusy(true);
     try {
@@ -228,8 +327,30 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
       return;
     }
 
+    if (mode === 'review') {
+      if (jointConfirm) {
+        if (input === 'y') { void answer('joint'); return; }
+        if (input === 'n' || key.escape) { setJointConfirm(false); return; }
+        return;
+      }
+      if (key.escape) { void finishReview(true); return; }
+      if (key.leftArrow) { setCatIdx((i) => (i - 1 + categories.length) % categories.length); return; }
+      if (key.rightArrow) { setCatIdx((i) => (i + 1) % categories.length); return; }
+      if (input === 'j') {
+        const m = months.find((x) => x.month === reviewMonth);
+        if (m && (m.status === 'settled' || m.status === 'top-up')) { setJointConfirm(true); return; }
+        void answer('joint');
+        return;
+      }
+      if (input === 'p') { void answer('personal'); return; }
+      if (input === 'k') { void answer(null); return; }
+      if (input === 'z') { void undoAnswer(); return; }
+      return;
+    }
+
     if (mode === 'confirm-settle' || mode === 'confirm-unsettle') {
       if (!month || !ready) { setMode('list'); return; }
+      if (mode === 'confirm-settle' && input === 'v' && month.unreviewed > 0) { void startReview(month, true); return; }
       if (input === 'y') {
         const label = longMonth(month.month);
         if (mode === 'confirm-settle') {
@@ -301,10 +422,16 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
         setError(`Can't settle ${longMonth(month.month)}: ${plural(month.blockedIds.length, 'joint transaction')} on an account not owned by ${ready.self} or ${ready.spouse}. Assign owners in [8] accounts.`);
         return;
       }
-      if (month.tagIds.length === 0 && month.untagIds.length === 0) { showStatus(`Nothing to settle for ${longMonth(month.month)}`); return; }
+      if (month.tagIds.length === 0 && month.untagIds.length === 0) {
+        showStatus(month.unreviewed > 0
+          ? `Nothing to settle for ${longMonth(month.month)} yet: ${plural(month.unreviewed, 'transaction')} to review with [v]`
+          : `Nothing to settle for ${longMonth(month.month)}`);
+        return;
+      }
       setMode('confirm-settle');
       return;
     }
+    if (input === 'v') { void startReview(month, false); return; }
     if (input === 'u') {
       setError(null);
       if (month.status !== 'settled' && month.status !== 'top-up') { showStatus(`Nothing settled in ${longMonth(month.month)}`); return; }
@@ -317,8 +444,8 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
   const termW = useTerminalWidth();
   const inner = Math.max(60, termW) - 4;
   const nameW = 8;
-  // [sel=2] [month=8] [joint=9] [self=8] [spouse=8] [to settle] [status=7], gaps of 2
-  const settleW = Math.max(18, Math.min(28, inner - 55));
+  // [sel=2] [month=8] [joint=9] [self=8] [spouse=8] [to settle] [status=7] [review=6], gaps of 2
+  const settleW = Math.max(18, Math.min(28, inner - 63));
   // A split that started years ago has more months than fit beside the detail pane.
   const { visible: visibleMonths, pageStart } = usePagination(months, cursor, MONTH_PAGE);
 
@@ -342,7 +469,7 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
       </Text>
       {totalText && !totalInline && <Text bold>{totalText}</Text>}
       {mode === 'list' && ready && (
-        <Text dimColor>{showHints ? '↑↓ month  ·  Enter joint txns  ·  [s] settle  ·  [u] unsettle  ·  [r] ratios  ·  Esc back' : '[s] settle  ·  [u] unsettle  ·  [r] ratios'}</Text>
+        <Text dimColor>{showHints ? '↑↓ month  ·  Enter joint txns  ·  [v] review  ·  [s] settle  ·  [u] unsettle  ·  [r] ratios  ·  Esc back' : '[v] review  ·  [s] settle  ·  [u] unsettle  ·  [r] ratios'}</Text>
       )}
     </Box>
   );
@@ -401,11 +528,18 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
           {error && <Text color={C_NEGATIVE}>{error}</Text>}
           {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
         </ModalPanel>
+      ) : ready && mode === 'review' && queue[reviewIdx] ? (
+        <ReviewPanel
+          tx={queue[reviewIdx]} position={reviewIdx + 1} total={queue.length} month={reviewMonth!}
+          category={categories[catIdx] ?? categoryOf(queue[reviewIdx])}
+          settled={months.some((m) => m.month === reviewMonth && (m.status === 'settled' || m.status === 'top-up'))}
+          jointConfirm={jointConfirm} error={error} statusMsg={statusMsg}
+        />
       ) : ready && (
         <>
           <Box flexDirection="column" marginTop={1}>
             <Text dimColor>
-              {'  '}{'Month'.padEnd(8)}  {'Joint'.padStart(9)}  {truncate(ready.self, nameW).padStart(nameW)}  {truncate(ready.spouse, nameW).padStart(nameW)}  {'To settle'.padEnd(settleW)}  Status
+              {'  '}{'Month'.padEnd(8)}  {'Joint'.padStart(9)}  {truncate(ready.self, nameW).padStart(nameW)}  {truncate(ready.spouse, nameW).padStart(nameW)}  {'To settle'.padEnd(settleW)}  {'Status'.padEnd(7)}  Review
             </Text>
             {visibleMonths.map((m, j) => {
               const sel = pageStart + j === cursor;
@@ -420,7 +554,10 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
                   <Text dimColor={!sel}>{truncate(settleText, settleW).padEnd(settleW)}</Text>
                   <Text color={blocked ? C_NEGATIVE : m.status === 'settled' ? C_POSITIVE : m.status === 'empty' ? undefined : C_WARNING}
                     dimColor={m.status === 'empty'}>
-                    {blocked ? 'blocked' : STATUS_LABEL[m.status]}
+                    {(blocked ? 'blocked' : STATUS_LABEL[m.status]).padEnd(7)}
+                  </Text>
+                  <Text color={m.unreviewed > 0 ? C_WARNING : undefined} dimColor={m.unreviewed === 0}>
+                    {m.unreviewed > 0 ? String(m.unreviewed).padStart(6) : '—'.padStart(6)}
                   </Text>
                 </SelectableRow>
               );
@@ -446,7 +583,10 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
               </Text>
               {month.pendingCount > 0 && <Text color={C_WARNING}>⚠ {plural(month.pendingCount, 'joint transaction')} still pending</Text>}
               {month.inProgress && <Text color={C_WARNING}>⚠ {longMonth(month.month)} isn't over yet</Text>}
-              <Box marginTop={1}><Text dimColor>[y] settle  ·  [n] cancel</Text></Box>
+              {month.unreviewed > 0 && <Text color={C_WARNING}>⚠ {plural(month.unreviewed, 'transaction')} in {longMonth(month.month)} not reviewed yet</Text>}
+              <Box marginTop={1}>
+                <Text dimColor>{month.unreviewed > 0 ? '[v] review first  ·  [y] settle anyway  ·  [n] cancel' : '[y] settle  ·  [n] cancel'}</Text>
+              </Box>
             </ModalPanel>
           )}
           {mode === 'confirm-unsettle' && month && (
@@ -461,7 +601,7 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
   );
 }
 
-function MonthDetail({ m, c }: { m: SettleMonth; c: Ready }) {
+function MonthDetail({ m, c }: { m: SettleMonthView; c: Ready }) {
   const owesRows = [
     { label: `${c.spouse} owes ${c.self}`, share: (s: RatioSlice) => 100 - s.selfPct, paid: (s: RatioSlice) => s.selfPaid, owes: (s: RatioSlice) => s.spouseOwesSelf },
     { label: `${c.self} owes ${c.spouse}`, share: (s: RatioSlice) => s.selfPct, paid: (s: RatioSlice) => s.spousePaid, owes: (s: RatioSlice) => s.selfOwesSpouse },
@@ -487,11 +627,45 @@ function MonthDetail({ m, c }: { m: SettleMonth; c: Ready }) {
         {m.blockedIds.length > 0 && (
           <Text color={C_NEGATIVE}>✗ {plural(m.blockedIds.length, 'joint transaction')} on an account not owned by {c.self} or {c.spouse} — settling is blocked</Text>
         )}
+        {m.unreviewed > 0 && <Text color={C_WARNING}>⚠ {plural(m.unreviewed, 'transaction')} not reviewed as joint or personal yet ([v] review)</Text>}
         {m.pendingCount > 0 && <Text color={C_WARNING}>⚠ {plural(m.pendingCount, 'joint transaction')} still pending</Text>}
         {m.inProgress && <Text color={C_WARNING}>⚠ {monthName(m.month)} isn't over yet</Text>}
         {m.hiddenCount > 0 && <Text dimColor>· {plural(m.hiddenCount, 'joint-tagged transaction')} left out (hidden category)</Text>}
         {m.untagIds.length > 0 && <Text dimColor>· {plural(m.untagIds.length, 'settled transaction')} no longer {m.untagIds.length === 1 ? 'counts' : 'count'} and will be reversed</Text>}
       </Box>
     </Box>
+  );
+}
+
+function ReviewPanel({ tx, position, total, month, category, settled, jointConfirm, error, statusMsg }: {
+  tx: ReviewTx; position: number; total: number; month: string; category: string;
+  settled: boolean; jointConfirm: boolean; error: string | null; statusMsg: string;
+}) {
+  const line = (label: string, value: string) => (
+    <Box gap={2}><Text dimColor>{label.padEnd(10)}</Text><Text>{value}</Text></Box>
+  );
+  // Positive amounts are money out; income and refunds come in negative.
+  const amount = tx.amount >= 0 ? fmt(tx.amount) : `${fmt(-tx.amount)} in (income or refund)`;
+  return (
+    <ModalPanel title={`Review ${longMonth(month)}  ·  ${position} of ${total}`}>
+      <Box flexDirection="column">
+        {line('Account', `${tx.account} (${tx.owner})`)}
+        {line('Date', `${dayLabel(tx.date)}, ${tx.date.slice(0, 4)}`)}
+        {line('Merchant', tx.name)}
+        {line('Amount', amount)}
+        <EditToggleField label="Category" labelWidth={10} active value={category} valueColor={category !== categoryOf(tx) ? C_WARNING : undefined} />
+      </Box>
+      {jointConfirm ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={C_WARNING}>{longMonth(month)} is already settled, so marking this joint makes it a top-up.</Text>
+          <Text dimColor>[y] mark joint  ·  [n] cancel</Text>
+        </Box>
+      ) : (
+        <Box marginTop={1}><Text dimColor>[j] joint  ·  [p] personal  ·  ← → category  ·  [k] skip  ·  [z] undo  ·  Esc stop</Text></Box>
+      )}
+      {settled && !jointConfirm && <Text dimColor>{longMonth(month)} is settled: anything marked joint will be a top-up.</Text>}
+      {error && <Text color={C_NEGATIVE}>{error}</Text>}
+      {statusMsg && <Text color={C_POSITIVE}>{statusMsg}</Text>}
+    </ModalPanel>
   );
 }

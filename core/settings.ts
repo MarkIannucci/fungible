@@ -27,6 +27,7 @@ export const BACKUP_INCLUDE_KEY_KEY = 'backup_include_key';
  */
 export const SPLIT_JOINT_TAG_KEY = 'split_joint_tag_id';
 export const SPLIT_SETTLED_TAG_KEY = 'split_settled_tag_id';
+export const SPLIT_PERSONAL_TAG_KEY = 'split_personal_tag_id';
 
 /**
  * Extra days added on top of the start-date calculation. Plaid's docs don't
