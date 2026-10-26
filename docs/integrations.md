@@ -124,6 +124,7 @@ Same set across MCP and HTTP.
 | `list_tags` | List tags with transaction counts |
 | `tag_summary` | Income / expenses / category breakdown for a tag |
 | `tag_transaction` | Add or remove a tag on a transaction |
+| `add_tag_rule` | Add a tag rule (substring, regex, or all) and apply it to existing transactions |
 | `get_balances` | Current balances, net worth, total cash and liquid |
 | `get_financial_health` | Runway, FIRE number, years to retirement |
 | `get_trends` | Month-by-month spending trends for the last N months |

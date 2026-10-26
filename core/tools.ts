@@ -21,7 +21,8 @@ import { bucketDrift, ratioLabel, isHighSeverityDrift } from './scorecard.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
 import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTopic } from './finance-guide.js';
 import { applyCategoriesToAll } from './categorize.js';
-import { deleteCategoryRule } from './rules.js';
+import { deleteCategoryRule, saveTagRule } from './rules.js';
+import type { TagMatchType } from './tag-rules.js';
 import { rebuildDisplayNames } from './rename.js';
 import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate, isValidIsoDate, addTransaction, normalizeAmount } from './transactions.js';
 import { addTagToTransaction, removeTagFromTransaction, getOrCreateTag } from './tags.js';
@@ -42,7 +43,7 @@ export const WRITE_TOOLS = new Set([
   'edit_transaction', 'clear_edit', 'ignore_transaction', 'add_transaction',
   'set_transaction_date', 'clear_transaction_date',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',
-  'tag_transaction', 'toggle_hidden_category', 'sync', 'import_balance_history',
+  'tag_transaction', 'add_tag_rule', 'toggle_hidden_category', 'sync', 'import_balance_history',
   'show_canvas', 'load_canvas', 'delete_canvas',
 ]);
 
@@ -411,6 +412,22 @@ export const TOOL_DEFS: ToolDef[] = [
         add: { type: 'boolean', description: 'true to add, false to remove' },
       },
       required: ['id', 'tag', 'add'],
+    },
+  },
+  {
+    name: 'add_tag_rule',
+    description: 'Add a tag rule and immediately apply it to all transactions. Tags removed by hand stay removed. Creates the tag if it does not exist.',
+    parameters: {
+      type: 'object',
+      properties: {
+        match_type: { type: 'string', description: '"name" for substring, "regex" for regex, "all" to tag every transaction in scope', enum: ['name', 'regex', 'all'] },
+        pattern:    { type: 'string', description: 'Text or regex matched against the transaction name and merchant name (required unless match_type is "all")' },
+        tag:        { type: 'string', description: 'Tag name' },
+        min_amount: { type: 'number', description: 'Minimum transaction amount (optional)' },
+        max_amount: { type: 'number', description: 'Maximum transaction amount (optional)' },
+        account_id: { type: 'string', description: 'Optional account ID to scope the rule to a single account; omit for a global rule. Use list_accounts for IDs.' },
+      },
+      required: ['match_type', 'tag'],
     },
   },
   {
@@ -1094,6 +1111,23 @@ async function executeToolImpl(
         if (tagRow) await removeTagFromTransaction(str('id'), tagRow.id);
         return `Removed #${str('tag')} from "${txName}"`;
       }
+    }
+
+    case 'add_tag_rule': {
+      const matchType = str('match_type') as TagMatchType;
+      const pattern = matchType === 'all' ? '' : str('pattern');
+      // An empty substring matches every name, so a missing pattern would
+      // silently behave like match_type "all".
+      if (matchType !== 'all' && !pattern.trim()) return noWrite('Error: pattern is required unless match_type is "all".');
+      if (!str('tag').trim()) return noWrite('Error: tag is required.');
+      // Validated before getOrCreateTag so a bad regex does not leave a new, unused tag behind.
+      if (matchType === 'regex') validateRegex(pattern);
+      const tagId = await getOrCreateTag(str('tag'));
+      const count = await saveTagRule({
+        matchType, pattern, tagId,
+        minAmount: opt('min_amount'), maxAmount: opt('max_amount'), accountId: optStr('account_id'),
+      });
+      return `Tag rule saved: ${matchType === 'all' ? 'all transactions' : `"${pattern}"`} → #${str('tag')}\nTagged ${count} transactions.`;
     }
 
     case 'toggle_hidden_category': {

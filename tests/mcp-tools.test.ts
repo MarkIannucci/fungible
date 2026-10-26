@@ -514,6 +514,45 @@ describe('write tools: rules and hidden categories', () => {
     expect(await q('SELECT id FROM name_rules')).toHaveLength(0);
   });
 
+  describe('add_tag_rule', () => {
+    const tagged = async (tag: string) =>
+      (await q<{ id: string }>('SELECT tt.transaction_id id FROM transaction_tags tt JOIN tags t ON t.id = tt.tag_id WHERE t.name = ? ORDER BY 1', [tag])).map((r) => r.id);
+
+    it('creates the tag and tags existing matches on every account', async () => {
+      const r = await expectWrite('add_tag_rule', { match_type: 'name', pattern: 'corner', tag: 'coffee' }, true);
+      expect(r.text).toMatch(/Tagged 2 transactions/);
+      expect(await tagged('coffee')).toEqual(['t1', 't2']);
+      expect(await one('SELECT match_type, pattern, account_id FROM tag_rules')).toEqual({ match_type: 'name', pattern: 'corner', account_id: null });
+    });
+
+    it('match_type "all" scoped to an account tags only that account', async () => {
+      await expectWrite('add_tag_rule', { match_type: 'all', tag: 'card', account_id: 'cc' }, true);
+      expect(await tagged('card')).toEqual(['t6', 't7']);
+    });
+
+    it('does not re-add a tag removed by hand', async () => {
+      await expectWrite('add_tag_rule', { match_type: 'name', pattern: 'corner', tag: 'coffee' }, true);
+      await mcp.callTool('tag_transaction', { id: 't1', tag: 'coffee', add: false });
+      mcp.afterWrite.mockClear();
+      await expectWrite('add_tag_rule', { match_type: 'regex', pattern: 'cafe$', tag: 'coffee' }, true);
+      expect(await tagged('coffee')).toEqual(['t2']);
+    });
+
+    it('requires a pattern unless match_type is "all", and creates nothing', async () => {
+      const r = await expectWrite('add_tag_rule', { match_type: 'name', pattern: '  ', tag: 'coffee' }, false);
+      expect(r.text).toBe('Error: pattern is required unless match_type is "all".');
+      expect(await q('SELECT id FROM tag_rules')).toHaveLength(0);
+      expect(await q('SELECT id FROM tags')).toHaveLength(0);
+    });
+
+    it('with a bad regex fails, adds no rule and creates no tag', async () => {
+      const r = await expectWrite('add_tag_rule', { match_type: 'regex', pattern: '(', tag: 'coffee' }, false);
+      expect(r.isError).toBe(true);
+      expect(await q('SELECT id FROM tag_rules')).toHaveLength(0);
+      expect(await q('SELECT id FROM tags')).toHaveLength(0);
+    });
+  });
+
   it('toggle_hidden_category hides and unhides', async () => {
     await expectWrite('toggle_hidden_category', { category: 'Food', hide: true }, true);
     expect((await mcp.callTool('list_hidden_categories')).text).toBe('Food\nTransfer');

@@ -329,6 +329,22 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
     (input) => run('tag_transaction', input),
   );
 
+  // ── add_tag_rule ────────────────────────────────────────────────────────────
+
+  server.tool(
+    'add_tag_rule',
+    'Add a tag rule and apply it to all transactions now and on future imports. Tags removed by hand stay removed. Creates the tag if it does not exist.',
+    {
+      match_type: z.enum(['name', 'regex', 'all']).describe('"name" for substring match, "regex" for regex, "all" to tag every transaction in scope'),
+      pattern:    z.string().optional().describe('Text or regex matched against the transaction name and merchant name (required unless match_type is "all")'),
+      tag:        z.string().describe('Tag name'),
+      min_amount: z.number().optional().describe('Minimum transaction amount (optional)'),
+      max_amount: z.number().optional().describe('Maximum transaction amount (optional)'),
+      account_id: z.string().optional().describe('Scope the rule to a single account ID (from list_accounts); omit for a global rule'),
+    },
+    (input) => run('add_tag_rule', input),
+  );
+
   // ── get_balances ────────────────────────────────────────────────────────────
 
   server.tool(
