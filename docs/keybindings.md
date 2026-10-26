@@ -77,6 +77,8 @@ Your spouse's share is 100 minus yours. Both names come from Settings `[0]`, and
 
 For each month, the detail pane shows what your spouse owes you (their share of what you paid) and what you owe your spouse (your share of what they paid). Whoever is owed more gets paid the difference. When the ratio changes partway through a month, each transaction uses the ratio in effect on its date.
 
+The header shows **All months**: what's left to settle across every month combined, or "settled" when nothing is.
+
 - **What counts:** transactions with the joint tag. Pending, ignored and hidden-category transactions (Transfer, Loan Payment, ...) are left out. Refunds reduce what the payer paid.
 - **Top-ups:** what's left to settle only counts joint transactions without the settled tag. A charge that posts after a month was settled shows up as a **top-up** for just that charge. If a settled transaction stops counting (its joint tag is removed, it moves to a hidden category, or it's ignored), its earlier amount is reversed.
 - **Blocked:** a joint expense on an account owned by neither of you blocks settling that month until the account has an owner.
