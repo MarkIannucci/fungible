@@ -27,6 +27,7 @@ import { W, MAY_FILTER, noop, useSeededScreenDb } from './helpers/screenSetup.js
 const waitFor: typeof baseWaitFor = (assertion, opts = 10_000) => baseWaitFor(assertion, opts);
 vi.setConfig({ testTimeout: 30_000 });
 
+const UP = '\u001b[A';
 const DOWN = '\u001b[B';
 const ESC = '\u001b';
 
@@ -273,6 +274,30 @@ describe('Settle up', () => {
       await waitFor(() => expect(frame(r)).toContain('MAY 2026'));
       await press(r, ESC);
       await waitFor(() => expect(onNavigate).toHaveBeenCalledWith('dashboard', { dashView: 'owner', range: 'month', anchor: '2026-05-01' }));
+    });
+
+    it('totals what is left to settle across all months after the ratio', async () => {
+      await configuredMay(); // May: Pat pays Alex $72
+      await db.execute(`INSERT INTO transactions (id, account_id, date, name, amount, category, pending, ignored)
+        VALUES ('tx-june', 'test-credit', '2026-06-05', 'Grocer', 50, 'Grocery', 0, 0)`);
+      await tagged('joint', ['tx-june']); // June: Alex pays Pat 40% of $50 = $20
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toContain('Pat 60% / Alex 40% from 2026-05-01  ·  All months: Pat pays Alex $52.00'));
+      await pressKeys(r, ['s', 'y']); // settle May
+      await waitFor(() => expect(frame(r)).toContain('All months: Alex pays Pat $20.00'));
+      await pressKeys(r, [UP, 's', 'y']); // up to June, settle it
+      await waitFor(() => expect(frame(r)).toContain('All months: settled'));
+    });
+
+    it('puts the all-months total on its own line when it does not fit after the ratio', async () => {
+      await configuredMay();
+      vi.mocked(loadProfile).mockResolvedValue({
+        ...HOUSEHOLD, self: { name: 'Patricia Anne', birthYear: 1985 }, spouse: { name: 'Alexandra Jane', birthYear: 1986 },
+      });
+      await db.execute("UPDATE accounts SET owner = 'Patricia Anne' WHERE id = 'test-credit'");
+      await db.execute("UPDATE accounts SET owner = 'Alexandra Jane' WHERE id = 'test-checking'");
+      const r = settle();
+      await waitFor(() => expect(frame(r)).toMatch(/from 2026-05-01\s*\n\s*All months: Patricia Anne pays Alexandra Jane \$72\.00/));
     });
 
     it('shows a window of 12 months that follows the cursor when the split goes back years', async () => {

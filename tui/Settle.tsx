@@ -325,13 +325,22 @@ export function Settle({ onNavigate, isActive, initialFilter, showHints }: { onN
   if (loadError) return <LoadError message={loadError} />;
 
   const latest = ready?.ratios[ready.ratios.length - 1];
+  const ratioText = ready && latest ? `  ·  ${ready.self} ${pct(latest.selfPct)} / ${ready.spouse} ${pct(100 - latest.selfPct)} from ${latest.startDate}` : '';
+  // Left to settle over every month, summed from each month's rounded amount so it
+  // matches settling them one at a time.
+  const anyOpen = months.some((m) => m.status === 'open' || m.status === 'top-up');
+  const allToSettle = months.reduce((cents, m) => cents + Math.round(m.toSettle * 100), 0) / 100;
+  const totalText = ready && months.some((m) => m.status !== 'empty')
+    ? `All months: ${anyOpen ? direction(allToSettle, ready, 'pays') : 'settled'}` : '';
+  // The total follows the ratio, or takes its own line when both don't fit.
+  const totalInline = `Settle up${ratioText}  ·  ${totalText}`.length <= inner;
   const header = (
     <Box flexDirection="column" marginTop={1}>
       <Text bold>Settle up
-        {ready && latest && (
-          <Text dimColor>{`  ·  ${ready.self} ${pct(latest.selfPct)} / ${ready.spouse} ${pct(100 - latest.selfPct)} from ${latest.startDate}`}</Text>
-        )}
+        {ratioText && <Text dimColor>{ratioText}</Text>}
+        {totalText && totalInline && <Text>{`  ·  ${totalText}`}</Text>}
       </Text>
+      {totalText && !totalInline && <Text bold>{totalText}</Text>}
       {mode === 'list' && ready && (
         <Text dimColor>{showHints ? '↑↓ month  ·  Enter joint txns  ·  [s] settle  ·  [u] unsettle  ·  [r] ratios  ·  Esc back' : '[s] settle  ·  [u] unsettle  ·  [r] ratios'}</Text>
       )}
