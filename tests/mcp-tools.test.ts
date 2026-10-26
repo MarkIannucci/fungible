@@ -557,6 +557,31 @@ describe('write tools: rules and hidden categories', () => {
       expect(await q('SELECT id FROM tag_rules')).toHaveLength(0);
       expect(await q('SELECT id FROM tags')).toHaveLength(0);
     });
+
+    it('list_tag_rules shows id, pattern, tag and account scope', async () => {
+      expect((await mcp.callTool('list_tag_rules')).text).toBe('No tag rules defined.');
+      await mcp.callTool('add_tag_rule', { match_type: 'name', pattern: 'corner', tag: 'coffee', min_amount: 5 });
+      await mcp.callTool('add_tag_rule', { match_type: 'all', tag: 'card', account_id: 'cc' });
+      const [named, all] = (await q<{ id: number }>('SELECT id FROM tag_rules ORDER BY id')).map((r) => r.id);
+      // Account-scoped rules sort before global ones, as they are applied.
+      expect((await mcp.callTool('list_tag_rules')).text).toBe(
+        `[${all}] all   → #card @Card\n[${named}] name  "corner" [≥$5] → #coffee`,
+      );
+    });
+
+    it('delete_tag_rule removes the rule but leaves the tags it applied', async () => {
+      await mcp.callTool('add_tag_rule', { match_type: 'name', pattern: 'corner', tag: 'coffee' });
+      const id = (await one<{ id: number }>('SELECT id FROM tag_rules')).id;
+      mcp.afterWrite.mockClear();
+      const r = await expectWrite('delete_tag_rule', { id }, true);
+      expect(r.text).toMatch(/Deleted tag rule: "corner" → #coffee/);
+      expect(await q('SELECT id FROM tag_rules')).toHaveLength(0);
+      expect(await tagged('coffee')).toEqual(['t1', 't2']);
+    });
+
+    it('delete_tag_rule with an unknown id fails softly', async () => {
+      expect((await expectWrite('delete_tag_rule', { id: 999 }, false)).text).toBe('No tag rule with id 999.');
+    });
   });
 
   it('toggle_hidden_category hides and unhides', async () => {
@@ -663,7 +688,7 @@ describe('afterWrite invariants', () => {
   it('no read tool ever fires afterWrite', async () => {
     const reads: [string, Record<string, unknown>][] = [
       ['spending_summary', { year: Y, month: M }], ['merchant_summary', { category: 'Food', from: day(1), to: day(28) }],
-      ['list_transactions', {}], ['export_transactions', { from: day(1), to: day(28) }], ['list_rules', {}], ['list_name_rules', {}],
+      ['list_transactions', {}], ['export_transactions', { from: day(1), to: day(28) }], ['list_rules', {}], ['list_name_rules', {}], ['list_tag_rules', {}],
       ['list_hidden_categories', {}], ['list_accounts', {}], ['uncategorized_summary', {}], ['list_tags', {}], ['tag_summary', { tag: 'x' }],
       ['get_balances', {}], ['get_financial_health', {}], ['get_scorecard', {}], ['get_trends', {}], ['get_finance_guide', {}],
       ['get_net_worth_history', {}], ['get_screen', {}], ['list_canvases', {}], ['calculate_tvm', { pv: 1, fv: 2, n: 3 }],

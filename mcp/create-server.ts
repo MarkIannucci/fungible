@@ -329,6 +329,15 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
     (input) => run('tag_transaction', input),
   );
 
+  // ── list_tag_rules ──────────────────────────────────────────────────────────
+
+  server.tool(
+    'list_tag_rules',
+    'List all tag rules with their IDs, patterns, tags and account scope.',
+    {},
+    () => run('list_tag_rules', {}),
+  );
+
   // ── add_tag_rule ────────────────────────────────────────────────────────────
 
   server.tool(
@@ -343,6 +352,17 @@ export function createMcpServer(opts: { afterWrite?: () => void } = {}): McpServ
       account_id: z.string().optional().describe('Scope the rule to a single account ID (from list_accounts); omit for a global rule'),
     },
     (input) => run('add_tag_rule', input),
+  );
+
+  // ── delete_tag_rule ─────────────────────────────────────────────────────────
+
+  server.tool(
+    'delete_tag_rule',
+    'Delete a tag rule by ID. Tags it already applied stay in place. Use list_tag_rules to find the ID.',
+    {
+      id: z.number().int().describe('Tag rule ID from list_tag_rules'),
+    },
+    (input) => run('delete_tag_rule', input),
   );
 
   // ── get_balances ────────────────────────────────────────────────────────────

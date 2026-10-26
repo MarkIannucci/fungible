@@ -21,7 +21,7 @@ import { bucketDrift, ratioLabel, isHighSeverityDrift } from './scorecard.js';
 import { getBalances, getFinancialHealth, getSpendingTrends } from './agent-context.js';
 import { getFinanceGuide, getFinanceTopicList, formatGuideSection, type GuideTopic } from './finance-guide.js';
 import { applyCategoriesToAll } from './categorize.js';
-import { deleteCategoryRule, saveTagRule } from './rules.js';
+import { deleteCategoryRule, saveTagRule, deleteTagRule } from './rules.js';
 import type { TagMatchType } from './tag-rules.js';
 import { rebuildDisplayNames } from './rename.js';
 import { setTransactionCategory, clearTransactionOverride, setTransactionIgnored, setTransactionDate, clearTransactionDate, isValidIsoDate, addTransaction, normalizeAmount } from './transactions.js';
@@ -43,7 +43,7 @@ export const WRITE_TOOLS = new Set([
   'edit_transaction', 'clear_edit', 'ignore_transaction', 'add_transaction',
   'set_transaction_date', 'clear_transaction_date',
   'add_rule', 'delete_rule', 'add_name_rule', 'delete_name_rule',
-  'tag_transaction', 'add_tag_rule', 'toggle_hidden_category', 'sync', 'import_balance_history',
+  'tag_transaction', 'add_tag_rule', 'delete_tag_rule', 'toggle_hidden_category', 'sync', 'import_balance_history',
   'show_canvas', 'load_canvas', 'delete_canvas',
 ]);
 
@@ -415,6 +415,11 @@ export const TOOL_DEFS: ToolDef[] = [
     },
   },
   {
+    name: 'list_tag_rules',
+    description: 'List all tag rules with their IDs, patterns, tags and account scope.',
+    parameters: { type: 'object', properties: {} },
+  },
+  {
     name: 'add_tag_rule',
     description: 'Add a tag rule and immediately apply it to all transactions. Tags removed by hand stay removed. Creates the tag if it does not exist.',
     parameters: {
@@ -428,6 +433,17 @@ export const TOOL_DEFS: ToolDef[] = [
         account_id: { type: 'string', description: 'Optional account ID to scope the rule to a single account; omit for a global rule. Use list_accounts for IDs.' },
       },
       required: ['match_type', 'tag'],
+    },
+  },
+  {
+    name: 'delete_tag_rule',
+    description: 'Delete a tag rule by ID. Tags it already applied stay in place. Use list_tag_rules to find the ID.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'integer', description: 'Tag rule ID' },
+      },
+      required: ['id'],
     },
   },
   {
@@ -887,6 +903,30 @@ async function executeToolImpl(
       }).join('\n');
     }
 
+    case 'list_tag_rules': {
+      const result = await db.execute(
+        `SELECT tr.id, tr.match_type, tr.pattern, t.name AS tag_name, tr.min_amount, tr.max_amount,
+                tr.account_id, COALESCE(a.nickname, a.name) AS account_name
+         FROM tag_rules tr JOIN tags t ON t.id = tr.tag_id LEFT JOIN accounts a ON a.id = tr.account_id
+         ORDER BY tr.priority DESC, (tr.account_id IS NULL) ASC, tr.id ASC`
+      );
+      const rules = result.rows as unknown as {
+        id: number; match_type: string; pattern: string; tag_name: string;
+        min_amount: number | null; max_amount: number | null;
+        account_id: string | null; account_name: string | null;
+      }[];
+      if (!rules.length) return 'No tag rules defined.';
+      return rules.map((r) => {
+        const amt = r.min_amount != null && r.max_amount != null
+          ? ` [$${r.min_amount}–$${r.max_amount}]`
+          : r.min_amount != null ? ` [≥$${r.min_amount}]`
+          : r.max_amount != null ? ` [≤$${r.max_amount}]` : '';
+        const scope = r.account_id ? ` @${r.account_name ?? r.account_id}` : '';
+        const what = r.match_type === 'all' ? 'all  ' : `${r.match_type.padEnd(5)} "${r.pattern}"`;
+        return `[${r.id}] ${what}${amt} → #${r.tag_name}${scope}`;
+      }).join('\n');
+    }
+
     case 'list_hidden_categories': {
       const result = await db.execute('SELECT category FROM hidden_categories ORDER BY category');
       const rows = result.rows as unknown as { category: string }[];
@@ -1130,6 +1170,17 @@ async function executeToolImpl(
         minAmount: opt('min_amount'), maxAmount: opt('max_amount'), accountId: optStr('account_id'),
       });
       return `Tag rule saved: ${matchType === 'all' ? 'all transactions' : `"${pattern}"`} → #${str('tag')}\nTagged ${count} transactions.`;
+    }
+
+    case 'delete_tag_rule': {
+      const ruleResult = await db.execute({
+        sql: 'SELECT tr.match_type, tr.pattern, t.name AS tag_name FROM tag_rules tr JOIN tags t ON t.id = tr.tag_id WHERE tr.id = ?',
+        args: [num('id')],
+      });
+      const rule = ruleResult.rows[0] as unknown as { match_type: string; pattern: string; tag_name: string } | undefined;
+      if (!rule) return noWrite(`No tag rule with id ${num('id')}.`);
+      await deleteTagRule(num('id'));
+      return `Deleted tag rule: ${rule.match_type === 'all' ? 'all transactions' : `"${rule.pattern}"`} → #${rule.tag_name}\nTags it already applied were left in place.`;
     }
 
     case 'toggle_hidden_category': {
